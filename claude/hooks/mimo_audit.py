@@ -242,8 +242,14 @@ def read_task_slice(path: str) -> str:
             if text:
                 entries.append((role.upper(), text))
         elif item_type == "function_call":
-            args = compact(str(payload.get("arguments") or ""), 800)
-            entries.append(("TOOL CALL", f"{payload.get('name')}: {args}"))
+            # Edit tools need bigger budget so MiMo can actually review the code being written.
+            # Without this, a 5000-char Write/Edit gets compacted to 800 chars, hiding bugs in
+            # the middle of the diff (cf. the startswith("pass") false-PASS in gemma-spar).
+            tool_name = payload.get("name") or ""
+            edit_tools = {"apply_patch", "edit", "write", "multi_edit", "Write", "Edit", "MultiEdit", "apply_diff"}
+            cap = 8000 if tool_name in edit_tools else 800
+            args = compact(str(payload.get("arguments") or ""), cap)
+            entries.append(("TOOL CALL", f"{tool_name}: {args}"))
         elif item_type == "function_call_output":
             output = str(payload.get("output") or "")
             entries.append(("TOOL OUTPUT", compact(output, 1_000)))
