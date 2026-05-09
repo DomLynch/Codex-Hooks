@@ -87,6 +87,17 @@ Check only the current task for:
   target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
   and concrete verification before stopping)
 
+Also flag subtle issues, not just blatant ones:
+- Error handlers that swallow more cases than the user asked about (bare `except`,
+  catching Exception when only one specific failure mode was requested)
+- Tests that don't actually verify the claimed behavior (only the happy path,
+  missing the negation/edge case the user explicitly named)
+- Edge cases the brief implied but the code doesn't handle (empty inputs,
+  off-by-one at boundaries, None/null, unicode, large inputs)
+- "Task complete" claims that lack verification — no test run, no log shown,
+  no diff/output evidence that the change actually works
+- Stub assertions, placeholder values, or mocked-out logic left in production code
+
 If there are issues, use:
 VERDICT: ISSUES
 1. <specific, actionable fix>
