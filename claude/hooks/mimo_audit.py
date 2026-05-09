@@ -319,12 +319,20 @@ def block_stop(reason: str) -> None:
 
 def normalize_verdict(text: str) -> str:
     stripped = (text or "").strip()
-    if stripped.startswith("VERDICT: PASS") or stripped.startswith("VERDICT: ISSUES"):
-        return stripped
-    match = re.search(r"(?m)^VERDICT:\s*(PASS|ISSUES)\b", stripped)
+    if not stripped:
+        return ""
+    first_line, _, rest = stripped.partition("\n")
+    bare = first_line.strip().upper().rstrip(".:")
+    if bare in {"PASS", "ISSUES"}:
+        suffix = f"\n{rest.strip()}" if rest.strip() else ""
+        return f"VERDICT: {bare}{suffix}"
+    match = re.search(r"(?im)^VERDICT:\s*(PASS|ISSUES)\b", stripped)
     if not match:
         return stripped
-    return stripped[match.start():].strip()
+    verdict = match.group(1).upper()
+    remainder = stripped[match.end():].strip()
+    suffix = f"\n{remainder}" if remainder else ""
+    return f"VERDICT: {verdict}{suffix}"
 
 
 def has_tool_activity(transcript: str) -> bool:
@@ -479,6 +487,7 @@ def main() -> None:
         return
 
     log(f"MiMo verdict (iter {iterations + 1}): {verdict_text[:240]}")
+    verdict_text = normalize_verdict(verdict_text)
 
     if verdict_text and not (
         verdict_text.startswith("VERDICT: PASS")

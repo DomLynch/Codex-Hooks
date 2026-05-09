@@ -84,6 +84,13 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("unable to audit", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
 
+    def test_mimo_bare_verdicts_are_normalized(self) -> None:
+        self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")
+        self.assertEqual(
+            mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
+            "VERDICT: ISSUES\n1. Missing regression test",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -91,6 +91,37 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("unable to audit", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
 
+    def test_mimo_bare_verdicts_are_normalized(self) -> None:
+        self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")
+        self.assertEqual(
+            mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
+            "VERDICT: ISSUES\n1. Missing regression test",
+        )
+
+    def test_mimo_bare_pass_allows_stop_without_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-bare-pass",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Completed task. " * 40,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="PASS"),
+                mock.patch.object(mimo_audit, "repair_verdict_format") as repair,
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        repair.assert_not_called()
+        self.assertEqual(verdict["mimo-bare-pass"]["verdict"], "PASS")
+
     def test_post_tool_blocks_syntax_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "broken.py"
