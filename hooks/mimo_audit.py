@@ -49,6 +49,7 @@ AUDIT_TIMEOUT_S = 45
 AUDIT_MAX_ATTEMPTS = 2
 AUDIT_RETRY_DELAY_S = 2
 RETRY_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
 
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
 STATE_FILE = Path.home() / ".codex" / "state" / "audit_iterations.json"
@@ -304,6 +305,10 @@ def normalize_verdict(text: str) -> str:
     return stripped[match.start():].strip()
 
 
+def has_tool_activity(transcript: str) -> bool:
+    return any(marker in transcript for marker in TOOL_ACTIVITY_MARKERS)
+
+
 def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
     body = json.dumps({
         "model": MODEL,
@@ -422,7 +427,7 @@ def main() -> None:
     # Prefer a clean latest-task slice; fall back to last_assistant_message.
     transcript = read_task_slice(transcript_path) or redact_sensitive(last_msg)
     log(f"TASK_SLICE: {len(transcript)} chars")
-    if len(transcript) < MIN_TRANSCRIPT_CHARS:
+    if len(transcript) < MIN_TRANSCRIPT_CHARS and not has_tool_activity(transcript):
         save_verdict(session_id, turn_id, "SKIP_TOO_SHORT", f"transcript too short ({len(transcript)} chars)")
         allow_stop(f"transcript too short ({len(transcript)} chars)")
         return

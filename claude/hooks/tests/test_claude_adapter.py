@@ -16,6 +16,7 @@ from lib.claude_adapter import (  # noqa: E402
     normalize_payload,
     synthesize_turn_id,
 )
+import mimo_audit  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -72,6 +73,10 @@ class ClaudeAdapterTests(unittest.TestCase):
     def test_changed_files_from_claude_write_payload(self) -> None:
         payload = {"tool_name": "Write", "tool_input": {"file_path": "/tmp/demo.py"}}
         self.assertEqual(changed_files_in_claude_post_tool(payload), [Path("/tmp/demo.py")])
+
+    def test_short_tool_activity_should_not_skip_audit(self) -> None:
+        self.assertTrue(mimo_audit.has_tool_activity("TOOL CALL:\nEdit: app.py"))
+        self.assertFalse(mimo_audit.has_tool_activity("ok thanks"))
 
 
 if __name__ == "__main__":

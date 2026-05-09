@@ -296,6 +296,52 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(verdict["mimo-test-session"]["verdict"], "PASS")
         self.assertEqual(verdict["mimo-test-session"]["turn_id"], "turn-1")
 
+    def test_mimo_short_transcript_with_tool_activity_is_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-tool-short",
+                "turn_id": "turn-1",
+                "last_assistant_message": "TOOL CALL:\nEdit: app.py",
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as ask_mimo,
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        ask_mimo.assert_called_once()
+        self.assertEqual(verdict["mimo-tool-short"]["verdict"], "PASS")
+
+    def test_mimo_short_transcript_without_tool_activity_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-chat-short",
+                "turn_id": "turn-1",
+                "last_assistant_message": "ok",
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        ask_mimo.assert_not_called()
+        self.assertEqual(verdict["mimo-chat-short"]["verdict"], "SKIP_TOO_SHORT")
+
     def test_mimo_iterations_are_keyed_by_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             state_path = Path(tmp) / "iterations.json"
