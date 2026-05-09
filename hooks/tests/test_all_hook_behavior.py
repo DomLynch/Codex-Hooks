@@ -440,6 +440,18 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("[AAA Milestone Gate]", data["reason"])
         self.assertIn("pytest failed", data["reason"])
 
+    def test_milestone_detector_ignores_grade_and_hook_feedback(self) -> None:
+        hook_feedback = (
+            '<hook_prompt hook_run_id="stop:4:/Users/domininclynch/.codex/config.toml">'
+            "[AAA Milestone Gate]\n\nnpm test timed out"
+            "</hook_prompt>"
+        )
+
+        self.assertFalse(stop_orchestrator.milestone_detected("Functional verdict: AAA now."))
+        self.assertFalse(stop_orchestrator.milestone_detected(hook_feedback))
+        self.assertTrue(stop_orchestrator.milestone_detected("ready to merge after final checks"))
+        self.assertTrue(stop_orchestrator.milestone_detected("this is an AAA milestone release"))
+
     def test_auto_pr_commits_with_mimo_only_auditor_when_claude_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
