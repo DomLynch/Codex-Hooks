@@ -113,21 +113,26 @@ def call_openclaw_agent(message: str) -> tuple[bool, str]:
         return False, "openclaw binary not on PATH"
 
     # Append openclaw agent stdout/stderr to a sidecar log so we can debug delivery.
+    # `with` ensures the parent's fd closes whether Popen succeeds or raises (no fd leak).
+    # Popen dup'd the fd into the child's stdout, so closing in the parent is safe — the
+    # background process keeps writing to its own descriptor.
     out_log = LOG_DIR / "trident_notify_outgoing.log"
     try:
         out_log.parent.mkdir(parents=True, exist_ok=True)
-        log_fh = open(out_log, "a")
-        log_fh.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} fire ---\n")
-        log_fh.flush()
-        subprocess.Popen(
-            [binary, "agent", "--agent", "main", "--message", message, "--json"],
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,  # detach so child outlives this Stop hook
-            close_fds=True,
-        )
-    except Exception as e:
+        with open(out_log, "a") as log_fh:
+            log_fh.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} fire ---\n")
+            log_fh.flush()
+            subprocess.Popen(
+                [binary, "agent", "--agent", "main", "--message", message, "--json"],
+                stdout=log_fh,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,  # detach so child outlives this Stop hook
+                close_fds=True,
+            )
+    except OSError as e:
+        # Narrow to OSError — covers FileNotFoundError, PermissionError, the Popen failure
+        # modes we actually expect. Lets unrelated bugs (TypeError, MemoryError) crash loudly.
         return False, f"spawn error: {e}"
     return True, f"spawned background openclaw agent (output: {out_log})"
 
