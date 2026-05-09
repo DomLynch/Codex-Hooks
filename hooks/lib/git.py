@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import subprocess
+import os
+import re
+from pathlib import Path
+
+
+def short_sid(session_id: str) -> str:
+    return (session_id or "unknown").replace("/", "-")[:8]
+
+
+def current_session_branch(session_id: str) -> str:
+    return f"codex/{short_sid(session_id)}/main"
+
+
+def task_branch(session_id: str, task_n: int) -> str:
+    return f"codex/{short_sid(session_id)}/task-{task_n}"
+
+
+def safe_run(
+    cmd: list[str],
+    cwd: str | Path | None = None,
+    timeout: int = 30,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd else None,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+            env=env,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except Exception as exc:
+        return 1, "", str(exc)
+
+
+def is_git_repo(cwd: str | Path) -> bool:
+    rc, out, _ = safe_run(["git", "rev-parse", "--is-inside-work-tree"], cwd=cwd)
+    return rc == 0 and out.strip() == "true"
+
+
+def git_root(cwd: str | Path) -> Path | None:
+    rc, out, _ = safe_run(["git", "rev-parse", "--show-toplevel"], cwd=cwd)
+    if rc != 0 or not out.strip():
+        return None
+    return Path(out.strip()).resolve()
+
+
+def _workdirs_from_text(text: str) -> list[Path]:
+    paths: list[Path] = []
+    for match in re.finditer(r'"workdir"\s*:\s*"([^"]+)"', text or ""):
+        raw = match.group(1).replace("\\/", "/")
+        paths.append(Path(raw).expanduser())
+    for match in re.finditer(r"'workdir'\s*:\s*'([^']+)'", text or ""):
+        paths.append(Path(match.group(1)).expanduser())
+    return paths
+
+
+def _absolute_paths_from_text(text: str) -> list[Path]:
+    seen: set[Path] = set()
+    paths: list[Path] = []
+    # Keep this intentionally macOS/local-path focused. Remote VPS paths are
+    # audit-only unless the hook process can actually access that filesystem.
+    patterns = (
+        r'["\'](/Users/[^"\']+)["\']',
+        r"/Users/[^\"'`\n]+?\.(?:py|js|jsx|ts|tsx|go|rs|md|json|toml|yaml|yml|txt|sh|css|html)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or ""):
+            raw = match.group(1) if match.groups() else match.group(0)
+            path = Path(raw.rstrip(".,;:)")).expanduser()
+            if path not in seen:
+                seen.add(path)
+                paths.append(path)
+    return paths
+
+
+def resolve_git_cwd(
+    cwd: str | Path,
+    files: list[Path] | tuple[Path, ...] | None = None,
+    transcript: str = "",
+) -> Path:
+    """Return the actual repo root for hooks launched from a workspace folder.
+
+    Codex Desktop often starts a thread from a parent workspace such as
+    ~/Desktop/Business while tool calls edit a nested project repo. Side-effect
+    hooks must operate on the nested repo, not the non-git workspace root.
+    """
+    base = Path(cwd).resolve()
+    root = git_root(base)
+    if root:
+        return root
+
+    candidates: list[Path] = []
+    for file in files or []:
+        probe = file.parent if file.suffix else file
+        root = git_root(probe)
+        if root and root not in candidates:
+            candidates.append(root)
+    for workdir in _workdirs_from_text(transcript):
+        root = git_root(workdir)
+        if root and root not in candidates:
+            candidates.append(root)
+    for path in _absolute_paths_from_text(transcript):
+        probe = path if path.is_dir() else path.parent
+        root = git_root(probe)
+        if root and root not in candidates:
+            candidates.append(root)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        for candidate in candidates:
+            if str(candidate) in transcript or candidate.name in transcript:
+                return candidate
+    return base
+
+
+def current_branch(cwd: str | Path) -> str:
+    rc, out, _ = safe_run(["git", "branch", "--show-current"], cwd=cwd)
+    return out.strip() if rc == 0 else ""
+
+
+def ensure_branch(branch: str, cwd: str | Path) -> bool:
+    if not is_git_repo(cwd):
+        return False
+    if current_branch(cwd) == branch:
+        return True
+    rc, _, _ = safe_run(["git", "rev-parse", "--verify", branch], cwd=cwd)
+    if rc == 0:
+        rc, _, _ = safe_run(["git", "checkout", branch], cwd=cwd)
+        return rc == 0
+    rc, _, _ = safe_run(["git", "checkout", "-b", branch], cwd=cwd)
+    return rc == 0
+
+
+def stage_all(cwd: str | Path) -> bool:
+    rc, _, _ = safe_run(["git", "add", "-A"], cwd=cwd)
+    return rc == 0
+
+
+def has_staged_changes(cwd: str | Path) -> bool:
+    rc, _, _ = safe_run(["git", "diff", "--cached", "--quiet"], cwd=cwd)
+    return rc == 1
+
+
+def has_worktree_changes(cwd: str | Path) -> bool:
+    rc, out, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
+    return rc == 0 and bool(out.strip())
+
+
+def commit(message: str, cwd: str | Path) -> tuple[bool, str]:
+    if not stage_all(cwd) or not has_staged_changes(cwd):
+        return False, ""
+    rc, out, err = safe_run(["git", "commit", "-m", message], cwd=cwd, timeout=60)
+    if rc != 0:
+        return False, err or out
+    rc, sha, _ = safe_run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+    return True, sha.strip() if rc == 0 else ""
+
+
+def push(branch: str, cwd: str | Path) -> bool:
+    rc, _, _ = safe_run(["git", "push", "-u", "origin", branch], cwd=cwd, timeout=120)
+    return rc == 0
+
+
+def changed_files(cwd: str | Path) -> list[Path]:
+    rc, out, _ = safe_run(["git", "diff", "--name-only"], cwd=cwd)
+    if rc != 0:
+        return []
+    root = git_root(cwd) or Path(cwd)
+    return [root / line.strip() for line in out.splitlines() if line.strip()]
+
+
+def files_changed_summary(cwd: str | Path) -> str:
+    rc, out, _ = safe_run(["git", "diff", "--stat"], cwd=cwd)
+    return out.strip() if rc == 0 else ""
+
+
+def github_env() -> dict[str, str] | None:
+    token_path = Path.home() / ".codex" / "secrets" / "github_token"
+    if token_path.exists():
+        try:
+            token = token_path.read_text().strip()
+            if token:
+                return {**os.environ, "GH_TOKEN": token}
+        except Exception:
+            return None
+    return None
+
+
+def github_pr_preflight(cwd: str | Path) -> tuple[bool, str]:
+    """Check PR creation prerequisites before local commit/push side effects."""
+    rc, out, err = safe_run(["git", "remote", "get-url", "origin"], cwd=cwd, timeout=10)
+    if rc != 0 or not out.strip():
+        return False, "missing git origin remote"
+    env = github_env()
+    for cmd, label in (
+        (["gh", "--version"], "gh CLI unavailable"),
+        (["gh", "auth", "status"], "gh auth unavailable"),
+        (["gh", "repo", "view", "--json", "nameWithOwner"], "gh repo unavailable"),
+    ):
+        rc, out, err = safe_run(cmd, cwd=cwd, timeout=20, env=env)
+        if rc != 0:
+            detail = (err or out).strip().splitlines()
+            return False, label + (f": {detail[-1]}" if detail else "")
+    return True, "ok"
+
+
+def open_pr(title: str, body: str, base: str = "main", cwd: str | Path | None = None) -> str:
+    env = github_env()
+    rc, out, err = safe_run(
+        ["gh", "pr", "create", "--base", base, "--title", title, "--body", body],
+        cwd=cwd,
+        timeout=120,
+        env=env,
+    )
+    if rc != 0:
+        return ""
+    return out.strip()

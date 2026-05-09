@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+
+MAX_TRANSCRIPT_CHARS = 4000
+
+
+def _content_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if isinstance(item, dict):
+            parts.append(str(item.get("text") or ""))
+    return "\n".join(part for part in parts if part)
+
+
+def sanitize(text: str) -> str:
+    text = re.sub(r"tp-[A-Za-z0-9]+", "tp-<redacted>", text)
+    text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-<redacted>", text)
+    text = re.sub(r"ghp_[A-Za-z0-9_]+", "ghp_<redacted>", text)
+    text = re.sub(r'"encrypted_content":\s*"[^"]+"', '"encrypted_content": "<omitted>"', text)
+    text = re.sub(r"<hook_prompt\b[^>]*>.*?</hook_prompt>", "<hook_prompt omitted>", text, flags=re.DOTALL)
+    return text.replace("<hook_prompt", "<hook-prompt")
+
+
+def compact(text: str, limit: int) -> str:
+    text = sanitize(text)
+    if len(text) <= limit:
+        return text
+    return text[: limit // 2] + "\n...[omitted]...\n" + text[-limit // 2 :]
+
+
+def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
+    if not transcript_path:
+        return sanitize(fallback)[-max_chars:]
+    path = Path(transcript_path)
+    if not path.exists():
+        return sanitize(fallback)[-max_chars:]
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except Exception:
+        return sanitize(fallback)[-max_chars:]
+
+    entries: list[tuple[str, str]] = []
+    for line in lines:
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") != "response_item":
+            continue
+        payload = obj.get("payload") or {}
+        item_type = payload.get("type")
+        if item_type == "message":
+            role = str(payload.get("role") or "message").upper()
+            text = _content_text(payload.get("content"))
+            if role == "USER" and text.lstrip().startswith("<hook_prompt"):
+                continue
+            if text:
+                entries.append((role, text))
+        elif item_type == "function_call":
+            args = compact(str(payload.get("arguments") or ""), 800)
+            entries.append(("TOOL CALL", f"{payload.get('name')}: {args}"))
+        elif item_type == "function_call_output":
+            entries.append(("TOOL OUTPUT", compact(str(payload.get("output") or ""), 1000)))
+
+    if not entries:
+        return sanitize(fallback)[-max_chars:]
+    start = 0
+    for idx in range(len(entries) - 1, -1, -1):
+        if entries[idx][0] == "USER":
+            start = idx
+            break
+    task_entries = entries[start:]
+    text = sanitize("\n\n".join(f"{role}:\n{body}" for role, body in task_entries))
+    if len(text) <= max_chars:
+        return text
+    first_role, first_body = task_entries[0]
+    first = sanitize(f"{first_role}:\n{first_body}")
+    marker = "\n\n...[older task details omitted to stay focused]...\n\n"
+    tail_budget = max(0, max_chars - len(first) - len(marker))
+    return first + marker + text[-tail_budget:]
+

@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+
+# Runtime-only Codex data. Never commit these.
+secrets/
+logs/
+state/
+*.log
+*.lock
+
+# Local config exports can contain trusted hashes, machine paths, or plugin state.
+config.local.toml
+config.toml
