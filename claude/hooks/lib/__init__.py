@@ -1,2 +1,1 @@
-"""Shared helpers for Codex lifecycle hooks."""
-
+"""Shared helpers for Claude Code lifecycle hooks."""

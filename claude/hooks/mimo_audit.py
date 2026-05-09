@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Codex Stop hook: 3rd-party audit with MiMo-v2.5-Pro.
+Claude Code Stop hook: 3rd-party audit with MiMo-v2.5-Pro.
 
-When Codex thinks it's done, this script feeds the recent transcript to MiMo
+When Claude Code thinks it's done, this script feeds the recent transcript to MiMo
 (via Xiaomi's OpenAI-compatible endpoint) for review. If MiMo finds issues,
-the hook BLOCKS the stop and injects the review back into Codex so it keeps
-working. Capped at MAX_ITERATIONS per session to prevent infinite loops.
+the hook BLOCKS the stop and injects the review back into Claude Code so it
+keeps working. Capped at MAX_ITERATIONS per session to prevent infinite loops.
 
 Stdlib only — no third-party Python deps.
 
-Protocol (Codex Stop hook, per developers.openai.com/codex/hooks):
+Protocol (Claude Code Stop hook):
   stdin  -> {
               "session_id": str, "transcript_path": str|null, "cwd": str,
               "hook_event_name": str, "model": str, "turn_id": str,
               "stop_hook_active": bool, "last_assistant_message": str|null
             }
-  stdout -> {"decision": "block", "reason": "..."}   to keep Codex running
+  stdout -> {"decision": "block", "reason": "..."}   to keep Claude Code running
   exit 0 with empty stdout                           to allow stop
 """
 
@@ -259,7 +259,7 @@ def load_api_key() -> str:
         except Exception:
             pass
 
-    # Codex app hooks may not inherit interactive shell env. Read the single
+    # Claude Code hooks may not inherit interactive shell env. Read the single
     # assignment without sourcing arbitrary shell code.
     for rc_file in (".zshrc", ".zprofile", ".profile"):
         path = Path.home() / rc_file

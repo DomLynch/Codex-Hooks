@@ -47,7 +47,7 @@ VERDICT: PASS
 
 If there are blockers, return:
 VERDICT: ISSUES
-1. <specific fix Codex should make now>
+1. <specific fix Claude Code should make now>
 
 Current task slice:
 ---

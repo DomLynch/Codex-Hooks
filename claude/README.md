@@ -63,6 +63,7 @@ For the Anthropic 2nd audit: drop the key at `~/.claude/secrets/anthropic_api_ke
 ```bash
 # Compile-check
 python3 -m py_compile claude/hooks/*.py claude/hooks/lib/*.py
+python3 -m unittest discover -s claude/hooks/tests -q
 
 # Watch live activity
 tail -f ~/.claude/logs/*.log

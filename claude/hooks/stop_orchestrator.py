@@ -314,7 +314,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
         log(COMPONENT, f"auto-pr skipped: could not ensure task branch {branch}")
         return "", "", "", "branch_failed"
 
-    summary = transcript.splitlines()[0][:80] if transcript.strip() else "Codex task"
+    summary = transcript.splitlines()[0][:80] if transcript.strip() else "Claude Code task"
     auditors = ["MiMo-v2.5-Pro"]
     if CLAUDE_AUDIT_ENABLED:
         auditors.append("Claude")
@@ -329,7 +329,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
         log(COMPONENT, f"auto-pr incomplete: push failed branch={branch} sha={sha}")
         return branch, sha, "", "push_failed"
     body = "\n\n".join([
-        "Auto-generated Codex PR.",
+        "Auto-generated Claude Code PR.",
         f"Session: {session_id}",
         "Files changed:",
         files_changed_summary(cwd) or "(see commit)",
@@ -337,7 +337,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
     ])
     pr_url = retry_text(
         "auto-pr create",
-        lambda: open_pr(f"[codex] task {task_n}: {summary}", body, base=DEFAULT_BASE_BRANCH, cwd=cwd),
+        lambda: open_pr(f"[claude] task {task_n}: {summary}", body, base=DEFAULT_BASE_BRANCH, cwd=cwd),
     )
     if not pr_url:
         write_task_handoff(handoff, session_id, task_n, summary, branch, sha, "", "pr_failed")
