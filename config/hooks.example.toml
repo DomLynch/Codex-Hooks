@@ -1,0 +1,44 @@
+# Sanitized hook config snippet.
+# Copy these blocks into ~/.codex/config.toml and adjust paths if needed.
+
+[features]
+codex_hooks = true
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/mimo_audit.py"
+timeout = 60
+statusMessage = "MiMo audit"
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/stop_orchestrator.py"
+timeout = 180
+statusMessage = "Stop orchestrator"
+
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/session_start.py"
+timeout = 30
+statusMessage = "Loading session handoff"
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/user_prompt_submit.py"
+timeout = 10
+statusMessage = "AAA task router"
+
+[[hooks.PostToolUse]]
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/post_tool.py"
+timeout = 90
+statusMessage = "Quality floor"
