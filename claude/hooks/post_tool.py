@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -13,8 +14,8 @@ from lib.api import call_mimo, load_api_key
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
-from lib.quality import changed_files_in_payload as _codex_changed_files, run_quality_checks
-from lib.claude_adapter import changed_files_in_claude_post_tool as changed_files_in_payload, latest_task_slice_claude
+from lib.quality import run_quality_checks
+from lib.claude_adapter import changed_files_in_claude_post_tool as changed_files_in_payload
 from lib.state import checkpoint_state, now_iso, update_checkpoint_state
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 

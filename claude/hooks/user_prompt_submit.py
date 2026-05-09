@@ -6,6 +6,7 @@ Mirrors ~/.codex/hooks/user_prompt_submit.py but:
   - Outputs in Claude Code's UserPromptSubmit additional-context format
   - Logs to ~/.claude/logs/user_prompt_submit.log
 """
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json

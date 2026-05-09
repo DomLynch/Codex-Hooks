@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -29,7 +30,7 @@ from lib.git import (
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import run_quality_checks
-from lib.state import load_handoff, now_iso, read_session_spec, write_handoff
+from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import latest_task_slice
 
 
