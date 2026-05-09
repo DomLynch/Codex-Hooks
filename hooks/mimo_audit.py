@@ -35,7 +35,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.json_state import load_json_locked, update_json_locked
+from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 
 
 # --- Tunables --------------------------------------------------------------
@@ -60,6 +60,15 @@ AUDIT_PROMPT = """Audit Codex's latest task. Do not explain your reasoning.
 Your first line must be exactly one of:
 VERDICT: PASS
 VERDICT: ISSUES
+
+Important - what counts as "task content":
+The transcript may not always have explicit "ASSISTANT:" labels or rich formatting.
+If the slice contains a user request plus any tool calls, file edits, code, log
+output, or text response, audit THAT content on its merits. Do NOT block with
+complaints like "no Codex/Claude content", "metadata only", "transcript incomplete",
+or "unable to audit" just because the rendering looks plain - judge the work that is
+actually present. If the slice is genuinely empty or under ~50 substantive chars,
+return VERDICT: PASS rather than emitting a meta-complaint about the input format.
 
 Check only the current task for:
 - Bugs, edge cases, off-by-ones, broken logic

@@ -85,6 +85,12 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Unnecessary clarification", mimo_audit.AUDIT_PROMPT)
         self.assertIn("reasonable reversible default", mimo_audit.AUDIT_PROMPT)
 
+    def test_mimo_audit_prompt_blocks_metadata_only_false_alarms(self) -> None:
+        self.assertIn('what counts as "task content"', mimo_audit.AUDIT_PROMPT)
+        self.assertIn("metadata only", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("unable to audit", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
+
     def test_post_tool_blocks_syntax_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "broken.py"
