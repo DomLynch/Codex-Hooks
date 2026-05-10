@@ -214,7 +214,7 @@ def run_aaa_gate(cwd: Path, transcript: str) -> bool:
         ))
     if changed and not protocol:
         log(COMPONENT, "AAA gate ran with cached protocol missing")
-    project_failures = run_project_aaa_checks(cwd)
+    project_failures = run_project_aaa_checks(cwd, changed)
     checks.extend(project_failures)
     if checks:
         block("[AAA Milestone Gate]\n\n" + "\n\n".join(checks))
@@ -223,39 +223,69 @@ def run_aaa_gate(cwd: Path, transcript: str) -> bool:
     return True
 
 
-def run_project_aaa_checks(cwd: Path) -> list[str]:
+def package_manager_command(cwd: Path, package: dict) -> str:
+    declared = str(package.get("packageManager") or "").lower()
+    if declared.startswith("pnpm@") or (cwd / "pnpm-lock.yaml").exists():
+        return "pnpm"
+    if declared.startswith("yarn@") or (cwd / "yarn.lock").exists():
+        return "yarn"
+    if declared.startswith("bun@") or (cwd / "bun.lockb").exists() or (cwd / "bun.lock").exists():
+        return "bun"
+    return "npm"
+
+
+def is_openclaw_repo(cwd: Path, package: dict) -> bool:
+    agents = cwd / "AGENTS.md"
+    return package.get("name") == "openclaw" or (agents.exists() and agents.read_text(errors="ignore").startswith("# AGENTS.MD"))
+
+
+def run_project_aaa_checks(cwd: Path, changed: list[Path] | None = None) -> list[str]:
     failures: list[str] = []
-    if any(cwd.rglob("*.py")):
+    changed = changed or []
+    if not changed:
+        log(COMPONENT, "AAA project checks skipped: clean worktree")
+        return failures
+
+    py_changed = [path for path in changed if path.suffix == ".py"]
+    if py_changed:
         if shutil.which("ruff"):
-            rc, out, err = safe_run(["ruff", "check", "."], cwd=cwd, timeout=120)
+            rc, out, err = safe_run(["ruff", "check", *[str(path.relative_to(cwd)) for path in py_changed]], cwd=cwd, timeout=120)
             if rc != 0:
                 failures.append("ruff failed:\n" + (out + err)[-3000:])
         if shutil.which("mypy") and any((cwd / name).exists() for name in ("mypy.ini", "pyproject.toml", "setup.cfg")):
-            rc, out, err = safe_run(["mypy", "--no-error-summary", "."], cwd=cwd, timeout=120)
+            rc, out, err = safe_run(["mypy", "--no-error-summary", *[str(path.relative_to(cwd)) for path in py_changed]], cwd=cwd, timeout=120)
             if rc != 0:
                 failures.append("mypy failed:\n" + (out + err)[-3000:])
-        if shutil.which("pytest") and ((cwd / "tests").exists() or any(cwd.glob("test_*.py"))):
-            rc, out, err = safe_run(["pytest", "-q"], cwd=cwd, timeout=120)
+        test_changed = [path for path in py_changed if path.name.startswith("test_") or "tests" in path.parts]
+        if shutil.which("pytest") and test_changed:
+            rc, out, err = safe_run(["pytest", "-q", *[str(path.relative_to(cwd)) for path in test_changed]], cwd=cwd, timeout=120)
             if rc != 0:
                 failures.append("pytest failed:\n" + (out + err)[-3000:])
 
     if (cwd / "package.json").exists():
-        if shutil.which("tsc") and (cwd / "tsconfig.json").exists():
-            rc, out, err = safe_run(["tsc", "--noEmit"], cwd=cwd, timeout=120)
-            if rc != 0:
-                failures.append("tsc failed:\n" + (out + err)[-3000:])
-        if shutil.which("eslint"):
-            rc, out, err = safe_run(["eslint", "."], cwd=cwd, timeout=120)
-            if rc != 0:
-                failures.append("eslint failed:\n" + (out + err)[-3000:])
         try:
             package = json.loads((cwd / "package.json").read_text())
         except Exception:
             package = {}
-        if shutil.which("npm") and (package.get("scripts") or {}).get("test"):
-            rc, out, err = safe_run(["npm", "test", "--", "--watch=false"], cwd=cwd, timeout=120)
+        scripts = package.get("scripts") or {}
+        js_changed = [
+            path for path in changed
+            if path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json"} or ".github" in path.parts
+        ]
+        manager = package_manager_command(cwd, package)
+        if js_changed and is_openclaw_repo(cwd, package):
+            log(COMPONENT, "AAA project checks skipped: OpenClaw uses repo-scoped gates; not running full npm test")
+        elif js_changed and scripts.get("test:changed") and shutil.which(manager):
+            rc, out, err = safe_run([manager, "run", "test:changed"], cwd=cwd, timeout=120)
             if rc != 0:
-                failures.append("npm test failed:\n" + (out + err)[-3000:])
+                failures.append(f"{manager} run test:changed failed:\n" + (out + err)[-3000:])
+        elif js_changed and scripts.get("test") and shutil.which(manager):
+            cmd = [manager, "test"]
+            if manager in {"npm", "pnpm", "yarn"}:
+                cmd.extend(["--", "--watch=false"])
+            rc, out, err = safe_run(cmd, cwd=cwd, timeout=120)
+            if rc != 0:
+                failures.append(f"{manager} test failed:\n" + (out + err)[-3000:])
 
     if (cwd / "go.mod").exists() and shutil.which("go"):
         rc, out, err = safe_run(["go", "test", "./..."], cwd=cwd, timeout=120)

@@ -678,6 +678,67 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertFalse(stop_orchestrator.milestone_detected(handover))
 
+    def test_project_aaa_checks_skip_package_tests_when_worktree_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "package.json").write_text(json.dumps({"scripts": {"test": "node slow-suite.js"}}))
+
+            with (
+                mock.patch.object(stop_orchestrator, "safe_run") as safe_run,
+                mock.patch.object(stop_orchestrator, "log"),
+            ):
+                failures = stop_orchestrator.run_project_aaa_checks(repo, [])
+
+        self.assertEqual(failures, [])
+        safe_run.assert_not_called()
+
+    def test_project_aaa_checks_use_declared_pnpm_changed_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "src").mkdir()
+            changed = repo / "src" / "app.ts"
+            changed.write_text("export const ok = true;\n")
+            (repo / "package.json").write_text(
+                json.dumps({
+                    "name": "demo",
+                    "packageManager": "pnpm@10.33.2",
+                    "scripts": {"test": "node slow-suite.js", "test:changed": "vitest related --run"},
+                })
+            )
+
+            with (
+                mock.patch.object(stop_orchestrator.shutil, "which", side_effect=lambda name: f"/bin/{name}" if name == "pnpm" else None),
+                mock.patch.object(stop_orchestrator, "safe_run", return_value=(0, "", "")) as safe_run,
+            ):
+                failures = stop_orchestrator.run_project_aaa_checks(repo, [changed])
+
+        self.assertEqual(failures, [])
+        safe_run.assert_called_once_with(["pnpm", "run", "test:changed"], cwd=repo, timeout=120)
+
+    def test_project_aaa_checks_do_not_run_full_npm_test_for_openclaw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "src").mkdir()
+            changed = repo / "src" / "index.ts"
+            changed.write_text("export const ok = true;\n")
+            (repo / "package.json").write_text(
+                json.dumps({
+                    "name": "openclaw",
+                    "packageManager": "pnpm@10.33.2",
+                    "scripts": {"test": "node scripts/test-projects.mjs"},
+                })
+            )
+
+            with (
+                mock.patch.object(stop_orchestrator.shutil, "which", return_value="/bin/tool"),
+                mock.patch.object(stop_orchestrator, "safe_run") as safe_run,
+                mock.patch.object(stop_orchestrator, "log"),
+            ):
+                failures = stop_orchestrator.run_project_aaa_checks(repo, [changed])
+
+        self.assertEqual(failures, [])
+        safe_run.assert_not_called()
+
     def test_auto_pr_commits_with_mimo_only_auditor_when_claude_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
