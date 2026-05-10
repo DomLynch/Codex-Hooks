@@ -35,7 +35,7 @@ from lib.transcript import latest_task_slice  # noqa: E402
 # --- Tunables --------------------------------------------------------------
 COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "codex")  # "codex" or "claude"
-MIMO_WAIT_TIMEOUT_S = 70     # matches stop_orchestrator wait so Trident gets the verdict instead of mimo=NONE on slow audits
+MIMO_WAIT_TIMEOUT_S = 40     # under the 45s hook timeout in config.toml — leaves ~5s for compose+spawn. Doubles original 25s to catch most slow audits without exceeding the hook deadline.
 OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
 SUMMARY_MAX_CHARS = 1200     # last_assistant_message preview length
 TASK_SLICE_MAX_CHARS = 4000  # current task context sent to OpenClaw/Trident
