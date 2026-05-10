@@ -271,11 +271,22 @@ def read_task_slice(path: str) -> str:
     text = redact_sensitive(text)
     if len(text) <= MAX_TRANSCRIPT_CHARS:
         return text
+    # Cap the head entry to a fraction of the budget so the math always converges.
+    # Without this, a huge first_body (e.g. 100k-char user paste or massive edit-tool
+    # payload) makes tail_budget collapse to 0 and we'd return first + marker + "" —
+    # the entire oversized first entry, uncapped. Observed: 133,581-char audit slices.
+    head_budget = MAX_TRANSCRIPT_CHARS // 3  # ~1333 chars
     first_role, first_body = task_entries[0]
     first = redact_sensitive(f"{first_role}:\n{first_body}")
+    if len(first) > head_budget:
+        first = first[:head_budget] + "\n...[head truncated]..."
     marker = "\n\n...[older task details omitted to stay focused]...\n\n"
     tail_budget = max(0, MAX_TRANSCRIPT_CHARS - len(first) - len(marker))
-    return first + marker + text[-tail_budget:]
+    result = first + marker + text[-tail_budget:]
+    # Final hard cap — load-bearing safety net regardless of upstream math.
+    if len(result) > MAX_TRANSCRIPT_CHARS:
+        result = result[:MAX_TRANSCRIPT_CHARS]
+    return result
 
 
 def load_api_key() -> str:
