@@ -15,6 +15,7 @@ SECRETS_ENV = Path.home() / ".codex" / "secrets" / "hook_env"
 QUEUE_PATH = STATE_DIR / "autonomy_queue.json"
 REPOS_PATH = STATE_DIR / "autonomy_repos.json"
 LESSONS_JSONL = STATE_DIR / "lessons.jsonl"
+LESSONS_STATE = STATE_DIR / "lessons_active.json"
 LESSONS_ACTIVE = STATE_DIR / "lessons_active.md"
 STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
@@ -181,13 +182,24 @@ def record_lesson(source: str, text: str) -> None:
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:
         f.write(json.dumps({"ts": time.time(), "source": source, "lesson": clean}) + "\n")
-    active = active_lessons(10)
-    if clean not in active:
-        active.insert(0, clean)
-    LESSONS_ACTIVE.write_text("\n".join(f"- {item}" for item in active[:5]) + "\n")
+
+    def updater(state: dict) -> dict:
+        lessons = [str(item) for item in state.get("lessons", []) if str(item).strip()]
+        if clean in lessons:
+            lessons.remove(clean)
+        lessons.insert(0, clean)
+        state["lessons"] = lessons[:5]
+        state["updated_at"] = time.time()
+        LESSONS_ACTIVE.write_text("\n".join(f"- {item}" for item in state["lessons"]) + "\n")
+        return state
+
+    update_json_locked(LESSONS_STATE, updater)
 
 
 def active_lessons(limit: int = 5) -> list[str]:
+    state = load_json_locked(LESSONS_STATE, {})
+    if isinstance(state, dict) and isinstance(state.get("lessons"), list):
+        return [str(item) for item in state["lessons"] if str(item).strip()][:limit]
     try:
         return [
             line[2:].strip()
