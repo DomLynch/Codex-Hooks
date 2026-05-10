@@ -38,14 +38,23 @@ COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "claude")  # "codex" or "claude"
 MIMO_WAIT_TIMEOUT_S = 40     # under the 45s hook timeout in config.toml — leaves ~5s for compose+spawn. Doubles original 25s to catch most slow audits without exceeding the hook deadline.
 OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
-SUMMARY_MAX_CHARS = 1200     # last_assistant_message preview length
-TASK_SLICE_MAX_CHARS = 4000  # current task context sent to OpenClaw/Trident
+SUMMARY_MAX_CHARS = 600      # last_assistant_message preview length
+TASK_SLICE_MAX_CHARS = 1500  # current task context sent to OpenClaw/Trident
 ENABLE_ENV = "CODEX_HOOK_TRIDENT_NOTIFY"  # set to "0" to disable per-shell
+
+# Coalesce noisy PASS/UNKNOWN notifications per session. ISSUES bypasses this:
+# blocker signals must always reach Trident. 0 disables the debounce.
+COOLDOWN_S = int(os.environ.get("TRIDENT_NOTIFY_COOLDOWN_S", "30"))
 
 # Path constants — Codex install. Claude install rewrites these to ~/.claude paths.
 LOG_DIR = Path.home() / ".claude" / "logs"
 MIMO_VERDICT_PATH = Path.home() / ".claude" / "state" / "mimo_last_verdict.json"
 HOOK_ENV_PATH = Path.home() / ".claude" / "secrets" / "hook_env"
+COOLDOWN_PATH = Path.home() / ".claude" / "state" / "trident_notify_cooldown.json"
+
+# OpenClaw leaves `<sid>.jsonl.lock` files if an agent process dies mid-write.
+# Sweep only locks whose recorded pid is gone; live locks are preserved.
+OPENCLAW_SESSIONS_DIR = Path.home() / ".openclaw" / "agents" / "main" / "sessions"
 
 LOG_FILE = LOG_DIR / f"{COMPONENT}.log"
 
@@ -74,8 +83,75 @@ def hook_env(name: str, default: str = "") -> str:
     return default
 
 
+def is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def cleanup_stale_session_locks() -> int:
+    if not OPENCLAW_SESSIONS_DIR.exists():
+        return 0
+    removed = 0
+    for lock_path in OPENCLAW_SESSIONS_DIR.glob("*.jsonl.lock"):
+        pid = 0
+        try:
+            data = json.loads(lock_path.read_text())
+            pid = int(data.get("pid", 0) or 0)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        if pid > 0 and is_pid_alive(pid):
+            continue
+        try:
+            lock_path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def should_send(session_id: str, force: bool) -> tuple[bool, str]:
+    if force:
+        return True, "force"
+    if COOLDOWN_S <= 0:
+        return True, "cooldown_disabled"
+    now = time.time()
+    state: dict = {}
+    try:
+        if COOLDOWN_PATH.exists():
+            state = json.loads(COOLDOWN_PATH.read_text())
+            if not isinstance(state, dict):
+                state = {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    last = float(state.get(session_id, 0) or 0)
+    if last and (now - last) < COOLDOWN_S:
+        return False, f"cooldown {now - last:.1f}s of {COOLDOWN_S}s"
+    state[session_id] = now
+    cutoff = now - (COOLDOWN_S * 10)
+    state = {k: v for k, v in state.items() if isinstance(v, (int, float)) and v >= cutoff}
+    try:
+        COOLDOWN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = COOLDOWN_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state))
+        tmp.replace(COOLDOWN_PATH)
+    except OSError:
+        pass
+    return True, "fired"
+
+
 def wait_for_mimo_verdict(session_id: str, turn_id: str) -> dict:
     """Poll mimo_last_verdict.json until MiMo writes a matching turn_id, or timeout."""
+    if not turn_id:
+        return {}
     deadline = time.time() + MIMO_WAIT_TIMEOUT_S
     while time.time() < deadline:
         try:
@@ -197,11 +273,27 @@ def main() -> None:
     if not mimo:
         log(f"mimo verdict not available within {MIMO_WAIT_TIMEOUT_S}s — sending without")
 
+    verdict_str = str(mimo.get("verdict", "")).strip().upper()
+    allow, reason = should_send(session_id, force=(verdict_str == "ISSUES"))
+    if not allow:
+        log(
+            f"agent={AGENT_LABEL} session={session_id[:12]} turn={turn_id[:12]} "
+            f"mimo={mimo.get('verdict', 'NONE')} debounced ({reason})"
+        )
+        sys.exit(0)
+
+    try:
+        cleaned = cleanup_stale_session_locks()
+        if cleaned:
+            log(f"swept {cleaned} stale openclaw session lock(s)")
+    except Exception as e:
+        log(f"lock cleanup failed (non-fatal): {e}")
+
     message = compose_message(payload, mimo)
     ok, info = call_openclaw_agent(message)
     log(
         f"agent={AGENT_LABEL} session={session_id[:12]} turn={turn_id[:12]} "
-        f"mimo={mimo.get('verdict', 'NONE')} sent={ok} info={info}"
+        f"mimo={mimo.get('verdict', 'NONE')} sent={ok} info={info} reason={reason}"
     )
     sys.exit(0)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -161,6 +162,21 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("may log it, queue a small", message)
         self.assertIn("Do NOT queue new work", issues_message)
         self.assertNotIn("turn_id: ?", message)
+
+    def test_trident_notify_wait_stays_below_configured_stop_timeout(self) -> None:
+        config_path = HOOKS_DIR.parent / "config" / "settings.example.json"
+        config = json.loads(config_path.read_text())
+        stop_hooks = config["hooks"]["Stop"][0]["hooks"]
+        notify_timeout = next(h["timeout"] for h in stop_hooks if "trident_notify.py" in h["command"])
+
+        self.assertLess(trident_notify.MIMO_WAIT_TIMEOUT_S, notify_timeout)
+
+    def test_trident_notify_does_not_wait_without_turn_id(self) -> None:
+        start = time.time()
+        verdict = trident_notify.wait_for_mimo_verdict("session", "")
+
+        self.assertEqual(verdict, {})
+        self.assertLess(time.time() - start, 0.5)
 
     def test_call_mimo_prefers_openclaw_transport(self) -> None:
         proc = mock.Mock()
