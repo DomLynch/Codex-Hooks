@@ -13,6 +13,8 @@ adapted for Claude Code's payload schema and config format.
 | `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task MiMo |
 | `Stop` | `mimo_audit.py` | MiMo-v2.5-Pro reviews the turn, blocks on issues |
 | `Stop` | `stop_orchestrator.py` | Optional 2nd audit (Claude), AAA gate, Auto-PR, self-spec chaining |
+| `Stop` | `trident_notify.py` | Pushes turn-end summaries to OpenClaw |
+| launchd | `autonomy_daemon.py` | Shared Codex/Claude/OpenClaw queue planner via `~/.codex/state/` |
 
 ## Differences vs the Codex install
 
@@ -53,6 +55,20 @@ Edit `~/.claude/secrets/hook_env`:
 ```bash
 CODEX_HOOK_AUTO_PR=0       # 1 = auto commit + push + PR on every passed task
 CODEX_HOOK_CLAUDE_AUDIT=0  # 1 = run 2nd-pass audit via Anthropic API
+CODEX_HOOK_AUTONOMY=1
+CODEX_HOOK_AUTONOMY_LEVEL=standard
+```
+
+The autonomy daemon is installed from the repo root with:
+
+```bash
+./scripts/install_autonomy_daemon.sh
+```
+
+Stop switch:
+
+```bash
+touch ~/.codex/state/AUTONOMY_STOP
 ```
 
 For the Anthropic 2nd audit: drop the key at `~/.claude/secrets/anthropic_api_key`

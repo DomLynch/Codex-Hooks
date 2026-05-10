@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 MAX_TRANSCRIPT_CHARS = 4000
+HOOK_PROMPT_RE = re.compile(r"<hook_prompt\b[^>]*>.*?</hook_prompt>", re.DOTALL | re.IGNORECASE)
 
 
 def _content_text(content: object) -> str:
@@ -25,8 +26,12 @@ def sanitize(text: str) -> str:
     text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-<redacted>", text)
     text = re.sub(r"ghp_[A-Za-z0-9_]+", "ghp_<redacted>", text)
     text = re.sub(r'"encrypted_content":\s*"[^"]+"', '"encrypted_content": "<omitted>"', text)
-    text = re.sub(r"<hook_prompt\b[^>]*>.*?</hook_prompt>", "<hook_prompt omitted>", text, flags=re.DOTALL)
+    text = HOOK_PROMPT_RE.sub("<hook_prompt omitted>", text)
     return text.replace("<hook_prompt", "<hook-prompt")
+
+
+def strip_hook_prompts(text: str) -> str:
+    return HOOK_PROMPT_RE.sub("", text or "").strip()
 
 
 def compact(text: str, limit: int) -> str:
@@ -61,7 +66,7 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
             role = str(payload.get("role") or "message").upper()
             text = _content_text(payload.get("content"))
             if role == "USER" and text.lstrip().startswith("<hook_prompt"):
-                continue
+                text = strip_hook_prompts(text) or "[hook feedback omitted]"
             if text:
                 entries.append((role, text))
         elif item_type == "function_call":
@@ -86,4 +91,3 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
     marker = "\n\n...[older task details omitted to stay focused]...\n\n"
     tail_budget = max(0, max_chars - len(first) - len(marker))
     return first + marker + text[-tail_budget:]
-

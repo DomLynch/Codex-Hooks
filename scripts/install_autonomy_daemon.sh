@@ -24,6 +24,11 @@ cat > "$plist" <<EOF
   <integer>720</integer>
   <key>RunAtLoad</key>
   <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>$codex_home/logs/autonomy_daemon.launchd.log</string>
   <key>StandardErrorPath</key>

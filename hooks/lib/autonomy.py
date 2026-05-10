@@ -147,6 +147,8 @@ def remember_repo(cwd: Path) -> None:
         resolved = str(cwd.resolve())
     except Exception:
         return
+    if not (Path(resolved) / ".git").exists():
+        return
 
     def updater(state: dict) -> dict:
         repos = state.setdefault("repos", {})
@@ -163,7 +165,7 @@ def recent_repos(limit: int = 5) -> list[Path]:
     state = load_json_locked(REPOS_PATH, {})
     repos = list((state.get("repos") or {}).values()) if isinstance(state, dict) else []
     paths = [Path(item["path"]) for item in sorted(repos, key=lambda x: x.get("last_seen", 0), reverse=True)]
-    return [path for path in paths if path.exists()][:limit]
+    return [path for path in paths if (path / ".git").exists()][:limit]
 
 
 def record_lesson(source: str, text: str) -> None:

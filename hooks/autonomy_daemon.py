@@ -28,7 +28,7 @@ from lib.log import log  # noqa: E402
 COMPONENT = "autonomy_daemon"
 MIN_QUEUE = 3
 MAX_NEW_TASKS = 5
-OPENCLAW_TIMEOUT_S = 90
+OPENCLAW_TIMEOUT_S = 30
 GEMMA_SPAR = Path.home() / ".openclaw" / "agents" / "main" / "agent" / "codex-home" / "skills" / "gemma-spar" / "scripts" / "spar.py"
 
 
@@ -68,18 +68,44 @@ def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
                     "source_file": path,
                     "priority": 55,
                 })
+    if not tasks:
+        if (repo / "package.json").exists():
+            tasks.append({
+                "title": "Run the project test script and fix the first concrete failure",
+                "body": "Run the repo's existing test command, localize the first real failure, apply the smallest reversible fix, then rerun the focused check.",
+                "cwd": str(repo),
+                "source_file": "package.json",
+                "priority": 45,
+            })
+        elif (repo / "tests").exists() or (repo / "pyproject.toml").exists():
+            tasks.append({
+                "title": "Run the Python test suite and fix the first concrete failure",
+                "body": "Run the repo's existing Python tests, localize the first real failure, apply the smallest reversible fix, then rerun the focused check.",
+                "cwd": str(repo),
+                "source_file": "tests",
+                "priority": 45,
+            })
     return tasks[:limit]
 
 
 def parse_json_tasks(text: str, repo: Path) -> list[dict]:
-    start = text.find("[")
-    end = text.rfind("]")
-    if start < 0 or end <= start:
-        return []
-    try:
-        raw = json.loads(text[start : end + 1])
-    except Exception:
-        return []
+    decoder = json.JSONDecoder()
+    raw: object = None
+    for idx, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(text[idx:])
+        except Exception:
+            continue
+        if isinstance(candidate, list):
+            raw = candidate
+            break
+        if isinstance(candidate, dict) and isinstance(candidate.get("payloads"), list):
+            payload_text = "\n".join(str(item.get("text") or "") for item in candidate["payloads"] if isinstance(item, dict))
+            nested = parse_json_tasks(payload_text, repo)
+            if nested:
+                return nested
     tasks = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict):
@@ -113,14 +139,17 @@ Return ONLY JSON:
 ]
 """
     rc, out, err = safe_run(
-        [binary, "agent", "--agent", "main", "--message", prompt, "--json"],
+        [binary, "agent", "--agent", "main", "--session-id", "trident-autonomy-daemon", "--message", prompt, "--json"],
         cwd=repo,
         timeout=OPENCLAW_TIMEOUT_S,
     )
     if rc != 0:
         log(COMPONENT, f"openclaw planner failed repo={repo} err={(err or out)[-500:]}")
         return []
-    return parse_json_tasks(out, repo)
+    tasks = parse_json_tasks(out, repo)
+    if not tasks:
+        log(COMPONENT, f"openclaw planner returned no tasks repo={repo} preview={out[:300]}")
+    return tasks
 
 
 def gemma_approves(task: dict) -> bool:
@@ -179,7 +208,7 @@ def run_once() -> int:
         return 0
     lessons = active_lessons_text()
     added = 0
-    for repo in recent_repos(limit=5):
+    for repo in recent_repos(limit=3):
         tasks = [task for task in (ask_openclaw(repo, lessons) or mine_local_tasks(repo, limit=MAX_NEW_TASKS)) if gemma_approves(task)]
         added += enqueue_tasks(tasks, source="trident")
         if queued_count() >= MIN_QUEUE:
