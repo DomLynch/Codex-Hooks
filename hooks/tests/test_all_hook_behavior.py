@@ -18,9 +18,11 @@ sys.path.insert(0, str(HOOKS_DIR))
 import mimo_audit  # noqa: E402
 import post_tool  # noqa: E402
 import stop_orchestrator  # noqa: E402
+import trident_notify  # noqa: E402
 import user_prompt_submit  # noqa: E402
 import autonomy_daemon  # noqa: E402
 from lib import autonomy  # noqa: E402
+from lib import api  # noqa: E402
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -82,6 +84,63 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Active Lessons", context)
         self.assertIn("Run the negative path test.", context)
 
+    def test_trident_notify_sends_turn_and_current_task_slice_to_openclaw(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "transcript.jsonl"
+            transcript.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "response_item",
+                        "payload": {"type": "message", "role": "user", "content": [{"text": "fix parser.py"}]},
+                    }),
+                    json.dumps({
+                        "type": "response_item",
+                        "payload": {"type": "function_call", "name": "Edit", "arguments": "{\"file_path\":\"parser.py\"}"},
+                    }),
+                    json.dumps({
+                        "type": "response_item",
+                        "payload": {"type": "message", "role": "assistant", "content": [{"text": "done"}]},
+                    }),
+                ])
+                + "\n"
+            )
+            payload = {"session_id": "codex-session", "transcript_path": str(transcript), "cwd": tmp}
+            turn_id = trident_notify.synthesize_turn_id(payload)
+            payload["turn_id"] = turn_id
+            payload["_task_slice"] = trident_notify.current_task_slice(payload)
+            message = trident_notify.compose_message(payload, {"verdict": "PASS", "preview": "VERDICT: PASS"})
+            issues_message = trident_notify.compose_message(payload, {"verdict": "ISSUES", "preview": "VERDICT: ISSUES"})
+
+        self.assertTrue(turn_id)
+        self.assertIn(f"turn_id: {turn_id}", message)
+        self.assertIn("--- current task slice ---", message)
+        self.assertIn("fix parser.py", message)
+        self.assertIn("TOOL CALL", message)
+        self.assertIn("may log it, queue a small", message)
+        self.assertIn("Do NOT queue new work", issues_message)
+        self.assertNotIn("turn_id: ?", message)
+
+    def test_call_mimo_prefers_openclaw_transport(self) -> None:
+        proc = subprocess.CompletedProcess(
+            ["openclaw"],
+            0,
+            stdout=json.dumps({"ok": True, "outputs": [{"text": "VERDICT: PASS"}]}),
+            stderr="",
+        )
+        with (
+            mock.patch.object(api.shutil, "which", return_value="/usr/bin/openclaw"),
+            mock.patch.object(api.subprocess, "run", return_value=proc) as run,
+            mock.patch.object(api, "load_api_key") as load_key,
+        ):
+            result = api.call_mimo("audit this", timeout=7)
+
+        self.assertEqual(result, "VERDICT: PASS")
+        load_key.assert_not_called()
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:4], ["/usr/bin/openclaw", "infer", "model", "run"])
+        self.assertIn("--gateway", cmd)
+        self.assertIn("mimio/mimo-v2.5-pro", cmd)
+
     def test_simple_prompt_still_gets_no_babysit_policy(self) -> None:
         with mock.patch.object(user_prompt_submit, "log"):
             rc, out = run_main_with_stdin(
@@ -113,6 +172,18 @@ class AllHookBehaviorTests(unittest.TestCase):
             mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
             "VERDICT: ISSUES\n1. Missing regression test",
         )
+
+    def test_mimo_audit_prefers_openclaw_transport(self) -> None:
+        with (
+            mock.patch.object(mimo_audit, "call_mimo_via_openclaw", return_value="PASS") as openclaw,
+            mock.patch.object(mimo_audit.urllib.request, "urlopen") as urlopen,
+            mock.patch.object(mimo_audit, "log"),
+        ):
+            verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
+
+        self.assertEqual(verdict, "VERDICT: PASS")
+        openclaw.assert_called_once()
+        urlopen.assert_not_called()
 
     def test_mimo_bare_pass_allows_stop_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

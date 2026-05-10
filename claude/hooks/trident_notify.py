@@ -31,7 +31,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 # Claude Stop hook payloads have no `turn_id` field. Synthesize a stable one from
 # session_id + transcript hash so notifications can be correlated to specific turns.
-from lib.claude_adapter import normalize_payload  # noqa: E402
+from lib.claude_adapter import latest_task_slice_claude, normalize_payload  # noqa: E402
 
 # --- Tunables --------------------------------------------------------------
 COMPONENT = "trident_notify"
@@ -39,6 +39,7 @@ AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "claude")  # "codex" or "cla
 MIMO_WAIT_TIMEOUT_S = 25     # how long to wait for MiMo verdict before sending anyway
 OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
 SUMMARY_MAX_CHARS = 1200     # last_assistant_message preview length
+TASK_SLICE_MAX_CHARS = 4000  # current task context sent to OpenClaw/Trident
 ENABLE_ENV = "CODEX_HOOK_TRIDENT_NOTIFY"  # set to "0" to disable per-shell
 
 # Path constants — Codex install. Claude install rewrites these to ~/.claude paths.
@@ -88,11 +89,38 @@ def wait_for_mimo_verdict(session_id: str, turn_id: str) -> dict:
     return {}
 
 
+def current_task_slice(payload: dict) -> str:
+    return latest_task_slice_claude(
+        str(payload.get("transcript_path") or ""),
+        str(payload.get("last_assistant_message") or ""),
+        max_chars=TASK_SLICE_MAX_CHARS,
+    ).strip()
+
+
+def trident_instruction(verdict: str) -> str:
+    normalized = (verdict or "").strip().upper()
+    if normalized == "PASS":
+        return (
+            "MiMo PASS: the agent's turn was accepted. You may log it, queue a small "
+            "reversible follow-up, or let the normal autonomy queue continue."
+        )
+    if normalized == "ISSUES":
+        return (
+            "MiMo ISSUES: the agent is being forced to fix this turn. Do NOT queue "
+            "new work for this session yet; log the blocker and wait for the corrected PASS."
+        )
+    return (
+        "MiMo verdict unavailable or unknown: log only unless there is already a "
+        "clearly safe queued task."
+    )
+
+
 def compose_message(payload: dict, mimo: dict) -> str:
     """Build the compact notification Trident receives."""
     last_msg = (payload.get("last_assistant_message") or "").strip()
     if len(last_msg) > SUMMARY_MAX_CHARS:
         last_msg = last_msg[: SUMMARY_MAX_CHARS // 2] + "\n...[truncated]...\n" + last_msg[-SUMMARY_MAX_CHARS // 2 :]
+    task_slice = (payload.get("_task_slice") or current_task_slice(payload) or "").strip()
 
     verdict = mimo.get("verdict") or "UNKNOWN"
     preview = (mimo.get("preview") or "").strip()[:300]
@@ -105,9 +133,11 @@ def compose_message(payload: dict, mimo: dict) -> str:
         f"cwd: {payload.get('cwd', '?')}\n"
         f"mimo_verdict: {verdict}\n"
         f"mimo_preview: {preview}\n"
+        f"\n--- current task slice ---\n{task_slice or '(empty)'}\n"
+        f"--- end current task slice ---\n"
         f"\n--- last assistant message ---\n{last_msg}\n"
         f"--- end ---\n"
-        f"\nDecide: queue follow-up work, ping the user, chain next task, or just log."
+        f"\nTrident instruction:\n{trident_instruction(str(verdict))}"
     )
 
 
@@ -161,6 +191,7 @@ def main() -> None:
     payload = normalize_payload(payload)
     session_id = payload.get("session_id") or "unknown"
     turn_id = payload.get("turn_id") or ""
+    payload["_task_slice"] = current_task_slice(payload)
 
     mimo = wait_for_mimo_verdict(session_id, turn_id)
     if not mimo:

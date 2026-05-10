@@ -19,7 +19,9 @@ from lib.claude_adapter import (  # noqa: E402
 )
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
+import trident_notify  # noqa: E402
 from lib import autonomy  # noqa: E402
+from lib import api  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -93,6 +95,63 @@ class ClaudeAdapterTests(unittest.TestCase):
             mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
             "VERDICT: ISSUES\n1. Missing regression test",
         )
+
+    def test_mimo_audit_prefers_openclaw_transport(self) -> None:
+        with (
+            mock.patch.object(mimo_audit, "call_mimo_via_openclaw", return_value="PASS") as openclaw,
+            mock.patch.object(mimo_audit.urllib.request, "urlopen") as urlopen,
+            mock.patch.object(mimo_audit, "log"),
+        ):
+            verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
+
+        self.assertEqual(verdict, "VERDICT: PASS")
+        openclaw.assert_called_once()
+        urlopen.assert_not_called()
+
+    def test_trident_notify_sends_synthesized_turn_and_task_slice(self) -> None:
+        path = self._transcript([
+            {"type": "user", "message": {"content": "fix claude hook"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "working"},
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "hook.py"}},
+                    ],
+                },
+            },
+        ])
+        payload = trident_notify.normalize_payload({"session_id": "claude-session", "transcript_path": path, "cwd": "/tmp"})
+        payload["_task_slice"] = trident_notify.current_task_slice(payload)
+        message = trident_notify.compose_message(payload, {"verdict": "PASS", "preview": "VERDICT: PASS"})
+        issues_message = trident_notify.compose_message(payload, {"verdict": "ISSUES", "preview": "VERDICT: ISSUES"})
+
+        self.assertTrue(payload["turn_id"])
+        self.assertIn(f"turn_id: {payload['turn_id']}", message)
+        self.assertIn("--- current task slice ---", message)
+        self.assertIn("fix claude hook", message)
+        self.assertIn("TOOL CALL: Edit", message)
+        self.assertIn("may log it, queue a small", message)
+        self.assertIn("Do NOT queue new work", issues_message)
+        self.assertNotIn("turn_id: ?", message)
+
+    def test_call_mimo_prefers_openclaw_transport(self) -> None:
+        proc = mock.Mock()
+        proc.returncode = 0
+        proc.stdout = json.dumps({"ok": True, "outputs": [{"text": "VERDICT: PASS"}]})
+        with (
+            mock.patch.object(api.shutil, "which", return_value="/usr/bin/openclaw"),
+            mock.patch.object(api.subprocess, "run", return_value=proc) as run,
+            mock.patch.object(api, "load_api_key") as load_key,
+        ):
+            result = api.call_mimo("audit this", timeout=7)
+
+        self.assertEqual(result, "VERDICT: PASS")
+        load_key.assert_not_called()
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:4], ["/usr/bin/openclaw", "infer", "model", "run"])
+        self.assertIn("--gateway", cmd)
+        self.assertIn("mimio/mimo-v2.5-pro", cmd)
 
     def test_claude_autonomy_daemon_parses_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

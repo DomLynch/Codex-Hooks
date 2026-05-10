@@ -19,6 +19,7 @@ Output: silent (exit 0). Logs to ~/.codex/logs/trident_notify.log.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -26,12 +27,18 @@ import sys
 import time
 from pathlib import Path
 
+HOOKS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HOOKS_DIR))
+
+from lib.transcript import latest_task_slice  # noqa: E402
+
 # --- Tunables --------------------------------------------------------------
 COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "codex")  # "codex" or "claude"
 MIMO_WAIT_TIMEOUT_S = 25     # how long to wait for MiMo verdict before sending anyway
 OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
 SUMMARY_MAX_CHARS = 1200     # last_assistant_message preview length
+TASK_SLICE_MAX_CHARS = 4000  # current task context sent to OpenClaw/Trident
 ENABLE_ENV = "CODEX_HOOK_TRIDENT_NOTIFY"  # set to "0" to disable per-shell
 
 # Path constants — Codex install. Claude install rewrites these to ~/.claude paths.
@@ -81,11 +88,59 @@ def wait_for_mimo_verdict(session_id: str, turn_id: str) -> dict:
     return {}
 
 
+def synthesize_turn_id(payload: dict) -> str:
+    existing = str(payload.get("turn_id") or "").strip()
+    if existing:
+        return existing
+    parts = [str(payload.get("session_id") or "unknown")]
+    transcript_path = str(payload.get("transcript_path") or "")
+    try:
+        st = Path(transcript_path).stat() if transcript_path else None
+        if st:
+            parts.extend([str(int(st.st_size)), str(int(st.st_mtime))])
+    except Exception:
+        pass
+    if len(parts) == 1:
+        parts.extend([
+            str(payload.get("cwd") or ""),
+            str(payload.get("last_assistant_message") or "")[:300],
+            str(int(time.time() / 60)),
+        ])
+    return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
+
+
+def current_task_slice(payload: dict) -> str:
+    return latest_task_slice(
+        str(payload.get("transcript_path") or ""),
+        fallback=str(payload.get("last_assistant_message") or ""),
+        max_chars=TASK_SLICE_MAX_CHARS,
+    ).strip()
+
+
+def trident_instruction(verdict: str) -> str:
+    normalized = (verdict or "").strip().upper()
+    if normalized == "PASS":
+        return (
+            "MiMo PASS: the agent's turn was accepted. You may log it, queue a small "
+            "reversible follow-up, or let the normal autonomy queue continue."
+        )
+    if normalized == "ISSUES":
+        return (
+            "MiMo ISSUES: the agent is being forced to fix this turn. Do NOT queue "
+            "new work for this session yet; log the blocker and wait for the corrected PASS."
+        )
+    return (
+        "MiMo verdict unavailable or unknown: log only unless there is already a "
+        "clearly safe queued task."
+    )
+
+
 def compose_message(payload: dict, mimo: dict) -> str:
     """Build the compact notification Trident receives."""
     last_msg = (payload.get("last_assistant_message") or "").strip()
     if len(last_msg) > SUMMARY_MAX_CHARS:
         last_msg = last_msg[: SUMMARY_MAX_CHARS // 2] + "\n...[truncated]...\n" + last_msg[-SUMMARY_MAX_CHARS // 2 :]
+    task_slice = (payload.get("_task_slice") or current_task_slice(payload) or "").strip()
 
     verdict = mimo.get("verdict") or "UNKNOWN"
     preview = (mimo.get("preview") or "").strip()[:300]
@@ -98,9 +153,11 @@ def compose_message(payload: dict, mimo: dict) -> str:
         f"cwd: {payload.get('cwd', '?')}\n"
         f"mimo_verdict: {verdict}\n"
         f"mimo_preview: {preview}\n"
+        f"\n--- current task slice ---\n{task_slice or '(empty)'}\n"
+        f"--- end current task slice ---\n"
         f"\n--- last assistant message ---\n{last_msg}\n"
         f"--- end ---\n"
-        f"\nDecide: queue follow-up work, ping the user, chain next task, or just log."
+        f"\nTrident instruction:\n{trident_instruction(str(verdict))}"
     )
 
 
@@ -150,7 +207,9 @@ def main() -> None:
         sys.exit(0)
 
     session_id = payload.get("session_id") or "unknown"
-    turn_id = payload.get("turn_id") or ""
+    turn_id = synthesize_turn_id(payload)
+    payload["turn_id"] = turn_id
+    payload["_task_slice"] = current_task_slice(payload)
 
     mimo = wait_for_mimo_verdict(session_id, turn_id)
     if not mimo:
