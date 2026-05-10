@@ -1,0 +1,31 @@
+name: Hook checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python-hooks:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install check tools
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Run Codex hook tests
+        run: python -m unittest discover -s hooks/tests
+
+      - name: Run Claude hook tests
+        run: python -m unittest discover -s claude/hooks/tests
+
+      - name: Compile hook Python
+        run: python -m py_compile $(find hooks claude/hooks -name '*.py' -not -path '*/__pycache__/*')
+
+      - name: Lint hooks
+        run: ruff check hooks claude/hooks
