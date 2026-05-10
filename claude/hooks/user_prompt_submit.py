@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Claude Code UserPromptSubmit hook — injects autonomy contract + V4/MCP routing.
 
 Mirrors ~/.codex/hooks/user_prompt_submit.py but:
@@ -17,6 +18,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
+from lib.autonomy import active_lessons
 from lib.log import log
 
 
@@ -49,13 +51,17 @@ def is_project_work(prompt: str) -> bool:
 
 
 def context_for(prompt: str, cwd: Path) -> str:
+    lessons = active_lessons()
+    lessons_context = ""
+    if lessons:
+        lessons_context = "\n\n# Active Lessons\n" + "\n".join(f"- {lesson}" for lesson in lessons)
     if not is_project_work(prompt):
         return (
             "# Current-Prompt Discipline\n"
             "- Treat this as the current task only; do not trawl old history unless needed.\n"
             "- For simple chat, answer directly and keep it concise.\n"
             "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.\n\n"
-            f"{AUTONOMY_POLICY}"
+            f"{AUTONOMY_POLICY}{lessons_context}"
         )
 
     return "\n".join(
@@ -70,6 +76,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- Use the V4 core loop scaled to task size: success condition, likely files, smallest reversible change, strong relevant verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",
+            lessons_context.strip(),
         ]
     )
 

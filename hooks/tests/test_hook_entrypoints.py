@@ -14,6 +14,7 @@ import mimo_audit  # noqa: E402
 import post_tool  # noqa: E402
 import session_start  # noqa: E402
 import stop_orchestrator  # noqa: E402
+import trident_notify  # noqa: E402
 import user_prompt_submit  # noqa: E402
 
 
@@ -25,6 +26,7 @@ class HookEntrypointFailureModeTests(unittest.TestCase):
             (post_tool, "log"),
             (mimo_audit, "log"),
             (stop_orchestrator, "log"),
+            (trident_notify, "log"),
         )
         for module, log_name in hooks:
             with self.subTest(hook=module.__name__):

@@ -19,6 +19,8 @@ import mimo_audit  # noqa: E402
 import post_tool  # noqa: E402
 import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
+import autonomy_daemon  # noqa: E402
+from lib import autonomy  # noqa: E402
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -65,6 +67,20 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Do not ask for confirmation", context)
         self.assertIn("reasonable reversible default", context)
         self.assertNotIn("cheapest relevant verification", context)
+
+    def test_user_prompt_submit_injects_active_lessons(self) -> None:
+        with (
+            mock.patch.object(user_prompt_submit, "active_lessons", return_value=["Run the negative path test."]),
+            mock.patch.object(user_prompt_submit, "log"),
+        ):
+            _, out = run_main_with_stdin(
+                user_prompt_submit.main,
+                {"prompt": "fix parser.py", "cwd": "/tmp/project"},
+            )
+
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Active Lessons", context)
+        self.assertIn("Run the negative path test.", context)
 
     def test_simple_prompt_still_gets_no_babysit_policy(self) -> None:
         with mock.patch.object(user_prompt_submit, "log"):
@@ -423,6 +439,42 @@ class AllHookBehaviorTests(unittest.TestCase):
             ):
                 self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", ""))
 
+    def test_shared_autonomy_queue_dedupes_and_leases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.json"
+            stop = Path(tmp) / "STOP"
+            with (
+                mock.patch.object(autonomy, "QUEUE_PATH", queue),
+                mock.patch.object(autonomy, "STOP_PATH", stop),
+                mock.patch.object(autonomy, "SECRETS_ENV", Path(tmp) / "missing_env"),
+            ):
+                added = autonomy.enqueue_tasks(
+                    [
+                        {"title": "Fix parser", "body": "Add edge test", "cwd": tmp, "priority": 70},
+                        {"title": "Fix parser", "body": "Add edge test", "cwd": tmp, "priority": 70},
+                    ],
+                    "test",
+                )
+                first = autonomy.pop_next_task("codex", Path(tmp))
+                second = autonomy.pop_next_task("claude", Path(tmp))
+
+        self.assertEqual(added, 1)
+        self.assertEqual(first["title"], "Fix parser")
+        self.assertEqual(first["status"], "leased")
+        self.assertIsNone(second)
+
+    def test_stop_next_task_prefers_shared_queue(self) -> None:
+        with mock.patch.object(
+            stop_orchestrator,
+            "pop_next_task",
+            return_value={"title": "Queued fix", "body": "Patch app.py and run tests.", "source_file": "app.py"},
+        ):
+            task = stop_orchestrator.next_task("s1", Path("/tmp/repo"), "", "")
+
+        self.assertIn("Queued fix", task)
+        self.assertIn("Patch app.py", task)
+        self.assertIn("Source: app.py", task)
+
     def test_aaa_milestone_gate_blocks_on_project_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             stdout = io.StringIO()
@@ -451,6 +503,19 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertFalse(stop_orchestrator.milestone_detected(hook_feedback))
         self.assertTrue(stop_orchestrator.milestone_detected("ready to merge after final checks"))
         self.assertTrue(stop_orchestrator.milestone_detected("this is an AAA milestone release"))
+        self.assertTrue(stop_orchestrator.milestone_detected("ship it now"))
+
+    def test_milestone_detector_ignores_openclaw_handover_terms(self) -> None:
+        handover = """
+        USER:
+        OpenClaw setup handover:
+        - provider model mimo-v2.5-pro
+        - queried upstream /v1/models
+        - previous release cleanup notes are historical context
+        - prior memory mentions AAA Milestone Gate false trigger
+        """
+
+        self.assertFalse(stop_orchestrator.milestone_detected(handover))
 
     def test_auto_pr_commits_with_mimo_only_auditor_when_claude_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -485,6 +550,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(status, "created")
         self.assertIn("Audited-by: MiMo-v2.5-Pro", message)
         self.assertNotIn("Claude", message)
+        self.assertEqual(handoff["cwd"], str(repo))
         self.assertEqual(handoff["last_task"]["status"], "created")
         self.assertEqual(handoff["last_task"]["sha"], sha)
 
@@ -644,6 +710,38 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Add coverage for parser", task)
         self.assertIn("agent/parser.py", task)
         self.assertEqual([item["description"] for item in written["queued_backlog"]], ["Resolve TODO"])
+
+    def test_self_spec_ignores_stale_handoff_backlog_from_other_cwd(self) -> None:
+        handoff = {
+            "cwd": "/tmp/old-repo",
+            "tasks_completed_count": 0,
+            "queued_backlog": [
+                {"description": "Fill incomplete markdown section", "source_file": "missing.md", "priority": 30},
+            ],
+        }
+        with (
+            mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+            mock.patch.object(stop_orchestrator, "write_handoff") as write_handoff,
+            mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
+            mock.patch.object(stop_orchestrator, "call_mimo", return_value="STATUS: COMPLETE"),
+            mock.patch.object(stop_orchestrator, "log"),
+        ):
+            task = stop_orchestrator.next_task("session-self-spec", Path("/tmp/current-repo"), "branch", "pr")
+
+        self.assertEqual(task, "")
+        write_handoff.assert_not_called()
+
+    def test_autonomy_daemon_parses_openclaw_json_and_filters_gemma(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            raw = 'noise [{"title":"Good task","body":"Run tests","source_file":"x.py","priority":70}] tail'
+            tasks = autonomy_daemon.parse_json_tasks(raw, repo)
+            with mock.patch.object(autonomy_daemon, "GEMMA_SPAR", Path(tmp) / "missing"):
+                approved = autonomy_daemon.gemma_approves(tasks[0])
+
+        self.assertEqual(tasks[0]["title"], "Good task")
+        self.assertEqual(tasks[0]["cwd"], str(repo))
+        self.assertTrue(approved)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from lib.claude_adapter import (  # noqa: E402
     synthesize_turn_id,
 )
 import mimo_audit  # noqa: E402
+import autonomy_daemon  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -90,6 +91,16 @@ class ClaudeAdapterTests(unittest.TestCase):
             mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
             "VERDICT: ISSUES\n1. Missing regression test",
         )
+
+    def test_claude_autonomy_daemon_parses_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = autonomy_daemon.parse_json_tasks(
+                '[{"title":"Tighten hook test","body":"Run unittest","source_file":"hooks/x.py"}]',
+                Path(tmp),
+            )
+
+        self.assertEqual(tasks[0]["title"], "Tighten hook test")
+        self.assertEqual(tasks[0]["cwd"], tmp)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import call_claude, call_mimo
+from lib.autonomy import pop_next_task, remember_repo
 from lib.git import (
     commit,
     current_session_branch,
@@ -38,8 +39,11 @@ from lib.transcript import latest_task_slice
 COMPONENT = "stop_orchestrator"
 MAX_CLAUDE_ITERATIONS = 3
 MAX_TASKS_PER_SESSION = 8
-MILESTONE_KEYWORDS = {"milestone", "release", "ready to merge", "v1.", "v2.", "deployable"}
-MILESTONE_PHRASES = {"aaa milestone"}
+MILESTONE_INTENT_PATTERNS = (
+    re.compile(r"\bready\s+to\s+(?:merge|ship|release|deploy)\b", re.IGNORECASE),
+    re.compile(r"\b(?:ship|merge|land|deploy|release)\s+(?:it|this|now)\b", re.IGNORECASE),
+    re.compile(r"\baaa\s+milestone\s+(?:release|ship|merge|deploy)\b", re.IGNORECASE),
+)
 DEFAULT_BASE_BRANCH = "main"
 MIMO_WAIT_TIMEOUT_S = 70
 AUTO_PR_SIDE_EFFECT_ATTEMPTS = 3
@@ -187,10 +191,8 @@ def strip_hook_prompts(text: str) -> str:
 
 
 def milestone_detected(text: str) -> bool:
-    lower = strip_hook_prompts(text).lower()
-    return any(keyword in lower for keyword in MILESTONE_KEYWORDS) or any(
-        phrase in lower for phrase in MILESTONE_PHRASES
-    )
+    cleaned = strip_hook_prompts(text)
+    return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
 def run_aaa_gate(cwd: Path, transcript: str) -> bool:
@@ -321,6 +323,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
     if not ok:
         log(COMPONENT, f"auto-pr skipped before side effects: {reason}")
         return "", "", "", "preflight_failed"
+    handoff["cwd"] = str(cwd)
 
     if not ensure_branch(current_session_branch(session_id), cwd):
         log(COMPONENT, "auto-pr skipped: could not ensure session branch")
@@ -364,7 +367,18 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
 
 
 def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
+    queued = pop_next_task("codex", cwd)
+    if queued:
+        title = queued.get("title") or "Queued task"
+        body = queued.get("body") or ""
+        source = queued.get("source_file") or queued.get("source") or "queue"
+        return f"{title}\n\n{body}\n\nSource: {source}"
+
     handoff = load_handoff()
+    handoff_cwd = handoff.get("cwd")
+    if handoff_cwd and Path(handoff_cwd).resolve() != cwd.resolve():
+        log(COMPONENT, f"self-spec skipped stale handoff cwd={handoff_cwd}")
+        handoff = {}
     completed = int(handoff.get("tasks_completed_count", 0))
     if completed >= MAX_TASKS_PER_SESSION:
         log(COMPONENT, "self-spec skipped: max task budget")
@@ -410,6 +424,7 @@ def main() -> None:
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
         cwd = resolve_git_cwd(cwd, transcript=transcript)
+        remember_repo(cwd)
         session_spec = read_session_spec(session_id)
 
         log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")

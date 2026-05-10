@@ -16,6 +16,9 @@ logs, trusted hashes, or full local Codex app config.
 - `Stop / MiMo audit`: final MiMo-v2.5-Pro review before Codex ends a turn.
 - `Stop / orchestrator`: waits for MiMo pass, runs milestone gates, optional
   Auto-PR, and self-spec chaining.
+- `Stop / Trident notify`: pushes turn-end summaries to OpenClaw.
+- `Autonomy daemon`: launchd job that keeps a shared task queue warm for
+  Codex/Claude/OpenClaw long-horizon runs.
 
 ## Install / Sync To Local Codex
 
@@ -23,6 +26,7 @@ From this repo:
 
 ```bash
 ./scripts/install.sh
+./scripts/install_autonomy_daemon.sh
 ```
 
 Then ensure `~/.codex/config.toml` includes the hook blocks from:
@@ -58,6 +62,14 @@ Example:
 ```text
 CODEX_HOOK_AUTO_PR=1
 CODEX_HOOK_CLAUDE_AUDIT=0
+CODEX_HOOK_AUTONOMY=1
+CODEX_HOOK_AUTONOMY_LEVEL=standard
+```
+
+Stop switch:
+
+```bash
+touch ~/.codex/state/AUTONOMY_STOP
 ```
 
 ## Verify
@@ -65,6 +77,7 @@ CODEX_HOOK_CLAUDE_AUDIT=0
 ```bash
 python3 -m py_compile hooks/*.py hooks/lib/*.py hooks/tests/*.py
 python3 -m unittest discover -s hooks/tests -p 'test_*.py'
+tail -f ~/.codex/logs/autonomy_daemon.log
 ```
 
 ## Safety Boundary

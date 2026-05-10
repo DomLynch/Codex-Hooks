@@ -18,6 +18,12 @@ command = "python3 /Users/domininclynch/.codex/hooks/stop_orchestrator.py"
 timeout = 180
 statusMessage = "Stop orchestrator"
 
+[[hooks.Stop.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/trident_notify.py"
+timeout = 45
+statusMessage = "Trident notify"
+
 [[hooks.SessionStart]]
 matcher = "startup|resume"
 
