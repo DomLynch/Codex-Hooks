@@ -26,6 +26,13 @@ import sys
 import time
 from pathlib import Path
 
+HOOKS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(HOOKS_DIR))
+
+# Claude Stop hook payloads have no `turn_id` field. Synthesize a stable one from
+# session_id + transcript hash so notifications can be correlated to specific turns.
+from lib.claude_adapter import normalize_payload  # noqa: E402
+
 # --- Tunables --------------------------------------------------------------
 COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "claude")  # "codex" or "claude"
@@ -149,6 +156,9 @@ def main() -> None:
         log(f"bad payload: {e}")
         sys.exit(0)
 
+    # Claude Code's Stop hook payload doesn't include turn_id — synthesize one from
+    # session_id + transcript hash so notify entries are turn-correlatable.
+    payload = normalize_payload(payload)
     session_id = payload.get("session_id") or "unknown"
     turn_id = payload.get("turn_id") or ""
 
