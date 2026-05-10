@@ -7,7 +7,7 @@ on:
 
 jobs:
   python-hooks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, codex-hooks-local]
     steps:
       - uses: actions/checkout@v4
 
