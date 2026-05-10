@@ -63,7 +63,7 @@ def call_mimo_via_openclaw(prompt: str, max_tokens: int = 1500, timeout: int = 4
                 "infer",
                 "model",
                 "run",
-                "--gateway",
+                *(["--gateway"] if os.environ.get("CODEX_HOOK_OPENCLAW_GATEWAY") == "1" else []),
                 "--model",
                 OPENCLAW_MIMO_MODEL,
                 "--prompt",

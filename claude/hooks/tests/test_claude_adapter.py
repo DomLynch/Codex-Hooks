@@ -150,7 +150,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         load_key.assert_not_called()
         cmd = run.call_args.args[0]
         self.assertEqual(cmd[:4], ["/usr/bin/openclaw", "infer", "model", "run"])
-        self.assertIn("--gateway", cmd)
+        self.assertNotIn("--gateway", cmd)
         self.assertIn("mimio/mimo-v2.5-pro", cmd)
 
     def test_claude_autonomy_daemon_parses_tasks(self) -> None:
