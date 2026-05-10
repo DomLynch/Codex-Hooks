@@ -20,6 +20,7 @@ STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
 MAX_QUEUE = 80
+SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
 
 
 def hook_env(name: str, default: str = "") -> str:
@@ -149,6 +150,8 @@ def remember_repo(cwd: Path) -> None:
         return
     if not (Path(resolved) / ".git").exists():
         return
+    if set(Path(resolved).parts) & SKIP_REPO_PARTS:
+        return
 
     def updater(state: dict) -> dict:
         repos = state.setdefault("repos", {})
@@ -165,7 +168,10 @@ def recent_repos(limit: int = 5) -> list[Path]:
     state = load_json_locked(REPOS_PATH, {})
     repos = list((state.get("repos") or {}).values()) if isinstance(state, dict) else []
     paths = [Path(item["path"]) for item in sorted(repos, key=lambda x: x.get("last_seen", 0), reverse=True)]
-    return [path for path in paths if (path / ".git").exists()][:limit]
+    return [
+        path for path in paths
+        if (path / ".git").exists() and not (set(path.parts) & SKIP_REPO_PARTS)
+    ][:limit]
 
 
 def record_lesson(source: str, text: str) -> None:
