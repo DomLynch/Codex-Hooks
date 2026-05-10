@@ -513,6 +513,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(status, "created")
         self.assertIn("Audited-by: MiMo-v2.5-Pro", message)
         self.assertNotIn("Claude", message)
+        self.assertEqual(handoff["cwd"], str(repo))
         self.assertEqual(handoff["last_task"]["status"], "created")
         self.assertEqual(handoff["last_task"]["sha"], sha)
 
@@ -672,6 +673,26 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Add coverage for parser", task)
         self.assertIn("agent/parser.py", task)
         self.assertEqual([item["description"] for item in written["queued_backlog"]], ["Resolve TODO"])
+
+    def test_self_spec_ignores_stale_handoff_backlog_from_other_cwd(self) -> None:
+        handoff = {
+            "cwd": "/tmp/old-repo",
+            "tasks_completed_count": 0,
+            "queued_backlog": [
+                {"description": "Fill incomplete markdown section", "source_file": "missing.md", "priority": 30},
+            ],
+        }
+        with (
+            mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+            mock.patch.object(stop_orchestrator, "write_handoff") as write_handoff,
+            mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
+            mock.patch.object(stop_orchestrator, "call_mimo", return_value="STATUS: COMPLETE"),
+            mock.patch.object(stop_orchestrator, "log"),
+        ):
+            task = stop_orchestrator.next_task("session-self-spec", Path("/tmp/current-repo"), "branch", "pr")
+
+        self.assertEqual(task, "")
+        write_handoff.assert_not_called()
 
     def test_autonomy_daemon_parses_openclaw_json_and_filters_gemma(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

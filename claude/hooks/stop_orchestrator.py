@@ -323,6 +323,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
     if not ok:
         log(COMPONENT, f"auto-pr skipped before side effects: {reason}")
         return "", "", "", "preflight_failed"
+    handoff["cwd"] = str(cwd)
 
     if not ensure_branch(current_session_branch(session_id), cwd):
         log(COMPONENT, "auto-pr skipped: could not ensure session branch")
@@ -374,6 +375,10 @@ def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
         return f"{title}\n\n{body}\n\nSource: {source}"
 
     handoff = load_handoff()
+    handoff_cwd = handoff.get("cwd")
+    if handoff_cwd and Path(handoff_cwd).resolve() != cwd.resolve():
+        log(COMPONENT, f"self-spec skipped stale handoff cwd={handoff_cwd}")
+        handoff = {}
     completed = int(handoff.get("tasks_completed_count", 0))
     if completed >= MAX_TASKS_PER_SESSION:
         log(COMPONENT, "self-spec skipped: max task budget")
