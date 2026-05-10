@@ -78,7 +78,7 @@ The USER section may include pasted evidence: JSON dumps, log excerpts, code
 blocks, quoted prior conversations, tool output, evidence the agent retrieved.
 The user's CURRENT request is the natural-language ask at the end of the USER
 section, NOT fragments inside pasted content. Do NOT flag "truncated requests"
-or "incomplete asks" found inside pasted evidence — those are quoted artifacts,
+    or "incomplete asks" found inside pasted evidence - those are quoted artifacts,
 not the user's actual prompt. If the visible current request is clear and
 complete, do not demand clarification or invent a phantom truncation.
 

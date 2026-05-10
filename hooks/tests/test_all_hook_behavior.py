@@ -181,6 +181,8 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("metadata only", mimo_audit.AUDIT_PROMPT)
         self.assertIn("unable to audit", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("pasted evidence", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("phantom truncation", mimo_audit.AUDIT_PROMPT)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:
         self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")
