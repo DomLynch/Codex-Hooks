@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
+from lib.autonomy import remember_repo
 from lib.log import log
 from lib.git import is_git_repo
 from lib.quality import mine_backlog
@@ -113,6 +115,7 @@ def main() -> None:
         if prompt:
             write_session_spec(session_id, prompt)
             log(COMPONENT, f"session spec captured chars={len(prompt)}")
+        remember_repo(cwd)
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])

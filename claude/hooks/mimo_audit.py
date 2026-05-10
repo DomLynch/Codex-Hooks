@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """
 Claude Code Stop hook: 3rd-party audit with MiMo-v2.5-Pro.
 
@@ -35,6 +36,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
+from lib.autonomy import record_lesson
 from lib.json_state import load_json_locked, update_json_locked
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude
 
@@ -491,6 +493,7 @@ def main() -> None:
     if verdict_text.startswith("VERDICT: ISSUES"):
         save_iterations(session_id, turn_id, iterations + 1)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
+        record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         feedback = (
             f"[MiMo code-review hook — iteration "
             f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"

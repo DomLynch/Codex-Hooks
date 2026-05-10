@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import call_claude, call_mimo
+from lib.autonomy import pop_next_task, remember_repo
 from lib.git import (
     commit,
     current_session_branch,
@@ -29,7 +31,7 @@ from lib.git import (
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import run_quality_checks
-from lib.state import load_handoff, now_iso, read_session_spec, write_handoff
+from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import latest_task_slice
 
 
@@ -349,6 +351,13 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
 
 
 def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
+    queued = pop_next_task("codex", cwd)
+    if queued:
+        title = queued.get("title") or "Queued task"
+        body = queued.get("body") or ""
+        source = queued.get("source_file") or queued.get("source") or "queue"
+        return f"{title}\n\n{body}\n\nSource: {source}"
+
     handoff = load_handoff()
     completed = int(handoff.get("tasks_completed_count", 0))
     if completed >= MAX_TASKS_PER_SESSION:
@@ -395,6 +404,7 @@ def main() -> None:
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
         cwd = resolve_git_cwd(cwd, transcript=transcript)
+        remember_repo(cwd)
         session_spec = read_session_spec(session_id)
 
         log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")

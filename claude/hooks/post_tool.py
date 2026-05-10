@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -10,11 +11,12 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import call_mimo, load_api_key
+from lib.autonomy import record_lesson, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
-from lib.quality import changed_files_in_payload as _codex_changed_files, run_quality_checks
-from lib.claude_adapter import changed_files_in_claude_post_tool as changed_files_in_payload, latest_task_slice_claude
+from lib.quality import run_quality_checks
+from lib.claude_adapter import changed_files_in_claude_post_tool as changed_files_in_payload
 from lib.state import checkpoint_state, now_iso, update_checkpoint_state
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 
@@ -177,6 +179,7 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     update_audit_state(session_id, audited=True, verdict=verdict, preview=normalized)
     log(COMPONENT, f"mimo checkpoint verdict={verdict} transcript={len(transcript)}")
     if verdict == "ISSUES":
+        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized)
         block(
             "[MiMo checkpoint audit]\n\n"
             "MiMo-v2.5-Pro reviewed this in-progress task checkpoint and found concrete issues. "
@@ -219,6 +222,7 @@ def main() -> None:
         cwd = Path(payload.get("cwd") or ".").resolve()
         files = changed_files_in_payload(payload)
         cwd = resolve_git_cwd(cwd, files)
+        remember_repo(cwd)
         if not files and is_git_repo(cwd):
             files = changed_files(cwd)[:10]
         if files:

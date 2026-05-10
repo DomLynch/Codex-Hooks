@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -98,7 +99,7 @@ def enqueue_tasks(tasks: list[dict[str, Any]], source: str) -> int:
             current.append(task)
             active_ids.add(task["id"])
             added += 1
-        state["tasks"] = sorted(current, key=lambda t: int(t.get("priority", 0)), reverse=True)[-MAX_QUEUE:]
+        state["tasks"] = sorted(current, key=lambda t: int(t.get("priority", 0)), reverse=True)[:MAX_QUEUE]
         state["updated_at"] = time.time()
         return state
 
@@ -171,7 +172,7 @@ def record_lesson(source: str, text: str) -> None:
         return
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:
-        f.write(f'{{"ts":{time.time()},"source":"{source}","lesson":{clean!r}}}\n')
+        f.write(json.dumps({"ts": time.time(), "source": source, "lesson": clean}) + "\n")
     active = active_lessons(10)
     if clean not in active:
         active.insert(0, clean)
