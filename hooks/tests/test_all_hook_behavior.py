@@ -463,6 +463,78 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(first["status"], "leased")
         self.assertIsNone(second)
 
+    def test_shared_autonomy_queue_holds_risky_tasks_until_approved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.json"
+            with (
+                mock.patch.object(autonomy, "QUEUE_PATH", queue),
+                mock.patch.object(autonomy, "STOP_PATH", Path(tmp) / "STOP"),
+                mock.patch.object(autonomy, "SECRETS_ENV", Path(tmp) / "missing_env"),
+            ):
+                added = autonomy.enqueue_tasks(
+                    [{
+                        "title": "Deploy production cleanup",
+                        "body": "SSH to the VPS and remove stale files after deploy.",
+                        "cwd": tmp,
+                        "priority": 90,
+                    }],
+                    "test",
+                )
+                held = json.loads(queue.read_text())["tasks"][0]
+                blocked = autonomy.pop_next_task("codex", Path(tmp))
+
+                def approve(state: dict) -> dict:
+                    state["tasks"][0]["status"] = "queued"
+                    state["tasks"][0]["approved"] = True
+                    state["tasks"][0].pop("hold_reason", None)
+                    return state
+
+                autonomy.update_json_locked(queue, approve)
+                approved = autonomy.pop_next_task("codex", Path(tmp))
+
+        self.assertEqual(added, 1)
+        self.assertEqual(held["status"], "held")
+        self.assertIn("risky autonomous task", held["hold_reason"])
+        self.assertIsNone(blocked)
+        self.assertEqual(approved["status"], "leased")
+        self.assertTrue(approved["approved"])
+
+    def test_active_lessons_expire_and_rotate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            now = 1_800_000_000.0
+            lessons_state = Path(tmp) / "lessons_active.json"
+            lessons_jsonl = Path(tmp) / "lessons.jsonl"
+            lessons_md = Path(tmp) / "lessons_active.md"
+            with (
+                mock.patch.object(autonomy, "LESSONS_STATE", lessons_state),
+                mock.patch.object(autonomy, "LESSONS_JSONL", lessons_jsonl),
+                mock.patch.object(autonomy, "LESSONS_ACTIVE", lessons_md),
+                mock.patch.object(autonomy, "SECRETS_ENV", Path(tmp) / "missing_env"),
+                mock.patch.object(autonomy.time, "time", return_value=now),
+            ):
+                for idx in range(7):
+                    autonomy.record_lesson("test", f"Lesson {idx}")
+                self.assertEqual(
+                    autonomy.active_lessons(limit=10),
+                    ["Lesson 6", "Lesson 5", "Lesson 4", "Lesson 3", "Lesson 2"],
+                )
+                lessons_state.write_text(json.dumps({
+                    "updated_at": now,
+                    "lessons": [
+                        {"lesson": "expired lesson", "source": "test", "ts": now - 15 * 24 * 60 * 60},
+                        {"lesson": "fresh lesson", "source": "test", "ts": now - 13 * 24 * 60 * 60},
+                    ],
+                }))
+                self.assertEqual(autonomy.active_lessons(limit=10), ["fresh lesson"])
+
+    def test_autonomy_daemon_installer_has_lifecycle_and_stop_switch(self) -> None:
+        script = (HOOKS_DIR.parents[0] / "scripts" / "install_autonomy_daemon.sh").read_text()
+
+        self.assertIn("<key>StartInterval</key>", script)
+        self.assertIn("<integer>720</integer>", script)
+        self.assertIn("launchctl bootstrap", script)
+        self.assertIn("AUTONOMY_STOP", script)
+
     def test_stop_next_task_prefers_shared_queue(self) -> None:
         with mock.patch.object(
             stop_orchestrator,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,18 @@ STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
 MAX_QUEUE = 80
+MAX_ACTIVE_LESSONS = 5
+DEFAULT_LESSON_TTL_DAYS = 14
 SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
+RISKY_TASK_RE = re.compile(
+    r"\b("
+    r"rm\s+-rf|delete|drop\s+(database|table|schema)|truncate|migrat(e|ion)|"
+    r"prod(uction)?|deploy|vps|ssh|scp|rsync|terraform|dns|certificate|"
+    r"secret|credential|token|api\s*key|payment|purchase|billing|sudo|chmod|chown|"
+    r"curl\b.*\|\s*(sh|bash)|auto-?merge|merge\s+to\s+main"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def hook_env(name: str, default: str = "") -> str:
@@ -50,6 +62,25 @@ def task_id(task: dict[str, Any]) -> str:
     return hashlib.sha1(base.encode()).hexdigest()[:12]
 
 
+def _truthy(value: object) -> bool:
+    return value is True or str(value).strip().lower() in {"1", "true", "yes", "y", "approved"}
+
+
+def is_safe_task(task: dict[str, Any]) -> tuple[bool, str]:
+    if not str(task.get("title") or "").strip():
+        return False, "missing task title"
+    if _truthy(task.get("approved")):
+        return True, "approved"
+    if task.get("status") == "held" or _truthy(task.get("requires_approval")):
+        return False, "task requires manual approval"
+    if not str(task.get("cwd") or "").strip():
+        return False, "missing repo cwd"
+    haystack = "\n".join(str(task.get(key) or "") for key in ("title", "body", "source_file", "cwd"))
+    if RISKY_TASK_RE.search(haystack):
+        return False, "risky autonomous task; set approved=true after human review"
+    return True, "safe"
+
+
 def normalize_task(task: dict[str, Any], source: str) -> dict[str, Any]:
     title = str(task.get("title") or task.get("description") or "").strip()
     body = str(task.get("body") or task.get("acceptance") or "").strip()
@@ -63,9 +94,16 @@ def normalize_task(task: dict[str, Any], source: str) -> dict[str, Any]:
         "source": source,
         "status": "queued",
         "attempts": int(task.get("attempts") or 0),
+        "approved": _truthy(task.get("approved")),
+        "requires_approval": _truthy(task.get("requires_approval")),
         "created_at": time.time(),
     }
     normalized["id"] = str(task.get("id") or task_id(normalized))
+    safe, reason = is_safe_task(normalized)
+    normalized["safety"] = "approved" if normalized["approved"] else ("safe" if safe else "held")
+    if not safe:
+        normalized["status"] = "held"
+        normalized["hold_reason"] = reason
     return normalized
 
 
@@ -93,7 +131,7 @@ def enqueue_tasks(tasks: list[dict[str, Any]], source: str) -> int:
         nonlocal added
         state.setdefault("version", 1)
         current = state.setdefault("tasks", [])
-        active_ids = {task.get("id") for task in current if task.get("status") in {"queued", "leased"}}
+        active_ids = {task.get("id") for task in current if task.get("status") in {"queued", "leased", "held"}}
         for raw in tasks:
             task = normalize_task(raw, source)
             if not task["title"] or task["id"] in active_ids:
@@ -126,6 +164,12 @@ def pop_next_task(worker: str, cwd: Path | None = None) -> dict[str, Any] | None
                 task.pop("lease_until", None)
         for task in tasks:
             if task.get("status") != "queued":
+                continue
+            safe, reason = is_safe_task(task)
+            if not safe:
+                task["status"] = "held"
+                task["safety"] = "held"
+                task["hold_reason"] = reason
                 continue
             task_cwd = str(task.get("cwd") or "")
             if wanted and task_cwd and Path(task_cwd).resolve() != Path(wanted):
@@ -179,28 +223,65 @@ def record_lesson(source: str, text: str) -> None:
     clean = " ".join((text or "").split())[:240]
     if not clean:
         return
+    now = time.time()
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:
-        f.write(json.dumps({"ts": time.time(), "source": source, "lesson": clean}) + "\n")
+        f.write(json.dumps({"ts": now, "source": source, "lesson": clean}) + "\n")
 
     def updater(state: dict) -> dict:
-        lessons = [str(item) for item in state.get("lessons", []) if str(item).strip()]
-        if clean in lessons:
-            lessons.remove(clean)
-        lessons.insert(0, clean)
-        state["lessons"] = lessons[:5]
-        state["updated_at"] = time.time()
-        LESSONS_ACTIVE.write_text("\n".join(f"- {item}" for item in state["lessons"]) + "\n")
+        entries = _fresh_lesson_entries(_lesson_entries(state), now)
+        entries = [item for item in entries if item["lesson"] != clean]
+        entries.insert(0, {"lesson": clean, "source": source, "ts": now})
+        state["lessons"] = entries[:MAX_ACTIVE_LESSONS]
+        state["updated_at"] = now
+        LESSONS_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
+        LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in state["lessons"]) + "\n")
         return state
 
     update_json_locked(LESSONS_STATE, updater)
 
 
+def lesson_ttl_s() -> int:
+    try:
+        days = int(hook_env("CODEX_HOOK_LESSON_TTL_DAYS", str(DEFAULT_LESSON_TTL_DAYS)))
+    except ValueError:
+        days = DEFAULT_LESSON_TTL_DAYS
+    return max(1, days) * 24 * 60 * 60
+
+
+def _lesson_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
+    updated_at = float(state.get("updated_at") or 0)
+    entries: list[dict[str, Any]] = []
+    for item in state.get("lessons", []) if isinstance(state.get("lessons"), list) else []:
+        if isinstance(item, dict):
+            lesson = str(item.get("lesson") or "").strip()
+            if lesson:
+                entries.append({
+                    "lesson": lesson,
+                    "source": str(item.get("source") or "unknown"),
+                    "ts": float(item.get("ts") or updated_at or 0),
+                })
+        else:
+            lesson = str(item).strip()
+            if lesson:
+                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at})
+    return entries
+
+
+def _fresh_lesson_entries(entries: list[dict[str, Any]], now: float | None = None) -> list[dict[str, Any]]:
+    current = time.time() if now is None else now
+    cutoff = current - lesson_ttl_s()
+    fresh = [item for item in entries if float(item.get("ts") or 0) >= cutoff]
+    return fresh[:MAX_ACTIVE_LESSONS]
+
+
 def active_lessons(limit: int = 5) -> list[str]:
     state = load_json_locked(LESSONS_STATE, {})
     if isinstance(state, dict) and isinstance(state.get("lessons"), list):
-        return [str(item) for item in state["lessons"] if str(item).strip()][:limit]
+        return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))][:limit]
     try:
+        if time.time() - LESSONS_ACTIVE.stat().st_mtime > lesson_ttl_s():
+            return []
         return [
             line[2:].strip()
             for line in LESSONS_ACTIVE.read_text().splitlines()

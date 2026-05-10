@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOKS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS_DIR))
@@ -18,6 +19,7 @@ from lib.claude_adapter import (  # noqa: E402
 )
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
+from lib import autonomy  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -101,6 +103,30 @@ class ClaudeAdapterTests(unittest.TestCase):
 
         self.assertEqual(tasks[0]["title"], "Tighten hook test")
         self.assertEqual(tasks[0]["cwd"], tmp)
+
+    def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            queue = Path(tmp) / "queue.json"
+            with (
+                mock.patch.object(autonomy, "QUEUE_PATH", queue),
+                mock.patch.object(autonomy, "STOP_PATH", Path(tmp) / "STOP"),
+                mock.patch.object(autonomy, "SECRETS_ENV", Path(tmp) / "missing_env"),
+            ):
+                added = autonomy.enqueue_tasks(
+                    [{
+                        "title": "Deploy production fix",
+                        "body": "Run ssh to update the VPS.",
+                        "cwd": tmp,
+                    }],
+                    "test",
+                )
+                state = json.loads(queue.read_text())
+                popped = autonomy.pop_next_task("claude", Path(tmp))
+
+        self.assertEqual(added, 1)
+        self.assertEqual(state["tasks"][0]["status"], "held")
+        self.assertIn("risky autonomous task", state["tasks"][0]["hold_reason"])
+        self.assertIsNone(popped)
 
 
 if __name__ == "__main__":
