@@ -139,7 +139,21 @@ Return ONLY JSON:
 ]
 """
     rc, out, err = safe_run(
-        [binary, "agent", "--agent", "main", "--session-id", "trident-autonomy-daemon", "--message", prompt, "--json"],
+        [
+            binary,
+            "agent",
+            "--agent",
+            "main",
+            "--session-id",
+            "trident-autonomy-daemon",
+            "--message",
+            prompt,
+            "--thinking",
+            "off",
+            "--timeout",
+            str(OPENCLAW_TIMEOUT_S),
+            "--json",
+        ],
         cwd=repo,
         timeout=OPENCLAW_TIMEOUT_S,
     )
