@@ -88,6 +88,10 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
         return text
     first_role, first_body = task_entries[0]
     first = sanitize(f"{first_role}:\n{first_body}")
+    head_budget = max(0, max_chars // 3)
+    if len(first) > head_budget:
+        first = first[:head_budget] + "\n...[head truncated]..."
     marker = "\n\n...[older task details omitted to stay focused]...\n\n"
     tail_budget = max(0, max_chars - len(first) - len(marker))
-    return first + marker + text[-tail_budget:]
+    tail = text[-tail_budget:] if tail_budget else ""
+    return (first + marker + tail)[:max_chars]

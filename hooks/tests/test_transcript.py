@@ -25,6 +25,20 @@ def message(role: str, text: str) -> str:
 
 
 class TranscriptSliceTests(unittest.TestCase):
+    def test_huge_first_user_entry_is_hard_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "rollout.jsonl"
+            transcript.write_text("\n".join([
+                message("user", "A" * 200_000),
+                message("assistant", "done"),
+            ]))
+
+            text = latest_task_slice(str(transcript))
+
+        self.assertLessEqual(len(text), 4000)
+        self.assertIn("[head truncated]", text)
+        self.assertIn("older task details omitted", text)
+
     def test_hook_feedback_message_becomes_current_user_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "rollout.jsonl"

@@ -22,6 +22,7 @@ import autonomy_daemon  # noqa: E402
 import trident_notify  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
+from lib.transcript import latest_task_slice as latest_codex_style_task_slice  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -58,6 +59,32 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("fix app.py", text)
         self.assertIn("TOOL CALL: Edit", text)
         self.assertNotIn("old task", text)
+
+    def test_codex_style_transcript_helper_hard_caps_huge_first_user_entry(self) -> None:
+        path = self._transcript([
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "text", "text": "A" * 200_000}],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "done"}],
+                },
+            },
+        ])
+
+        text = latest_codex_style_task_slice(path)
+
+        self.assertLessEqual(len(text), 4000)
+        self.assertIn("[head truncated]", text)
+        self.assertIn("older task details omitted", text)
 
     def test_normalize_payload_adds_turn_and_last_message(self) -> None:
         path = self._transcript([
