@@ -4,11 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 
-mkdir -p "$codex_home/hooks"
+mkdir -p "$codex_home/hooks" "$codex_home/scripts"
 rsync -a --delete \
   --exclude '__pycache__' \
   --exclude '*.pyc' \
   "$repo_root/hooks/" "$codex_home/hooks/"
+rsync -a \
+  --exclude '__pycache__' \
+  --exclude '*.pyc' \
+  "$repo_root/scripts/" "$codex_home/scripts/"
 
 python3 -m py_compile "$codex_home"/hooks/*.py "$codex_home"/hooks/lib/*.py
 
