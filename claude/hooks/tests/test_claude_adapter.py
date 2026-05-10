@@ -17,6 +17,7 @@ from lib.claude_adapter import (  # noqa: E402
     synthesize_turn_id,
 )
 import mimo_audit  # noqa: E402
+import autonomy_daemon  # noqa: E402
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -77,6 +78,16 @@ class ClaudeAdapterTests(unittest.TestCase):
     def test_short_tool_activity_should_not_skip_audit(self) -> None:
         self.assertTrue(mimo_audit.has_tool_activity("TOOL CALL:\nEdit: app.py"))
         self.assertFalse(mimo_audit.has_tool_activity("ok thanks"))
+
+    def test_claude_autonomy_daemon_parses_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tasks = autonomy_daemon.parse_json_tasks(
+                '[{"title":"Tighten hook test","body":"Run unittest","source_file":"hooks/x.py"}]',
+                Path(tmp),
+            )
+
+        self.assertEqual(tasks[0]["title"], "Tighten hook test")
+        self.assertEqual(tasks[0]["cwd"], tmp)
 
 
 if __name__ == "__main__":

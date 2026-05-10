@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -38,7 +39,11 @@ from lib.claude_adapter import normalize_payload, latest_task_slice_claude
 COMPONENT = "stop_orchestrator"
 MAX_CLAUDE_ITERATIONS = 3
 MAX_TASKS_PER_SESSION = 8
-MILESTONE_KEYWORDS = {"milestone", "release", "ready to merge", "AAA", "v1.", "v2.", "deployable"}
+MILESTONE_INTENT_PATTERNS = (
+    re.compile(r"\bready\s+to\s+(?:merge|ship|release|deploy)\b", re.IGNORECASE),
+    re.compile(r"\b(?:ship|merge|land|deploy|release)\s+(?:it|this|now)\b", re.IGNORECASE),
+    re.compile(r"\baaa\s+milestone\s+(?:release|ship|merge|deploy)\b", re.IGNORECASE),
+)
 DEFAULT_BASE_BRANCH = "main"
 MIMO_WAIT_TIMEOUT_S = 70
 AUTO_PR_SIDE_EFFECT_ATTEMPTS = 3
@@ -175,9 +180,19 @@ def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
     return False
 
 
+def strip_hook_prompts(text: str) -> str:
+    without_xml = re.sub(
+        r"<hook_prompt\b[^>]*>.*?</hook_prompt>",
+        "",
+        text or "",
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    return re.sub(r"\[[^\]\n]*(?:hook|gate)[^\]\n]*\]", "", without_xml, flags=re.IGNORECASE)
+
+
 def milestone_detected(text: str) -> bool:
-    lower = text.lower()
-    return any(keyword.lower() in lower for keyword in MILESTONE_KEYWORDS)
+    cleaned = strip_hook_prompts(text)
+    return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
 def run_aaa_gate(cwd: Path, transcript: str) -> bool:
