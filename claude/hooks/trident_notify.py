@@ -36,7 +36,7 @@ from lib.claude_adapter import latest_task_slice_claude, normalize_payload  # no
 # --- Tunables --------------------------------------------------------------
 COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "claude")  # "codex" or "claude"
-MIMO_WAIT_TIMEOUT_S = 25     # how long to wait for MiMo verdict before sending anyway
+MIMO_WAIT_TIMEOUT_S = 70     # matches stop_orchestrator wait so Trident gets the verdict instead of mimo=NONE on slow audits
 OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
 SUMMARY_MAX_CHARS = 1200     # last_assistant_message preview length
 TASK_SLICE_MAX_CHARS = 4000  # current task context sent to OpenClaw/Trident
