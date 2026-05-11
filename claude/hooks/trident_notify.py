@@ -37,7 +37,8 @@ from lib.claude_adapter import latest_task_slice_claude, normalize_payload  # no
 COMPONENT = "trident_notify"
 AGENT_LABEL = os.environ.get("TRIDENT_AGENT_LABEL", "claude")  # "codex" or "claude"
 MIMO_WAIT_TIMEOUT_S = 40     # under the 45s hook timeout in config.toml — leaves ~5s for compose+spawn. Doubles original 25s to catch most slow audits without exceeding the hook deadline.
-OPENCLAW_TIMEOUT_S = 15      # how long openclaw agent invocation can take
+OPENCLAW_TIMEOUT_S = int(os.environ.get("TRIDENT_OPENCLAW_TIMEOUT_S", "120"))
+OPENCLAW_SESSION_ID = os.environ.get("TRIDENT_OPENCLAW_SESSION_ID", f"trident-notify-{AGENT_LABEL}")
 SUMMARY_MAX_CHARS = 600      # last_assistant_message preview length
 TASK_SLICE_MAX_CHARS = 1500  # current task context sent to OpenClaw/Trident
 ENABLE_ENV = "CODEX_HOOK_TRIDENT_NOTIFY"  # set to "0" to disable per-shell
@@ -236,7 +237,21 @@ def call_openclaw_agent(message: str) -> tuple[bool, str]:
             log_fh.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} fire ---\n")
             log_fh.flush()
             subprocess.Popen(
-                [binary, "agent", "--agent", "main", "--message", message, "--json"],
+                [
+                    binary,
+                    "agent",
+                    "--agent",
+                    "main",
+                    "--session-id",
+                    OPENCLAW_SESSION_ID,
+                    "--thinking",
+                    "minimal",
+                    "--timeout",
+                    str(OPENCLAW_TIMEOUT_S),
+                    "--message",
+                    message,
+                    "--json",
+                ],
                 stdout=log_fh,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

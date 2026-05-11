@@ -136,6 +136,21 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(verdict, {})
         self.assertLess(time.time() - start, 0.5)
 
+    def test_trident_notify_uses_dedicated_openclaw_session(self) -> None:
+        with (
+            mock.patch.object(trident_notify.shutil, "which", return_value="/usr/bin/openclaw"),
+            mock.patch.object(trident_notify.subprocess, "Popen") as popen,
+            mock.patch.object(trident_notify, "LOG_DIR", Path(tempfile.mkdtemp())),
+        ):
+            ok, _ = trident_notify.call_openclaw_agent("hello")
+
+        self.assertTrue(ok)
+        args = popen.call_args.args[0]
+        self.assertIn("--session-id", args)
+        self.assertEqual(args[args.index("--session-id") + 1], "trident-notify-codex")
+        self.assertEqual(args[args.index("--thinking") + 1], "minimal")
+        self.assertEqual(args[args.index("--timeout") + 1], "120")
+
     def test_call_mimo_prefers_openclaw_transport(self) -> None:
         proc = subprocess.CompletedProcess(
             ["openclaw"],
