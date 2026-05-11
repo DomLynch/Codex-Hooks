@@ -37,7 +37,6 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
-from lib.api import call_mimo_via_openclaw  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 
 
@@ -254,7 +253,7 @@ def read_task_slice(path: str) -> str:
         elif item_type == "function_call":
             # Edit tools need bigger budget so MiMo can actually review the code being written.
             # Without this, a 5000-char Write/Edit gets compacted to 800 chars, hiding bugs in
-            # the middle of the diff (cf. the startswith("pass") false-PASS in gemma-spar).
+            # the middle of the diff (cf. the startswith("pass") false-PASS in a prior reviewer).
             tool_name = payload.get("name") or ""
             edit_tools = {"apply_patch", "edit", "write", "multi_edit", "Write", "Edit", "MultiEdit", "apply_diff"}
             cap = 8000 if tool_name in edit_tools else 800
@@ -368,14 +367,6 @@ def has_tool_activity(transcript: str) -> bool:
 
 def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
     prompt = AUDIT_PROMPT.format(transcript=transcript)
-    via_openclaw = call_mimo_via_openclaw(
-        "Output only the required VERDICT format. Do not think aloud.\n\n" + prompt,
-        max_tokens=max_tokens,
-        timeout=AUDIT_TIMEOUT_S,
-    )
-    if via_openclaw:
-        log("OPENCLAW_MIMO_USED")
-        return normalize_verdict(via_openclaw)
     body = json.dumps({
         "model": MODEL,
         "max_tokens": max_tokens,
@@ -441,10 +432,6 @@ def ask_mimo_with_retry(api_key: str, transcript: str, max_tokens: int = 2500) -
 
 def repair_verdict_format(api_key: str, response: str) -> str:
     prompt = FORMAT_REPAIR_PROMPT.format(response=response[:2500])
-    via_openclaw = call_mimo_via_openclaw(prompt, max_tokens=500, timeout=AUDIT_TIMEOUT_S)
-    if via_openclaw:
-        log("OPENCLAW_REPAIR_USED")
-        return normalize_verdict(via_openclaw)
     body = json.dumps({
         "model": MODEL,
         "max_tokens": 500,

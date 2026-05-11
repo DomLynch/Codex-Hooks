@@ -234,11 +234,6 @@ def package_manager_command(cwd: Path, package: dict) -> str:
     return "npm"
 
 
-def is_openclaw_repo(cwd: Path, package: dict) -> bool:
-    agents = cwd / "AGENTS.md"
-    return package.get("name") == "openclaw" or (agents.exists() and agents.read_text(errors="ignore").startswith("# AGENTS.MD"))
-
-
 def run_project_aaa_checks(cwd: Path, changed: list[Path] | None = None) -> list[str]:
     failures: list[str] = []
     changed = changed or []
@@ -273,9 +268,7 @@ def run_project_aaa_checks(cwd: Path, changed: list[Path] | None = None) -> list
             if path.suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".json"} or ".github" in path.parts
         ]
         manager = package_manager_command(cwd, package)
-        if js_changed and is_openclaw_repo(cwd, package):
-            log(COMPONENT, "AAA project checks skipped: OpenClaw uses repo-scoped gates; not running full npm test")
-        elif js_changed and scripts.get("test:changed") and shutil.which(manager):
+        if js_changed and scripts.get("test:changed") and shutil.which(manager):
             rc, out, err = safe_run([manager, "run", "test:changed"], cwd=cwd, timeout=120)
             if rc != 0:
                 failures.append(f"{manager} run test:changed failed:\n" + (out + err)[-3000:])

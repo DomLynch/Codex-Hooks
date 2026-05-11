@@ -28,8 +28,6 @@ from lib.log import log  # noqa: E402
 COMPONENT = "autonomy_daemon"
 MIN_QUEUE = 3
 MAX_NEW_TASKS = 5
-OPENCLAW_TIMEOUT_S = 30
-GEMMA_SPAR = Path.home() / ".openclaw" / "agents" / "main" / "agent" / "codex-home" / "skills" / "gemma-spar" / "scripts" / "spar.py"
 
 
 def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tuple[int, str, str]:
@@ -88,107 +86,6 @@ def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
     return tasks[:limit]
 
 
-def parse_json_tasks(text: str, repo: Path) -> list[dict]:
-    decoder = json.JSONDecoder()
-    raw: object = None
-    for idx, char in enumerate(text):
-        if char not in "[{":
-            continue
-        try:
-            candidate, _ = decoder.raw_decode(text[idx:])
-        except Exception:
-            continue
-        if isinstance(candidate, list):
-            raw = candidate
-            break
-        if isinstance(candidate, dict) and isinstance(candidate.get("payloads"), list):
-            payload_text = "\n".join(str(item.get("text") or "") for item in candidate["payloads"] if isinstance(item, dict))
-            nested = parse_json_tasks(payload_text, repo)
-            if nested:
-                return nested
-    tasks = []
-    for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict):
-            continue
-        item.setdefault("cwd", str(repo))
-        item.setdefault("priority", 65)
-        if item.get("title"):
-            tasks.append(item)
-    return tasks[:MAX_NEW_TASKS]
-
-
-def ask_openclaw(repo: Path, lessons: str) -> list[dict]:
-    binary = shutil.which("openclaw")
-    if not binary:
-        return []
-    rc, log_out, _ = safe_run(["git", "log", "--oneline", "-5"], repo)
-    git_log = log_out if rc == 0 else ""
-    prompt = f"""You are Trident, the long-horizon autonomy planner.
-Repo: {repo}
-Autonomy level: {autonomy_level()}
-Active lessons:
-{lessons or "(none)"}
-Recent git log:
-{git_log}
-
-Propose 3-5 small, reversible coding tasks that move this repo forward.
-Only choose tasks that can be verified locally. No deploys, payments, secrets, or destructive operations.
-Return ONLY JSON:
-[
-  {{"title":"...", "body":"...", "source_file":"...", "priority":70}}
-]
-"""
-    rc, out, err = safe_run(
-        [
-            binary,
-            "agent",
-            "--agent",
-            "main",
-            "--session-id",
-            "trident-autonomy-daemon",
-            "--message",
-            prompt,
-            "--thinking",
-            "off",
-            "--timeout",
-            str(OPENCLAW_TIMEOUT_S),
-            "--json",
-        ],
-        cwd=repo,
-        timeout=OPENCLAW_TIMEOUT_S,
-    )
-    if rc != 0:
-        log(COMPONENT, f"openclaw planner failed repo={repo} err={(err or out)[-500:]}")
-        return []
-    tasks = parse_json_tasks(out, repo)
-    if not tasks:
-        log(COMPONENT, f"openclaw planner returned no tasks repo={repo} preview={out[:300]}")
-    return tasks
-
-
-def gemma_approves(task: dict) -> bool:
-    if not GEMMA_SPAR.exists():
-        return True
-    prompt = (
-        "Audit this proposed autonomous task. PASS only if it is small, reversible, "
-        "locally verifiable, non-destructive, and does not require credentials, deploys, payments, or user secrets.\n\n"
-        f"{json.dumps(task, indent=2)}"
-    )
-    rc, out, err = safe_run(["python3", str(GEMMA_SPAR), "--prompt", prompt], timeout=45)
-    if rc != 0:
-        log(COMPONENT, f"gemma-spar failed-open: {(err or out)[-300:]}")
-        return True
-    return "VERDICT: PASS" in out
-
-
-def active_lessons_text() -> str:
-    path = Path.home() / ".codex" / "state" / "lessons_active.md"
-    try:
-        return path.read_text()[:1200]
-    except Exception:
-        return ""
-
-
 def update_status(**fields: object) -> None:
     def updater(data: dict) -> dict:
         data.update(fields)
@@ -220,11 +117,10 @@ def run_once() -> int:
         log(COMPONENT, f"queue healthy queued={current}")
         update_status(queued=current, level=autonomy_level())
         return 0
-    lessons = active_lessons_text()
     added = 0
     for repo in recent_repos(limit=3):
-        tasks = [task for task in (ask_openclaw(repo, lessons) or mine_local_tasks(repo, limit=MAX_NEW_TASKS)) if gemma_approves(task)]
-        added += enqueue_tasks(tasks, source="trident")
+        tasks = mine_local_tasks(repo, limit=MAX_NEW_TASKS)
+        added += enqueue_tasks(tasks, source="local")
         if queued_count() >= MIN_QUEUE:
             break
     if added:

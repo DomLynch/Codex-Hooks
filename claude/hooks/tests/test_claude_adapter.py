@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,7 +19,6 @@ from lib.claude_adapter import (  # noqa: E402
 )
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
-import trident_notify  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
 from lib.transcript import latest_task_slice as latest_codex_style_task_slice  # noqa: E402
@@ -126,101 +124,53 @@ class ClaudeAdapterTests(unittest.TestCase):
             "VERDICT: ISSUES\n1. Missing regression test",
         )
 
-    def test_mimo_audit_prefers_openclaw_transport(self) -> None:
-        with (
-            mock.patch.object(mimo_audit, "call_mimo_via_openclaw", return_value="PASS") as openclaw,
-            mock.patch.object(mimo_audit.urllib.request, "urlopen") as urlopen,
-            mock.patch.object(mimo_audit, "log"),
-        ):
+    def test_mimo_audit_uses_direct_mimo_http(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "PASS"}}]}).encode()
+
+        with mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen:
             verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
-        openclaw.assert_called_once()
-        urlopen.assert_not_called()
+        urlopen.assert_called_once()
 
-    def test_trident_notify_sends_synthesized_turn_and_task_slice(self) -> None:
-        path = self._transcript([
-            {"type": "user", "message": {"content": "fix claude hook"}},
-            {
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "working"},
-                        {"type": "tool_use", "name": "Edit", "input": {"file_path": "hook.py"}},
-                    ],
-                },
-            },
-        ])
-        payload = trident_notify.normalize_payload({"session_id": "claude-session", "transcript_path": path, "cwd": "/tmp"})
-        payload["_task_slice"] = trident_notify.current_task_slice(payload)
-        message = trident_notify.compose_message(payload, {"verdict": "PASS", "preview": "VERDICT: PASS"})
-        issues_message = trident_notify.compose_message(payload, {"verdict": "ISSUES", "preview": "VERDICT: ISSUES"})
+    def test_call_mimo_uses_direct_mimo_http(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
 
-        self.assertTrue(payload["turn_id"])
-        self.assertIn(f"turn_id: {payload['turn_id']}", message)
-        self.assertIn("--- current task slice ---", message)
-        self.assertIn("fix claude hook", message)
-        self.assertIn("TOOL CALL: Edit", message)
-        self.assertIn("may log it, queue a small", message)
-        self.assertIn("Do NOT queue new work", issues_message)
-        self.assertNotIn("turn_id: ?", message)
+            def __exit__(self, *args):
+                return None
 
-    def test_trident_notify_wait_stays_below_configured_stop_timeout(self) -> None:
-        config_path = HOOKS_DIR.parent / "config" / "settings.example.json"
-        config = json.loads(config_path.read_text())
-        stop_hooks = config["hooks"]["Stop"][0]["hooks"]
-        notify_timeout = next(h["timeout"] for h in stop_hooks if "trident_notify.py" in h["command"])
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "VERDICT: PASS"}}]}).encode()
 
-        self.assertLess(trident_notify.MIMO_WAIT_TIMEOUT_S, notify_timeout)
-
-    def test_trident_notify_does_not_wait_without_turn_id(self) -> None:
-        start = time.time()
-        verdict = trident_notify.wait_for_mimo_verdict("session", "")
-
-        self.assertEqual(verdict, {})
-        self.assertLess(time.time() - start, 0.5)
-
-    def test_trident_notify_uses_dedicated_openclaw_session(self) -> None:
         with (
-            mock.patch.object(trident_notify.shutil, "which", return_value="/usr/bin/openclaw"),
-            mock.patch.object(trident_notify.subprocess, "Popen") as popen,
-            mock.patch.object(trident_notify, "LOG_DIR", Path(tempfile.mkdtemp())),
-        ):
-            ok, _ = trident_notify.call_openclaw_agent("hello")
-
-        self.assertTrue(ok)
-        args = popen.call_args.args[0]
-        self.assertIn("--session-id", args)
-        self.assertEqual(args[args.index("--session-id") + 1], "trident-notify-claude")
-        self.assertEqual(args[args.index("--thinking") + 1], "minimal")
-        self.assertEqual(args[args.index("--timeout") + 1], "120")
-
-    def test_call_mimo_prefers_openclaw_transport(self) -> None:
-        proc = mock.Mock()
-        proc.returncode = 0
-        proc.stdout = json.dumps({"ok": True, "outputs": [{"text": "VERDICT: PASS"}]})
-        with (
-            mock.patch.object(api.shutil, "which", return_value="/usr/bin/openclaw"),
-            mock.patch.object(api.subprocess, "run", return_value=proc) as run,
-            mock.patch.object(api, "load_api_key") as load_key,
+            mock.patch.object(api, "load_api_key", return_value="mimo-key") as load_key,
+            mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
         ):
             result = api.call_mimo("audit this", timeout=7)
 
         self.assertEqual(result, "VERDICT: PASS")
-        load_key.assert_not_called()
-        cmd = run.call_args.args[0]
-        self.assertEqual(cmd[:4], ["/usr/bin/openclaw", "infer", "model", "run"])
-        self.assertNotIn("--gateway", cmd)
-        self.assertIn("mimio/mimo-v2.5-pro", cmd)
+        load_key.assert_called_once()
+        urlopen.assert_called_once()
 
-    def test_claude_autonomy_daemon_parses_tasks(self) -> None:
+    def test_claude_autonomy_daemon_mines_local_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            tasks = autonomy_daemon.parse_json_tasks(
-                '[{"title":"Tighten hook test","body":"Run unittest","source_file":"hooks/x.py"}]',
-                Path(tmp),
-            )
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            path = repo / "hook.py"
+            path.write_text("# FIXME: tighten\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
 
-        self.assertEqual(tasks[0]["title"], "Tighten hook test")
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
         self.assertEqual(tasks[0]["cwd"], tmp)
 
     def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:

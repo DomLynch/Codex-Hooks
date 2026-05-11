@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
-import subprocess
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -14,7 +11,6 @@ CLAUDE_SECRETS_DIR = Path.home() / ".claude" / "secrets"
 CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared keys (MiMo)
 MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 MIMO_MODEL = "mimo-v2.5-pro"
-OPENCLAW_MIMO_MODEL = os.environ.get("CODEX_HOOK_OPENCLAW_MIMO_MODEL", "mimio/mimo-v2.5-pro")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
 
 
@@ -55,49 +51,7 @@ def load_api_key(env_name: str, secrets_filename: str) -> str:
     return ""
 
 
-def call_mimo_via_openclaw(prompt: str, max_tokens: int = 1500, timeout: int = 45) -> str:
-    if os.environ.get("CODEX_HOOK_MIMO_VIA_OPENCLAW", "1") == "0":
-        return ""
-    binary = shutil.which("openclaw")
-    if not binary:
-        return ""
-    try:
-        proc = subprocess.run(
-            [
-                binary,
-                "infer",
-                "model",
-                "run",
-                *(["--gateway"] if os.environ.get("CODEX_HOOK_OPENCLAW_GATEWAY") == "1" else []),
-                "--model",
-                OPENCLAW_MIMO_MODEL,
-                "--prompt",
-                prompt,
-                "--json",
-            ],
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
-    if proc.returncode != 0:
-        return ""
-    try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return ""
-    outputs = data.get("outputs") or []
-    if not data.get("ok") or not outputs:
-        return ""
-    return str(outputs[0].get("text") or "").strip()
-
-
 def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45) -> str:
-    via_openclaw = call_mimo_via_openclaw(prompt, max_tokens=max_tokens, timeout=timeout)
-    if via_openclaw:
-        return via_openclaw
     key = load_api_key("MIMO_API_KEY", "mimo_api_key")
     if not key:
         return ""

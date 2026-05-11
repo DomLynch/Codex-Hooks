@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -19,7 +18,6 @@ sys.path.insert(0, str(HOOKS_DIR))
 import mimo_audit  # noqa: E402
 import post_tool  # noqa: E402
 import stop_orchestrator  # noqa: E402
-import trident_notify  # noqa: E402
 import user_prompt_submit  # noqa: E402
 import autonomy_daemon  # noqa: E402
 from lib import autonomy  # noqa: E402
@@ -85,92 +83,26 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Active Lessons", context)
         self.assertIn("Run the negative path test.", context)
 
-    def test_trident_notify_sends_turn_and_current_task_slice_to_openclaw(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            transcript = Path(tmp) / "transcript.jsonl"
-            transcript.write_text(
-                "\n".join([
-                    json.dumps({
-                        "type": "response_item",
-                        "payload": {"type": "message", "role": "user", "content": [{"text": "fix parser.py"}]},
-                    }),
-                    json.dumps({
-                        "type": "response_item",
-                        "payload": {"type": "function_call", "name": "Edit", "arguments": "{\"file_path\":\"parser.py\"}"},
-                    }),
-                    json.dumps({
-                        "type": "response_item",
-                        "payload": {"type": "message", "role": "assistant", "content": [{"text": "done"}]},
-                    }),
-                ])
-                + "\n"
-            )
-            payload = {"session_id": "codex-session", "transcript_path": str(transcript), "cwd": tmp}
-            turn_id = trident_notify.synthesize_turn_id(payload)
-            payload["turn_id"] = turn_id
-            payload["_task_slice"] = trident_notify.current_task_slice(payload)
-            message = trident_notify.compose_message(payload, {"verdict": "PASS", "preview": "VERDICT: PASS"})
-            issues_message = trident_notify.compose_message(payload, {"verdict": "ISSUES", "preview": "VERDICT: ISSUES"})
+    def test_call_mimo_uses_direct_mimo_http(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
 
-        self.assertTrue(turn_id)
-        self.assertIn(f"turn_id: {turn_id}", message)
-        self.assertIn("--- current task slice ---", message)
-        self.assertIn("fix parser.py", message)
-        self.assertIn("TOOL CALL", message)
-        self.assertIn("may log it, queue a small", message)
-        self.assertIn("Do NOT queue new work", issues_message)
-        self.assertNotIn("turn_id: ?", message)
+            def __exit__(self, *args):
+                return None
 
-    def test_trident_notify_wait_stays_below_configured_stop_timeout(self) -> None:
-        config_path = HOOKS_DIR.parent / "config" / "hooks.example.toml"
-        config = tomllib.loads(config_path.read_text())
-        stop_hooks = config["hooks"]["Stop"][0]["hooks"]
-        notify_timeout = next(h["timeout"] for h in stop_hooks if "trident_notify.py" in h["command"])
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "VERDICT: PASS"}}]}).encode()
 
-        self.assertLess(trident_notify.MIMO_WAIT_TIMEOUT_S, notify_timeout)
-
-    def test_trident_notify_does_not_wait_without_turn_id(self) -> None:
-        start = time.time()
-        verdict = trident_notify.wait_for_mimo_verdict("session", "")
-
-        self.assertEqual(verdict, {})
-        self.assertLess(time.time() - start, 0.5)
-
-    def test_trident_notify_uses_dedicated_openclaw_session(self) -> None:
         with (
-            mock.patch.object(trident_notify.shutil, "which", return_value="/usr/bin/openclaw"),
-            mock.patch.object(trident_notify.subprocess, "Popen") as popen,
-            mock.patch.object(trident_notify, "LOG_DIR", Path(tempfile.mkdtemp())),
-        ):
-            ok, _ = trident_notify.call_openclaw_agent("hello")
-
-        self.assertTrue(ok)
-        args = popen.call_args.args[0]
-        self.assertIn("--session-id", args)
-        self.assertEqual(args[args.index("--session-id") + 1], "trident-notify-codex")
-        self.assertEqual(args[args.index("--thinking") + 1], "minimal")
-        self.assertEqual(args[args.index("--timeout") + 1], "120")
-
-    def test_call_mimo_prefers_openclaw_transport(self) -> None:
-        proc = subprocess.CompletedProcess(
-            ["openclaw"],
-            0,
-            stdout=json.dumps({"ok": True, "outputs": [{"text": "VERDICT: PASS"}]}),
-            stderr="",
-        )
-        with (
-            mock.patch.object(api.shutil, "which", return_value="/usr/bin/openclaw"),
-            mock.patch.object(api.subprocess, "run", return_value=proc) as run,
-            mock.patch.object(api, "load_api_key") as load_key,
+            mock.patch.object(api, "load_api_key", return_value="mimo-key") as load_key,
+            mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
         ):
             result = api.call_mimo("audit this", timeout=7)
 
         self.assertEqual(result, "VERDICT: PASS")
-        load_key.assert_not_called()
-        cmd = run.call_args.args[0]
-        self.assertEqual(cmd[:4], ["/usr/bin/openclaw", "infer", "model", "run"])
-        self.assertNotIn("--gateway", cmd)
-        self.assertIn("mimio/mimo-v2.5-pro", cmd)
+        load_key.assert_called_once()
+        urlopen.assert_called_once()
 
     def test_simple_prompt_still_gets_no_babysit_policy(self) -> None:
         with mock.patch.object(user_prompt_submit, "log"):
@@ -206,17 +138,22 @@ class AllHookBehaviorTests(unittest.TestCase):
             "VERDICT: ISSUES\n1. Missing regression test",
         )
 
-    def test_mimo_audit_prefers_openclaw_transport(self) -> None:
-        with (
-            mock.patch.object(mimo_audit, "call_mimo_via_openclaw", return_value="PASS") as openclaw,
-            mock.patch.object(mimo_audit.urllib.request, "urlopen") as urlopen,
-            mock.patch.object(mimo_audit, "log"),
-        ):
+    def test_mimo_audit_uses_direct_mimo_http(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"choices": [{"message": {"content": "PASS"}}]}).encode()
+
+        with mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen:
             verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
-        openclaw.assert_called_once()
-        urlopen.assert_not_called()
+        urlopen.assert_called_once()
 
     def test_mimo_bare_pass_allows_stop_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -681,10 +618,10 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertTrue(stop_orchestrator.milestone_detected("this is an AAA milestone release"))
         self.assertTrue(stop_orchestrator.milestone_detected("ship it now"))
 
-    def test_milestone_detector_ignores_openclaw_handover_terms(self) -> None:
+    def test_milestone_detector_ignores_historical_handover_terms(self) -> None:
         handover = """
         USER:
-        OpenClaw setup handover:
+        Local setup handover:
         - provider model mimo-v2.5-pro
         - queried upstream /v1/models
         - previous release cleanup notes are historical context
@@ -730,7 +667,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(failures, [])
         safe_run.assert_called_once_with(["pnpm", "run", "test:changed"], cwd=repo, timeout=120)
 
-    def test_project_aaa_checks_do_not_run_full_npm_test_for_openclaw(self) -> None:
+    def test_project_aaa_checks_runs_package_test_when_changed_gate_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             (repo / "src").mkdir()
@@ -738,7 +675,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             changed.write_text("export const ok = true;\n")
             (repo / "package.json").write_text(
                 json.dumps({
-                    "name": "openclaw",
+                    "name": "demo",
                     "packageManager": "pnpm@10.33.2",
                     "scripts": {"test": "node scripts/test-projects.mjs"},
                 })
@@ -746,13 +683,12 @@ class AllHookBehaviorTests(unittest.TestCase):
 
             with (
                 mock.patch.object(stop_orchestrator.shutil, "which", return_value="/bin/tool"),
-                mock.patch.object(stop_orchestrator, "safe_run") as safe_run,
-                mock.patch.object(stop_orchestrator, "log"),
+                mock.patch.object(stop_orchestrator, "safe_run", return_value=(0, "", "")) as safe_run,
             ):
                 failures = stop_orchestrator.run_project_aaa_checks(repo, [changed])
 
         self.assertEqual(failures, [])
-        safe_run.assert_not_called()
+        safe_run.assert_called_once_with(["pnpm", "test", "--", "--watch=false"], cwd=repo, timeout=120)
 
     def test_auto_pr_commits_with_mimo_only_auditor_when_claude_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -968,17 +904,16 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(task, "")
         write_handoff.assert_not_called()
 
-    def test_autonomy_daemon_parses_openclaw_json_and_filters_gemma(self) -> None:
+    def test_autonomy_daemon_mines_local_tasks_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            raw = 'noise [{"title":"Good task","body":"Run tests","source_file":"x.py","priority":70}] tail'
-            tasks = autonomy_daemon.parse_json_tasks(raw, repo)
-            with mock.patch.object(autonomy_daemon, "GEMMA_SPAR", Path(tmp) / "missing"):
-                approved = autonomy_daemon.gemma_approves(tasks[0])
+            init_git_repo(repo)
+            path = repo / "app.py"
+            path.write_text("# TODO: add coverage\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
 
-        self.assertEqual(tasks[0]["title"], "Good task")
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
         self.assertEqual(tasks[0]["cwd"], str(repo))
-        self.assertTrue(approved)
 
 
 if __name__ == "__main__":

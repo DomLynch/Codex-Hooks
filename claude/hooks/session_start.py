@@ -12,7 +12,6 @@ sys.path.insert(0, str(HOOKS_DIR))
 from lib.autonomy import remember_repo
 from lib.log import log
 from lib.git import is_git_repo
-from lib.openclaw_locks import session_boot_cleanup
 from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
@@ -104,21 +103,6 @@ def filter_backlog(items: list[dict]) -> list[dict]:
 
 def main() -> None:
     try:
-        # Sweep stale OpenClaw session locks left behind by crashed agent
-        # processes. Wrapped in its own try so cleanup failure can never block
-        # context injection. Cheap on a clean tree. Process reaping is OFF by
-        # default (set OPENCLAW_REAP_ORPHANS=1 to opt in).
-        try:
-            cleanup = session_boot_cleanup(log_fn=lambda m: log(COMPONENT, m))
-            if cleanup.get("removed_locks") or cleanup.get("reaped_agents"):
-                log(
-                    COMPONENT,
-                    f"openclaw cleanup: locks_removed={cleanup.get('removed_locks', 0)} "
-                    f"reaped_agents={cleanup.get('reaped_agents', 0)}",
-                )
-        except Exception as cleanup_exc:
-            log(COMPONENT, f"openclaw cleanup non-fatal: {cleanup_exc}")
-
         payload = json.loads(sys.stdin.read() or "{}")
         session_id = payload.get("session_id") or "unknown"
         cwd = Path(payload.get("cwd") or ".").resolve()

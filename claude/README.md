@@ -13,8 +13,7 @@ adapted for Claude Code's payload schema and config format.
 | `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task MiMo |
 | `Stop` | `mimo_audit.py` | MiMo-v2.5-Pro reviews the turn, blocks on issues |
 | `Stop` | `stop_orchestrator.py` | Optional 2nd audit (Claude), AAA gate, Auto-PR, self-spec chaining |
-| `Stop` | `trident_notify.py` | Pushes turn-end summaries to OpenClaw |
-| launchd | `autonomy_daemon.py` | Shared Codex/Claude/OpenClaw queue planner via `~/.codex/state/` |
+| launchd | `autonomy_daemon.py` | Shared Codex/Claude queue planner via `~/.codex/state/` |
 
 ## Differences vs the Codex install
 

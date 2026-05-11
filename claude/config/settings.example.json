@@ -48,11 +48,6 @@
             "type": "command",
             "command": "python3 /Users/domininclynch/.claude/hooks/stop_orchestrator.py",
             "timeout": 180
-          },
-          {
-            "type": "command",
-            "command": "python3 /Users/domininclynch/.claude/hooks/trident_notify.py",
-            "timeout": 45
           }
         ]
       }

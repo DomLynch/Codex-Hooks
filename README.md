@@ -16,9 +16,8 @@ logs, trusted hashes, or full local Codex app config.
 - `Stop / MiMo audit`: final MiMo-v2.5-Pro review before Codex ends a turn.
 - `Stop / orchestrator`: waits for MiMo pass, runs milestone gates, optional
   Auto-PR, and self-spec chaining.
-- `Stop / Trident notify`: pushes turn-end summaries to OpenClaw.
 - `Autonomy daemon`: launchd job that keeps a shared task queue warm for
-  Codex/Claude/OpenClaw long-horizon runs.
+  Codex/Claude long-horizon runs using local repo mining only.
 
 ## Install / Sync To Local Codex
 
