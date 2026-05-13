@@ -50,6 +50,7 @@ def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
         #   doesn't surface markers in .txt/.c/etc that the fallback would skip
         rc, out, _ = safe_run(
             [rg, "-n",
+             "--no-ignore",            # stdlib fallback ignores .gitignore — match that
              "--glob", "!.git",
              "--glob", "!node_modules",
              "--glob", "!.venv",
@@ -63,7 +64,8 @@ def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
              "--glob", "*.json",
              "--glob", "*.yaml",
              "--glob", "*.yml",
-             BACKLOG_MARKER_RE.pattern],
+             BACKLOG_MARKER_RE.pattern,
+             str(repo)],               # explicit search path; relying on cwd is implicit
             repo,
         )
         if rc in {0, 1}:
