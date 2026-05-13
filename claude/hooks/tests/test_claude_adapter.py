@@ -149,6 +149,13 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(verdict, "VERDICT: PASS")
         urlopen.assert_called_once()
 
+    def test_claude_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
+        retry_budget = (
+            mimo_audit.AUDIT_TIMEOUT_S * mimo_audit.AUDIT_MAX_ATTEMPTS
+            + mimo_audit.AUDIT_RETRY_DELAY_S * (mimo_audit.AUDIT_MAX_ATTEMPTS - 1)
+        )
+        self.assertLess(retry_budget, 90)
+
     def test_call_mimo_uses_direct_mimo_http(self) -> None:
         class Response:
             def __enter__(self):

@@ -164,6 +164,13 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(verdict, "VERDICT: PASS")
         urlopen.assert_called_once()
 
+    def test_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
+        retry_budget = (
+            mimo_audit.AUDIT_TIMEOUT_S * mimo_audit.AUDIT_MAX_ATTEMPTS
+            + mimo_audit.AUDIT_RETRY_DELAY_S * (mimo_audit.AUDIT_MAX_ATTEMPTS - 1)
+        )
+        self.assertLess(retry_budget, 90)
+
     def test_mimo_bare_pass_allows_stop_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
