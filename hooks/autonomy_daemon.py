@@ -45,13 +45,24 @@ def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
     if rg:
         # Keep rg in lockstep with the stdlib fallback below:
         # - pattern sourced from BACKLOG_MARKER_RE so future marker changes propagate
-        # - exclusion globs mirror the fallback's skip set so both paths see the same files
+        # - exclusion globs mirror the fallback's directory skip set
+        # - include globs mirror the fallback's file extension whitelist so rg
+        #   doesn't surface markers in .txt/.c/etc that the fallback would skip
         rc, out, _ = safe_run(
             [rg, "-n",
              "--glob", "!.git",
              "--glob", "!node_modules",
              "--glob", "!.venv",
              "--glob", "!__pycache__",
+             "--glob", "*.py",
+             "--glob", "*.ts",
+             "--glob", "*.tsx",
+             "--glob", "*.js",
+             "--glob", "*.md",
+             "--glob", "*.toml",
+             "--glob", "*.json",
+             "--glob", "*.yaml",
+             "--glob", "*.yml",
              BACKLOG_MARKER_RE.pattern],
             repo,
         )
