@@ -43,7 +43,18 @@ def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tupl
 def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
     rg = shutil.which("rg")
     if rg:
-        rc, out, _ = safe_run([rg, "-n", "--glob", "!node_modules", "--glob", "!.git", "TODO|FIXME|XXX"], repo)
+        # Keep rg in lockstep with the stdlib fallback below:
+        # - pattern sourced from BACKLOG_MARKER_RE so future marker changes propagate
+        # - exclusion globs mirror the fallback's skip set so both paths see the same files
+        rc, out, _ = safe_run(
+            [rg, "-n",
+             "--glob", "!.git",
+             "--glob", "!node_modules",
+             "--glob", "!.venv",
+             "--glob", "!__pycache__",
+             BACKLOG_MARKER_RE.pattern],
+            repo,
+        )
         if rc in {0, 1}:
             return out.splitlines()[:limit]
     lines: list[str] = []
