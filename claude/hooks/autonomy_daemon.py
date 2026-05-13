@@ -94,6 +94,13 @@ def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
         return tasks
     for line in backlog_marker_lines(repo, limit):
         path = line.split(":", 1)[0]
+        path_obj = Path(path)
+        if path_obj.is_absolute():
+            try:
+                path = str(path_obj.relative_to(repo))
+            except ValueError:
+                path = path_obj.name
+        path = path.removeprefix("./")
         tasks.append({
             "title": f"Resolve backlog marker in {path}",
             "body": f"Inspect `{path}`, resolve the TODO/FIXME if still valid, and run the relevant focused check.",

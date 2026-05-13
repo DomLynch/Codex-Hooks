@@ -164,11 +164,17 @@ Current task transcript:
 
 
 def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
+    started_at = time.time()
     deadline = time.time() + MIMO_WAIT_TIMEOUT_S
     while time.time() < deadline:
         state = load_json_locked(MIMO_VERDICT_PATH, {}).get(session_id) or {}
         if state and (not turn_id or state.get("turn_id") == turn_id):
-            age = time.time() - float(state.get("updated_at") or 0)
+            updated_at = float(state.get("updated_at") or 0)
+            if turn_id and updated_at < started_at:
+                log(COMPONENT, f"mimo gate stale same-turn verdict ignored turn={turn_id}")
+                time.sleep(1)
+                continue
+            age = time.time() - updated_at
             if not turn_id and age > 120:
                 log(COMPONENT, f"mimo gate stale verdict ignored age={age:.1f}s")
                 return False

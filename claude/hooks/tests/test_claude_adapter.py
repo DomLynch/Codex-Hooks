@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,6 +20,7 @@ from lib.claude_adapter import (  # noqa: E402
 )
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
+import stop_orchestrator  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
 from lib.transcript import latest_task_slice as latest_codex_style_task_slice  # noqa: E402
@@ -215,6 +217,24 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(state["tasks"][0]["status"], "held")
         self.assertIn("risky autonomous task", state["tasks"][0]["hold_reason"])
         self.assertIsNone(popped)
+
+    def test_claude_stop_orchestrator_waits_past_stale_same_turn_verdict(self) -> None:
+        now = time.time()
+        states = [
+            {"orch-session": {"turn_id": "turn-1", "verdict": "ISSUES", "updated_at": now - 10}},
+            {"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": now + 1}},
+        ]
+
+        def load_state(*_args, **_kwargs):
+            return states.pop(0) if len(states) > 1 else states[0]
+
+        with (
+            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
+            mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=load_state),
+            mock.patch.object(stop_orchestrator.time, "sleep"),
+            mock.patch.object(stop_orchestrator, "log"),
+        ):
+            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
 
 
 if __name__ == "__main__":
