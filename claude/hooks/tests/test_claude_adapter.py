@@ -117,6 +117,12 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("pasted evidence", mimo_audit.AUDIT_PROMPT)
         self.assertIn("phantom truncation", mimo_audit.AUDIT_PROMPT)
 
+    def test_mimo_prompt_blocks_bloat_and_random_debugging(self) -> None:
+        self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
+
     def test_mimo_bare_verdicts_are_normalized(self) -> None:
         self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")
         self.assertEqual(

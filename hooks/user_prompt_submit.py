@@ -27,6 +27,16 @@ AUTONOMY_POLICY = "\n".join(
     ]
 )
 
+WORK_QUALITY_POLICY = "\n".join(
+    [
+        "# General Work Quality Contract",
+        "- Prefer the smallest surgical change that solves the root problem; avoid speculative abstractions, broad rewrites, and file/module sprawl.",
+        "- Use boring explicit code over clever frameworks, wrappers, or future-proofing unless the current task clearly earns them.",
+        "- When debugging, reproduce or cite the concrete failure, localize the cause, make one minimal fix, then verify the failure is gone.",
+        "- Respect the requested mode: audit-only means no code edits; implementation work means show changed files and checks.",
+    ]
+)
+
 PROJECT_WORDS = re.compile(
     r"\b("
     r"implement|fix|build|edit|change|patch|commit|push|deploy|test|debug|review|"
@@ -61,6 +71,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "# V4/MCP Task Routing Contract",
             "Apply this to the current user prompt before acting.",
             AUTONOMY_POLICY,
+            WORK_QUALITY_POLICY,
             "- Keep scope to the current task; do not trawl months of history unless the task needs it.",
             "- For project/code/repo work, call knowledge MCP `get_playbook()` when available.",
             "- If the target repo is known, read its local `AGENTS.md`; also read `PROJECT_STATE.md` when present.",

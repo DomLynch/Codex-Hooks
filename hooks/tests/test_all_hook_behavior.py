@@ -65,6 +65,9 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("V4/MCP Task Routing Contract", context)
         self.assertIn("get_playbook", context)
         self.assertIn("Autonomous Execution Contract", context)
+        self.assertIn("General Work Quality Contract", context)
+        self.assertIn("smallest surgical change", context)
+        self.assertIn("reproduce or cite the concrete failure", context)
         self.assertIn("Do not ask for confirmation", context)
         self.assertIn("reasonable reversible default", context)
         self.assertNotIn("cheapest relevant verification", context)
@@ -122,6 +125,12 @@ class AllHookBehaviorTests(unittest.TestCase):
     def test_mimo_audit_prompt_blocks_unnecessary_clarifications(self) -> None:
         self.assertIn("Unnecessary clarification", mimo_audit.AUDIT_PROMPT)
         self.assertIn("reasonable reversible default", mimo_audit.AUDIT_PROMPT)
+
+    def test_mimo_audit_prompt_blocks_bloat_and_random_debugging(self) -> None:
+        self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
 
     def test_mimo_audit_prompt_blocks_metadata_only_false_alarms(self) -> None:
         self.assertIn('what counts as "task content"', mimo_audit.AUDIT_PROMPT)
