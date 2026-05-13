@@ -179,6 +179,19 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
         self.assertEqual(tasks[0]["cwd"], tmp)
 
+    def test_claude_autonomy_daemon_mines_local_tasks_without_rg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            path = repo / "hook.py"
+            path.write_text("# FIXME: tighten\n")
+            with mock.patch.object(autonomy_daemon.shutil, "which", return_value=None):
+                tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertTrue(tasks)
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
+        self.assertEqual(tasks[0]["cwd"], tmp)
+
     def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.json"

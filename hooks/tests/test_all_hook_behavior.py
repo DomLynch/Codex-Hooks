@@ -924,6 +924,19 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
         self.assertEqual(tasks[0]["cwd"], str(repo))
 
+    def test_autonomy_daemon_mines_local_tasks_without_rg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            init_git_repo(repo)
+            path = repo / "app.py"
+            path.write_text("# TODO: add coverage\n")
+            with mock.patch.object(autonomy_daemon.shutil, "which", return_value=None):
+                tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertTrue(tasks)
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
+        self.assertEqual(tasks[0]["cwd"], str(repo))
+
 
 if __name__ == "__main__":
     unittest.main()

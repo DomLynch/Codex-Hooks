@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from lib.log import log  # noqa: E402
 COMPONENT = "autonomy_daemon"
 MIN_QUEUE = 3
 MAX_NEW_TASKS = 5
+BACKLOG_MARKER_RE = re.compile(r"TODO|FIXME|XXX")
 
 
 def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tuple[int, str, str]:
@@ -38,23 +40,43 @@ def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tupl
         return 1, "", str(exc)
 
 
-def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
-    tasks: list[dict] = []
-    if not (repo / ".git").exists():
-        return tasks
+def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
     rg = shutil.which("rg")
     if rg:
         rc, out, _ = safe_run([rg, "-n", "--glob", "!node_modules", "--glob", "!.git", "TODO|FIXME|XXX"], repo)
         if rc in {0, 1}:
-            for line in out.splitlines()[:limit]:
-                path = line.split(":", 1)[0]
-                tasks.append({
-                    "title": f"Resolve backlog marker in {path}",
-                    "body": f"Inspect `{path}`, resolve the TODO/FIXME if still valid, and run the relevant focused check.",
-                    "cwd": str(repo),
-                    "source_file": path,
-                    "priority": 60,
-                })
+            return out.splitlines()[:limit]
+    lines: list[str] = []
+    for path in sorted(repo.rglob("*")):
+        if len(lines) >= limit:
+            break
+        if any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in path.parts):
+            continue
+        if not path.is_file() or path.suffix not in {".py", ".ts", ".tsx", ".js", ".md", ".toml", ".json", ".yaml", ".yml"}:
+            continue
+        try:
+            for lineno, text in enumerate(path.read_text(errors="replace").splitlines(), 1):
+                if BACKLOG_MARKER_RE.search(text):
+                    lines.append(f"{path.relative_to(repo)}:{lineno}:{text}")
+                    break
+        except Exception:
+            continue
+    return lines
+
+
+def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
+    tasks: list[dict] = []
+    if not (repo / ".git").exists():
+        return tasks
+    for line in backlog_marker_lines(repo, limit):
+        path = line.split(":", 1)[0]
+        tasks.append({
+            "title": f"Resolve backlog marker in {path}",
+            "body": f"Inspect `{path}`, resolve the TODO/FIXME if still valid, and run the relevant focused check.",
+            "cwd": str(repo),
+            "source_file": path,
+            "priority": 60,
+        })
     if len(tasks) < limit and (repo / "tests").exists():
         rc, out, _ = safe_run(["git", "diff", "--name-only", "HEAD"], repo)
         if rc == 0:
