@@ -41,6 +41,24 @@ def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tupl
 
 
 def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
+    def stdlib_scan() -> list[str]:
+        lines: list[str] = []
+        for path in sorted(repo.rglob("*")):
+            if len(lines) >= limit:
+                break
+            if any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in path.parts):
+                continue
+            if not path.is_file() or path.suffix not in {".py", ".ts", ".tsx", ".js", ".md", ".toml", ".json", ".yaml", ".yml"}:
+                continue
+            try:
+                for lineno, text in enumerate(path.read_text(errors="replace").splitlines(), 1):
+                    if BACKLOG_MARKER_RE.search(text):
+                        lines.append(f"{path.relative_to(repo)}:{lineno}:{text}")
+                        break
+            except Exception:
+                continue
+        return lines
+
     rg = shutil.which("rg")
     if rg:
         # Keep rg in lockstep with the stdlib fallback below:
@@ -69,23 +87,10 @@ def backlog_marker_lines(repo: Path, limit: int) -> list[str]:
             repo,
         )
         if rc in {0, 1}:
-            return out.splitlines()[:limit]
-    lines: list[str] = []
-    for path in sorted(repo.rglob("*")):
-        if len(lines) >= limit:
-            break
-        if any(part in {".git", "node_modules", ".venv", "__pycache__"} for part in path.parts):
-            continue
-        if not path.is_file() or path.suffix not in {".py", ".ts", ".tsx", ".js", ".md", ".toml", ".json", ".yaml", ".yml"}:
-            continue
-        try:
-            for lineno, text in enumerate(path.read_text(errors="replace").splitlines(), 1):
-                if BACKLOG_MARKER_RE.search(text):
-                    lines.append(f"{path.relative_to(repo)}:{lineno}:{text}")
-                    break
-        except Exception:
-            continue
-    return lines
+            lines = out.splitlines()[:limit]
+            if lines:
+                return lines
+    return stdlib_scan()
 
 
 def mine_local_tasks(repo: Path, limit: int = 5) -> list[dict]:
