@@ -31,9 +31,11 @@ WORK_QUALITY_POLICY = "\n".join(
     [
         "# General Work Quality Contract",
         "- Prefer the smallest surgical change that solves the root problem; avoid speculative abstractions, broad rewrites, and file/module sprawl.",
+        "- Prefer minimal LOC: delete or refactor before adding code; avoid hardcoded or silo-specific fixes unless explicitly scoped.",
         "- Use boring explicit code over clever frameworks, wrappers, or future-proofing unless the current task clearly earns them.",
         "- When debugging, reproduce or cite the concrete failure, localize the cause, make one minimal fix, then verify the failure is gone.",
         "- Respect the requested mode: audit-only means no code edits; implementation work means show changed files and checks.",
+        "- Before saying done, run a two-pass review: self-review plus the strongest relevant automated or judge check.",
     ]
 )
 
@@ -76,6 +78,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- For project/code/repo work, call knowledge MCP `get_playbook()` when available.",
             "- If the target repo is known, read its local `AGENTS.md`; also read `PROJECT_STATE.md` when present.",
             "- Route the toolkit deliberately: knowledge MCP for project doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web only when current external facts matter.",
+            "- Use Codegraph MCP for structural code context and impact when available; use `rg` for literal text, logs, and config searches.",
             "- Use the V4 core loop scaled to task size: success condition, likely files, smallest reversible change, strong relevant verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",

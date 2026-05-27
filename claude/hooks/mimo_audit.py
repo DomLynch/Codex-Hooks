@@ -96,7 +96,8 @@ Check only the current task for:
 - For non-trivial project/code/repo work: evidence that Claude Code used the V4/MCP
   routing contract appropriately (knowledge MCP/get_playbook when available,
   target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
-  and concrete verification before stopping)
+  Codegraph MCP for structural code context/impact when available, and concrete
+  verification before stopping)
 
 Also flag subtle issues, not just blatant ones:
 - Error handlers that swallow more cases than the user asked about (bare `except`,
@@ -112,10 +113,14 @@ Also flag subtle issues, not just blatant ones:
 Also flag avoidable engineering drag when it creates real risk:
 - Broad rewrites, file/module sprawl, speculative abstractions, clever wrappers,
   or future-proofing that the current task did not earn
+- Hardcoded or silo-specific fixes where a small universal/project-local fix was
+  clearly available
 - Non-surgical changes that touch unrelated code or silently change behavior
 - Random debugging: patches made without a reproduced failure, concrete log,
   failing test, or clear localization step
 - Audit-only or review-only requests where Claude Code edited code anyway
+- "Done" claims on implementation work without a two-pass review: self-review
+  plus the strongest relevant automated or judge check
 
 If there are issues, use:
 VERDICT: ISSUES

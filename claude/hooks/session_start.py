@@ -23,7 +23,10 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - For project/code/repo work, use knowledge MCP `get_playbook()` when available.
 - Read the target repo's local `AGENTS.md` and `PROJECT_STATE.md` before edits when present.
 - Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.
+- Use Codegraph MCP for structural code context and impact when available; use `rg` for literal text, logs, and config searches.
 - Scale the V4 loop to task size: success condition, likely files, smallest reversible change, strong relevant verification.
+- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless explicitly scoped.
+- Before stopping, run self-review plus the strongest relevant automated or judge check.
 - Keep context focused on the current task; avoid old-history trawling unless required.
 - Default to autonomous execution. Do not ask for confirmation, permission, or clarification when a reasonable reversible default exists.
 - If details are missing, choose the conservative project-local default, state the assumption briefly, and keep working.

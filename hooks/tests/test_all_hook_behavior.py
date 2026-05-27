@@ -67,6 +67,9 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Autonomous Execution Contract", context)
         self.assertIn("General Work Quality Contract", context)
         self.assertIn("smallest surgical change", context)
+        self.assertIn("minimal LOC", context)
+        self.assertIn("Codegraph MCP", context)
+        self.assertIn("two-pass review", context)
         self.assertIn("reproduce or cite the concrete failure", context)
         self.assertIn("Do not ask for confirmation", context)
         self.assertIn("reasonable reversible default", context)
@@ -129,6 +132,9 @@ class AllHookBehaviorTests(unittest.TestCase):
     def test_mimo_audit_prompt_blocks_bloat_and_random_debugging(self) -> None:
         self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
         self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Hardcoded or silo-specific fixes", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Codegraph MCP", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("two-pass review", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
 
