@@ -114,7 +114,7 @@ def audit_with_claude(session_id: str, transcript: str, session_spec: str) -> bo
         return True
     prompt = f"""Audit Codex's latest completed task. First line must be VERDICT: PASS or VERDICT: ISSUES.
 
-Focus on security, scope adherence, test coverage, async/concurrency correctness, and boundary error handling.
+Focus on security, scope adherence, test coverage, Codegraph/MCP routing on structural code work, async/concurrency correctness, and boundary error handling.
 Do not nitpick style.
 
 Original/session spec:

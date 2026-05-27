@@ -20,6 +20,7 @@ from lib.claude_adapter import (  # noqa: E402
 )
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
+import post_tool  # noqa: E402
 import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
 from lib import autonomy  # noqa: E402
@@ -124,15 +125,19 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
         self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Hardcoded or silo-specific fixes", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("Codegraph MCP", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("mandatory Codegraph MCP first", mimo_audit.AUDIT_PROMPT)
         self.assertIn("two-pass review", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
 
+    def test_mid_run_prompts_check_codegraph_routing(self) -> None:
+        self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)
+        self.assertIn("Codegraph/MCP routing", Path(stop_orchestrator.__file__).read_text())
+
     def test_user_prompt_contract_requires_mcp_minimal_loc_and_review(self) -> None:
         context = user_prompt_submit.context_for("fix hook code", Path("/tmp/project"))
         self.assertIn("minimal LOC", context)
-        self.assertIn("Codegraph MCP", context)
+        self.assertIn("Mandatory: use Codegraph MCP first", context)
         self.assertIn("two-pass review", context)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:

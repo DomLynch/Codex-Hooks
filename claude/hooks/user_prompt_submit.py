@@ -86,7 +86,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- For project/code/repo work, call knowledge MCP `get_playbook()` when available.",
             "- If the target repo is known, read its local `AGENTS.md`; also read `PROJECT_STATE.md` when present.",
             "- Route the toolkit deliberately: knowledge MCP for project doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web only when current external facts matter.",
-            "- Use Codegraph MCP for structural code context and impact when available; use `rg` for literal text, logs, and config searches.",
+            "- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping it, state why (runtime/log/prose/config/literal search, no index, or tool unavailable).",
             "- Use the V4 core loop scaled to task size: success condition, likely files, smallest reversible change, strong relevant verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",

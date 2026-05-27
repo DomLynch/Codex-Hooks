@@ -41,7 +41,7 @@ Check only the current task slice. Block only for concrete problems:
 - Codex is drifting from the user's request or asking for unnecessary confirmation instead of using a reasonable reversible default
 - The latest edits appear incorrect, unsafe, incomplete, or outside scope
 - Required checks/logs are missing for the risk level
-- V4/MCP/project guidance is being ignored on project/code work
+- V4/MCP/project guidance is being ignored on project/code work, including skipped Codegraph MCP on structural code work without a stated reason
 
 If there is no concrete blocker, return:
 VERDICT: PASS

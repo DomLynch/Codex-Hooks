@@ -68,7 +68,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("General Work Quality Contract", context)
         self.assertIn("smallest surgical change", context)
         self.assertIn("minimal LOC", context)
-        self.assertIn("Codegraph MCP", context)
+        self.assertIn("Mandatory: use Codegraph MCP first", context)
         self.assertIn("two-pass review", context)
         self.assertIn("reproduce or cite the concrete failure", context)
         self.assertIn("Do not ask for confirmation", context)
@@ -133,10 +133,14 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
         self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Hardcoded or silo-specific fixes", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("Codegraph MCP", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("mandatory Codegraph MCP first", mimo_audit.AUDIT_PROMPT)
         self.assertIn("two-pass review", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
+
+    def test_mid_run_prompts_check_codegraph_routing(self) -> None:
+        self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)
+        self.assertIn("Codegraph/MCP routing", Path(stop_orchestrator.__file__).read_text())
 
     def test_mimo_audit_prompt_blocks_metadata_only_false_alarms(self) -> None:
         self.assertIn('what counts as "task content"', mimo_audit.AUDIT_PROMPT)
