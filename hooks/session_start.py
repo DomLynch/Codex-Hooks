@@ -20,23 +20,21 @@ from lib.transcript import latest_task_slice
 COMPONENT = "session_start"
 
 SESSION_BASELINE = """# V4/MCP Session Baseline
-- For project/code/repo work, use knowledge MCP `get_playbook()` when available.
-- Read the target repo's local `AGENTS.md` and `PROJECT_STATE.md` before edits when present.
-- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.
-- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping it, state why (runtime/log/prose/config/literal search, no index, or tool unavailable).
-- Keep command output lean: prefer targeted commands, capped output, summarized failures, and narrow `rg` paths over broad scans or full logs.
-- Do not paste full diffs, full test logs, large generated files, archives, dependency trees, or repeated command output into context unless explicitly needed.
-- Avoid duplicate parallel exploration. If multiple agents are useful, split roles as scout, surgeon, and reviewer with non-overlapping scope.
-- Start project work from a compact context packet: task, known files, do-not-inspect paths, concrete evidence, success checks.
-- Scale the V4 loop to task size: success condition, likely files, smallest reversible change, strong relevant verification.
-- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless explicitly scoped.
-- Before stopping, run self-review plus the strongest relevant automated or judge check.
-- Keep context focused on the current task; avoid old-history trawling unless required.
-- Default to autonomous execution. Do not ask for confirmation, permission, or clarification when a reasonable reversible default exists.
-- If details are missing, choose the conservative project-local default, state the assumption briefly, and keep working.
-- Ask the user only for true blockers: credentials/secrets, irreversible destructive actions, production/live external side effects, purchases/payments, legal/medical/financial decisions, or mutually exclusive product choices with high blast radius.
-- Never stop just to ask whether to continue, whether to run ordinary checks, whether to inspect local files, whether to apply a clear fix, or whether to proceed with the next queued task.
-- For long autonomous runs, prefer bounded reversible progress with logs, checkpoints, and rollback paths over waiting for micro-management.
+- Project/code/repo work: use knowledge MCP `get_playbook()` when available; read local `AGENTS.md` and `PROJECT_STATE.md` when present.
+- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
+- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping, state why.
+- Keep command output lean: targeted commands, capped output, summarized failures, narrow `rg` paths.
+- No full diffs/logs/generated files/archives/dependency trees/repeated output unless needed.
+- Avoid duplicate parallel exploration. Split scout, surgeon, reviewer with non-overlapping scope.
+- Start project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.
+- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.
+- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless scoped.
+- Before stopping, run self-review plus strongest relevant automated/judge check.
+- Keep context on current task; avoid old-history trawling unless required.
+- Default to autonomous execution. Do not ask for confirmation when a reasonable reversible default exists.
+- Missing detail: choose conservative project-local default, state briefly, keep working.
+- Ask only for true blockers: secrets, destructive/irreversible actions, live external side effects, purchases, regulated decisions, high-blast-radius product choices.
+- Long runs: bounded reversible progress with logs/checkpoints over micro-management.
 """
 
 BACKLOG_SKIP_PARTS = {

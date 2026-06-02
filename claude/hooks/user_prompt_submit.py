@@ -27,11 +27,11 @@ COMPONENT = "user_prompt_submit"
 AUTONOMY_POLICY = "\n".join(
     [
         "# Autonomous Execution Contract",
-        "- Default to action. Do not ask for confirmation, permission, or clarification when a reasonable reversible default exists.",
-        "- If details are missing, choose the conservative project-local default, state the assumption briefly, and keep working.",
-        "- Ask the user only for true blockers: credentials/secrets, irreversible destructive actions, production/live external side effects, purchases/payments, legal/medical/financial decisions, or mutually exclusive product choices with high blast radius.",
-        "- Never stop just to ask whether to continue, whether to run ordinary checks, whether to inspect local files, whether to apply a clear fix, or whether to proceed with the next queued task.",
-        "- For long autonomous runs, prefer bounded reversible progress with logs, checkpoints, and rollback paths over waiting for micro-management.",
+        "- Default to action; Do not ask for confirmation when a reasonable reversible default exists.",
+        "- Missing detail: choose the conservative project-local default, state it briefly, keep working.",
+        "- Ask the user only for true blockers: secrets, destructive/irreversible actions, live external side effects, purchases, regulated decisions, or high-blast-radius product choices.",
+        "- Never stop just to ask whether to continue, run ordinary checks, inspect files, apply a clear fix, or proceed with the next queued task.",
+        "- Long runs: make bounded reversible progress with logs/checkpoints instead of waiting for micro-management.",
     ]
 )
 
@@ -39,11 +39,10 @@ WORK_QUALITY_POLICY = "\n".join(
     [
         "# General Work Quality Contract",
         "- Prefer the smallest surgical change that solves the root problem; avoid speculative abstractions, broad rewrites, and file/module sprawl.",
-        "- Prefer minimal LOC: delete or refactor before adding code; avoid hardcoded or silo-specific fixes unless explicitly scoped.",
-        "- Use boring explicit code over clever frameworks, wrappers, or future-proofing unless the current task clearly earns them.",
-        "- When debugging, reproduce or cite the concrete failure, localize the cause, make one minimal fix, then verify the failure is gone.",
-        "- Respect the requested mode: audit-only means no code edits; implementation work means show changed files and checks.",
-        "- Before saying done, run a two-pass review: self-review plus the strongest relevant automated or judge check.",
+        "- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless scoped.",
+        "- Use boring explicit code. When debugging, reproduce or cite the concrete failure, localize, fix minimally, verify gone.",
+        "- Respect mode: audit-only means no edits; implementation means changed files and checks.",
+        "- Before done: two-pass review plus strongest relevant automated/judge check.",
     ]
 )
 
@@ -51,8 +50,8 @@ CONTEXT_EFFICIENCY_POLICY = "\n".join(
     [
         "# Context Efficiency Contract",
         "- Keep command output lean: use targeted commands, capped output, summarized failures, and narrow paths.",
-        "- Do not dump full diffs, full logs, dependency trees, generated artifacts, archives, or repeated command output into context unless explicitly needed.",
-        "- Do not run broad workspace scans when a repo/file/symbol target is available; use Codegraph for structural lookup and `rg` for literal text.",
+        "- No full diffs/logs/dependency trees/generated artifacts/archives/repeated output unless explicitly needed.",
+        "- No broad scans when repo/file/symbol target exists; use Codegraph for structure and `rg` for literal text.",
         "- Avoid duplicate parallel exploration; split agents by scout/surgeon/reviewer roles with non-overlapping scope.",
         "- Start substantial project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.",
     ]
@@ -90,16 +89,16 @@ def context_for(prompt: str, cwd: Path) -> str:
     return "\n".join(
         [
             "# V4/MCP Task Routing Contract",
-            "Apply this to the current user prompt before acting.",
+            "Apply before acting.",
             AUTONOMY_POLICY,
             WORK_QUALITY_POLICY,
             CONTEXT_EFFICIENCY_POLICY,
-            "- Keep scope to the current task; do not trawl months of history unless the task needs it.",
-            "- For project/code/repo work, call knowledge MCP `get_playbook()` when available.",
-            "- If the target repo is known, read its local `AGENTS.md`; also read `PROJECT_STATE.md` when present.",
-            "- Route the toolkit deliberately: knowledge MCP for project doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web only when current external facts matter.",
-            "- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping it, state why (runtime/log/prose/config/literal search, no index, or tool unavailable).",
-            "- Use the V4 core loop scaled to task size: success condition, likely files, smallest reversible change, strong relevant verification.",
+            "- Scope to current task; do not trawl history unless needed.",
+            "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
+            "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
+            "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
+            "- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping, state why.",
+            "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",
             lessons_context.strip(),
