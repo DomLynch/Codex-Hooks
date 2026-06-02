@@ -24,6 +24,10 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - Read the target repo's local `AGENTS.md` and `PROJECT_STATE.md` before edits when present.
 - Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.
 - Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping it, state why (runtime/log/prose/config/literal search, no index, or tool unavailable).
+- Keep command output lean: prefer targeted commands, capped output, summarized failures, and narrow `rg` paths over broad scans or full logs.
+- Do not paste full diffs, full test logs, large generated files, archives, dependency trees, or repeated command output into context unless explicitly needed.
+- Avoid duplicate parallel exploration. If multiple agents are useful, split roles as scout, surgeon, and reviewer with non-overlapping scope.
+- Start project work from a compact context packet: task, known files, do-not-inspect paths, concrete evidence, success checks.
 - Scale the V4 loop to task size: success condition, likely files, smallest reversible change, strong relevant verification.
 - Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless explicitly scoped.
 - Before stopping, run self-review plus the strongest relevant automated or judge check.

@@ -53,6 +53,9 @@ class SessionStartRoutingTests(unittest.TestCase):
         self.assertIn("Default to autonomous execution", session_start.SESSION_BASELINE)
         self.assertIn("reasonable reversible default", session_start.SESSION_BASELINE)
         self.assertIn("true blockers", session_start.SESSION_BASELINE)
+        self.assertIn("capped output", session_start.SESSION_BASELINE)
+        self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
+        self.assertIn("compact context packet", session_start.SESSION_BASELINE)
         self.assertNotIn("cheapest relevant verification", session_start.SESSION_BASELINE)
 
 
