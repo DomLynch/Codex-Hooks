@@ -47,6 +47,17 @@ WORK_QUALITY_POLICY = "\n".join(
     ]
 )
 
+CONTEXT_EFFICIENCY_POLICY = "\n".join(
+    [
+        "# Context Efficiency Contract",
+        "- Keep command output lean: use targeted commands, capped output, summarized failures, and narrow paths.",
+        "- Do not dump full diffs, full logs, dependency trees, generated artifacts, archives, or repeated command output into context unless explicitly needed.",
+        "- Do not run broad workspace scans when a repo/file/symbol target is available; use Codegraph for structural lookup and `rg` for literal text.",
+        "- Avoid duplicate parallel exploration; split agents by scout/surgeon/reviewer roles with non-overlapping scope.",
+        "- Start substantial project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.",
+    ]
+)
+
 PROJECT_WORDS = re.compile(
     r"\b("
     r"implement|fix|build|edit|change|patch|commit|push|deploy|test|debug|review|"
@@ -82,6 +93,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "Apply this to the current user prompt before acting.",
             AUTONOMY_POLICY,
             WORK_QUALITY_POLICY,
+            CONTEXT_EFFICIENCY_POLICY,
             "- Keep scope to the current task; do not trawl months of history unless the task needs it.",
             "- For project/code/repo work, call knowledge MCP `get_playbook()` when available.",
             "- If the target repo is known, read its local `AGENTS.md`; also read `PROJECT_STATE.md` when present.",
