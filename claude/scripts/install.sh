@@ -28,6 +28,7 @@ chmod 700 "$SECRETS_DIR"
 echo "==> Copying hook scripts"
 cp -f "$SRC_DIR/hooks/"*.py "$HOOKS_DIR/"
 cp -f "$SRC_DIR/hooks/lib/"*.py "$HOOKS_DIR/lib/"
+cp -f "$SRC_DIR/hooks/tests/"*.py "$HOOKS_DIR/tests/"
 chmod +x "$HOOKS_DIR/"*.py 2>/dev/null || true
 
 # 3. Verify MiMo key is accessible (shared from Codex install)

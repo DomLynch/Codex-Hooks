@@ -21,6 +21,7 @@ from lib.claude_adapter import (  # noqa: E402
 import mimo_audit  # noqa: E402
 import autonomy_daemon  # noqa: E402
 import post_tool  # noqa: E402
+import session_start  # noqa: E402
 import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
 from lib import autonomy  # noqa: E402
@@ -137,8 +138,17 @@ class ClaudeAdapterTests(unittest.TestCase):
     def test_user_prompt_contract_requires_mcp_minimal_loc_and_review(self) -> None:
         context = user_prompt_submit.context_for("fix hook code", Path("/tmp/project"))
         self.assertIn("minimal LOC", context)
+        self.assertIn("Context Efficiency Contract", context)
+        self.assertIn("capped output", context)
+        self.assertIn("Avoid duplicate parallel exploration", context)
+        self.assertIn("compact context packet", context)
         self.assertIn("Mandatory: use Codegraph MCP first", context)
         self.assertIn("two-pass review", context)
+
+    def test_claude_session_baseline_includes_context_efficiency(self) -> None:
+        self.assertIn("capped output", session_start.SESSION_BASELINE)
+        self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
+        self.assertIn("compact context packet", session_start.SESSION_BASELINE)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:
         self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")
