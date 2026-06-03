@@ -242,6 +242,26 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
         self.assertEqual(tasks[0]["cwd"], tmp)
 
+    def test_claude_autonomy_daemon_ignores_marker_config_and_prose_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            (repo / "autonomy_daemon.py").write_text('BACKLOG_MARKER_RE = re.compile(r"TODO|FIXME|XXX")\n')
+            (repo / "notes.md").write_text("Mention TODO/FIXME/XXX without assigning work.\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks, [])
+
+    def test_claude_autonomy_daemon_accepts_owner_marker_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            path = repo / "hook.py"
+            path.write_text("# FIXME(owner): tighten\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
+
     def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             queue = Path(tmp) / "queue.json"
