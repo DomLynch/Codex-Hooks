@@ -26,6 +26,7 @@ import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
+from lib.quality import mine_backlog  # noqa: E402
 from lib.transcript import latest_task_slice as latest_codex_style_task_slice  # noqa: E402
 
 
@@ -261,6 +262,24 @@ class ClaudeAdapterTests(unittest.TestCase):
             tasks = autonomy_daemon.mine_local_tasks(repo)
 
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
+
+    def test_claude_mine_backlog_ignores_marker_config_and_prose_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            (cwd / "config.py").write_text('MARKERS = "TODO|FIXME|XXX"\n')
+            (cwd / "notes.md").write_text("Mention TODO/FIXME/XXX without assigning work.\n")
+
+            self.assertEqual(mine_backlog(cwd), [])
+
+    def test_claude_mine_backlog_accepts_assignable_owner_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            (cwd / "hook.py").write_text("# FIXME(owner): tighten scanner\n")
+
+            items = mine_backlog(cwd)
+
+        self.assertEqual(items[0]["source_file"], "hook.py:1")
+        self.assertIn("FIXME(owner): tighten scanner", items[0]["description"])
 
     def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

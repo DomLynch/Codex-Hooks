@@ -9,6 +9,8 @@ from typing import Any
 from .git import safe_run
 
 
+BACKLOG_MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)(?:\([^)]+\))?:")
+
 SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -141,7 +143,7 @@ def mine_backlog(cwd: Path, max_items: int = 10) -> list[dict]:
             continue
         rel = str(path.relative_to(cwd)) if path.is_relative_to(cwd) else str(path)
         for i, line in enumerate(text.splitlines(), start=1):
-            if re.search(r"\b(TODO|FIXME|XXX|HACK)\b", line):
+            if BACKLOG_MARKER_RE.search(line):
                 items.append({"description": f"Resolve {line.strip()[:120]}", "source_file": f"{rel}:{i}", "priority": 50})
         is_test_file = "test" in path.name.lower() or "spec" in path.name.lower()
         if path.suffix == ".py" and not is_test_file:
