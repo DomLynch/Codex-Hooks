@@ -914,19 +914,25 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(reason, "missing git origin remote")
 
     def test_self_spec_uses_queued_backlog_and_pops_item(self) -> None:
-        handoff = {
-            "tasks_completed_count": 0,
-            "queued_backlog": [
-                {"description": "Add coverage for parser", "source_file": "agent/parser.py", "priority": 70},
-                {"description": "Resolve TODO", "source_file": "agent/todo.py", "priority": 50},
-            ],
-        }
-        written: dict = {}
-        with (
-            mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-            mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
-        ):
-            task = stop_orchestrator.next_task("session-self-spec", Path("/tmp/repo"), "branch", "pr")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "agent").mkdir()
+            (repo / "agent/parser.py").write_text("# TODO: add coverage\n")
+            (repo / "agent/todo.py").write_text("# FIXME: resolve\n")
+            handoff = {
+                "cwd": str(repo),
+                "tasks_completed_count": 0,
+                "queued_backlog": [
+                    {"description": "Add coverage for parser", "source_file": "agent/parser.py:1", "priority": 70},
+                    {"description": "Resolve TODO", "source_file": "agent/todo.py:1", "priority": 50},
+                ],
+            }
+            written: dict = {}
+            with (
+                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
+            ):
+                task = stop_orchestrator.next_task("session-self-spec", repo, "branch", "pr")
 
         self.assertIn("Add coverage for parser", task)
         self.assertIn("agent/parser.py", task)
@@ -951,6 +957,33 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertEqual(task, "")
         write_handoff.assert_not_called()
+
+    def test_self_spec_filters_missing_handoff_backlog_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            handoff = {
+                "cwd": str(repo),
+                "tasks_completed_count": 0,
+                "queued_backlog": [
+                    {
+                        "description": "Resolve stale phase two diff item",
+                        "source_file": "phase2_workspace_diff.md:1719",
+                        "priority": 30,
+                    },
+                ],
+            }
+            written: dict = {}
+            with (
+                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
+                mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
+                mock.patch.object(stop_orchestrator, "call_mimo", return_value="STATUS: COMPLETE"),
+                mock.patch.object(stop_orchestrator, "log"),
+            ):
+                task = stop_orchestrator.next_task("session-self-spec", repo, "branch", "pr")
+
+        self.assertEqual(task, "")
+        self.assertEqual(written["queued_backlog"], [])
 
     def test_autonomy_daemon_mines_local_tasks_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
