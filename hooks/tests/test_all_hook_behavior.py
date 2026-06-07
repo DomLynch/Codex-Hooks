@@ -1025,6 +1025,26 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
         self.assertEqual(tasks[0]["cwd"], str(repo))
 
+    def test_autonomy_daemon_ignores_marker_config_and_prose_mentions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            init_git_repo(repo)
+            (repo / "autonomy_daemon.py").write_text('BACKLOG_MARKER_RE = re.compile(r"TODO|FIXME|XXX")\n')
+            (repo / "notes.md").write_text("Mention TODO/FIXME/XXX without assigning work.\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks, [])
+
+    def test_autonomy_daemon_accepts_owner_marker_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            init_git_repo(repo)
+            path = repo / "app.py"
+            path.write_text("# TODO(owner): add coverage\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
+
 
 if __name__ == "__main__":
     unittest.main()

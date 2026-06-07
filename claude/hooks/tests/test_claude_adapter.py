@@ -323,6 +323,33 @@ class ClaudeAdapterTests(unittest.TestCase):
         ):
             self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
 
+    def test_claude_self_spec_filters_missing_handoff_backlog_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            handoff = {
+                "cwd": str(repo),
+                "tasks_completed_count": 0,
+                "queued_backlog": [
+                    {
+                        "description": "Resolve stale phase two diff item",
+                        "source_file": "phase2_workspace_diff.md:1719",
+                        "priority": 30,
+                    },
+                ],
+            }
+            written: dict = {}
+            with (
+                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
+                mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
+                mock.patch.object(stop_orchestrator, "call_mimo", return_value="STATUS: COMPLETE"),
+                mock.patch.object(stop_orchestrator, "log"),
+            ):
+                task = stop_orchestrator.next_task("session-self-spec", repo, "branch", "pr")
+
+        self.assertEqual(task, "")
+        self.assertEqual(written["queued_backlog"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,7 +29,7 @@ from lib.log import log  # noqa: E402
 COMPONENT = "autonomy_daemon"
 MIN_QUEUE = 3
 MAX_NEW_TASKS = 5
-BACKLOG_MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX)(?:\([^)]+\))?:")
+BACKLOG_MARKER_RE = re.compile(r"\b(TODO|FIXME|XXX|HACK)(?:\([^)]+\))?:")
 
 
 def safe_run(cmd: list[str], cwd: Path | None = None, timeout: int = 20) -> tuple[int, str, str]:
