@@ -263,6 +263,16 @@ class ClaudeAdapterTests(unittest.TestCase):
 
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
 
+    def test_claude_autonomy_daemon_accepts_hack_marker_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".git").mkdir()
+            path = repo / "hook.py"
+            path.write_text("# HACK: replace temporary scanner path\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
+
     def test_claude_mine_backlog_ignores_marker_config_and_prose_mentions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cwd = Path(tmp)

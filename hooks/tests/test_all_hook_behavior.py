@@ -1045,6 +1045,16 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
 
+    def test_autonomy_daemon_accepts_hack_marker_syntax(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            init_git_repo(repo)
+            path = repo / "app.py"
+            path.write_text("# HACK: replace temporary scanner path\n")
+            tasks = autonomy_daemon.mine_local_tasks(repo)
+
+        self.assertEqual(tasks[0]["title"], "Resolve backlog marker in app.py")
+
 
 if __name__ == "__main__":
     unittest.main()
