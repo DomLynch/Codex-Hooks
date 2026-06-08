@@ -45,7 +45,7 @@ MILESTONE_INTENT_PATTERNS = (
     re.compile(r"\baaa\s+milestone\s+(?:release|ship|merge|deploy)\b", re.IGNORECASE),
 )
 DEFAULT_BASE_BRANCH = "main"
-MIMO_WAIT_TIMEOUT_S = 70
+MIMO_WAIT_TIMEOUT_S = 155
 AUTO_PR_SIDE_EFFECT_ATTEMPTS = 3
 AUTO_PR_RETRY_DELAY_S = 2
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -27,6 +29,17 @@ import user_prompt_submit  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
 from lib.transcript import latest_task_slice as latest_codex_style_task_slice  # noqa: E402
+
+
+def run_main_with_stdin(fn, payload: dict) -> tuple[int | None, str]:
+    stdin = io.StringIO(json.dumps(payload))
+    stdout = io.StringIO()
+    with mock.patch("sys.stdin", stdin), redirect_stdout(stdout):
+        try:
+            fn()
+        except SystemExit as exc:
+            return int(exc.code or 0), stdout.getvalue()
+    return None, stdout.getvalue()
 
 
 class ClaudeAdapterTests(unittest.TestCase):
@@ -175,11 +188,32 @@ class ClaudeAdapterTests(unittest.TestCase):
         urlopen.assert_called_once()
 
     def test_claude_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
-        retry_budget = (
-            mimo_audit.AUDIT_TIMEOUT_S * mimo_audit.AUDIT_MAX_ATTEMPTS
-            + mimo_audit.AUDIT_RETRY_DELAY_S * (mimo_audit.AUDIT_MAX_ATTEMPTS - 1)
-        )
-        self.assertLess(retry_budget, 90)
+        self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
+        self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
+
+    def test_claude_mimo_timeout_blocks_visibly_instead_of_silent_allow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-timeout",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Completed implementation. " * 40,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=TimeoutError("read timeout")),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["decision"], "block")
+        self.assertIn("MiMo audit unavailable", data["reason"])
+        self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_call_mimo_uses_direct_mimo_http(self) -> None:
         class Response:

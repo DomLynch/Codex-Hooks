@@ -9,7 +9,7 @@ codex_hooks = true
 [[hooks.Stop.hooks]]
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/mimo_audit.py"
-timeout = 90
+timeout = 180
 statusMessage = "MiMo audit"
 
 [[hooks.Stop.hooks]]

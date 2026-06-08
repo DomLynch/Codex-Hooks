@@ -179,11 +179,8 @@ class AllHookBehaviorTests(unittest.TestCase):
         urlopen.assert_called_once()
 
     def test_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
-        retry_budget = (
-            mimo_audit.AUDIT_TIMEOUT_S * mimo_audit.AUDIT_MAX_ATTEMPTS
-            + mimo_audit.AUDIT_RETRY_DELAY_S * (mimo_audit.AUDIT_MAX_ATTEMPTS - 1)
-        )
-        self.assertLess(retry_budget, 90)
+        self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
+        self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
 
     def test_mimo_bare_pass_allows_stop_without_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -208,6 +205,30 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(out, "")
         repair.assert_not_called()
         self.assertEqual(verdict["mimo-bare-pass"]["verdict"], "PASS")
+
+    def test_mimo_timeout_blocks_visibly_instead_of_silent_allow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-timeout",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Completed implementation. " * 40,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=TimeoutError("read timeout")),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        data = json.loads(out)
+        self.assertEqual(data["decision"], "block")
+        self.assertIn("MiMo audit unavailable", data["reason"])
+        self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_post_tool_blocks_syntax_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

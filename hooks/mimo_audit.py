@@ -47,9 +47,11 @@ BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
 API_KEY_ENV = "MIMO_API_KEY"
 MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to MiMo
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
-AUDIT_TIMEOUT_S = 40
+AUDIT_TIMEOUT_S = 70
 AUDIT_MAX_ATTEMPTS = 2
 AUDIT_RETRY_DELAY_S = 2
+AUDIT_HOOK_TIMEOUT_S = 180
+AUDIT_RETRY_BUDGET_S = AUDIT_TIMEOUT_S * AUDIT_MAX_ATTEMPTS + AUDIT_RETRY_DELAY_S * (AUDIT_MAX_ATTEMPTS - 1)
 RETRY_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
 
@@ -356,6 +358,21 @@ def block_stop(reason: str) -> None:
     sys.exit(0)
 
 
+def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str) -> None:
+    next_iteration = iterations + 1
+    save_iterations(session_id, turn_id, next_iteration)
+    save_verdict(session_id, turn_id, "ERROR", message)
+    if next_iteration >= MAX_ITERATIONS:
+        allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})")
+        return
+    block_stop(
+        f"[MiMo audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
+        f"{message}\n\n"
+        "MiMo could not complete the audit. Keep working/retry instead of silently "
+        "stopping; side effects remain gated until MiMo returns PASS."
+    )
+
+
 def normalize_verdict(text: str) -> str:
     stripped = (text or "").strip()
     if not stripped:
@@ -517,12 +534,10 @@ def main() -> None:
             verdict_text = ask_mimo_with_retry(api_key, retry_transcript, max_tokens=800)
     except urllib.error.HTTPError as e:
         body_preview = e.read().decode("utf-8", errors="replace")[:300]
-        save_verdict(session_id, turn_id, "ERROR", f"audit HTTP {e.code}: {body_preview}")
-        allow_stop(f"audit HTTP {e.code}: {body_preview}")
+        block_audit_error(session_id, turn_id, iterations, f"audit HTTP {e.code}: {body_preview}")
         return
     except Exception as e:
-        save_verdict(session_id, turn_id, "ERROR", f"audit API error: {e}")
-        allow_stop(f"audit API error: {e}")
+        block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}")
         return
 
     log(f"MiMo verdict (iter {iterations + 1}): {verdict_text[:240]}")
