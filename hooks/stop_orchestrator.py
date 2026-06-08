@@ -39,6 +39,7 @@ from lib.transcript import latest_task_slice
 COMPONENT = "stop_orchestrator"
 MAX_CLAUDE_ITERATIONS = 3
 MAX_TASKS_PER_SESSION = 8
+BACKLOG_SKIP_PARTS = {"archive", "archived", "legacy", "agent_archived", "agent_legacy"}
 MILESTONE_INTENT_PATTERNS = (
     re.compile(r"\bready\s+to\s+(?:merge|ship|release|deploy)\b", re.IGNORECASE),
     re.compile(r"\b(?:ship|merge|land|deploy|release)\s+(?:it|this|now)\b", re.IGNORECASE),
@@ -395,6 +396,31 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
     return branch, sha, pr_url, "created"
 
 
+def _backlog_source_path(cwd: Path, source: str) -> Path:
+    raw = source.split(":", 1)[0].strip()
+    path = Path(raw)
+    return path if path.is_absolute() else cwd / path
+
+
+def filter_handoff_backlog(items: list[dict], cwd: Path) -> list[dict]:
+    filtered: list[dict] = []
+    for item in items or []:
+        source = str(item.get("source_file") or "")
+        if not source:
+            filtered.append(item)
+            continue
+        rel = source.split(":", 1)[0]
+        parts = set(Path(rel).parts)
+        if parts & BACKLOG_SKIP_PARTS:
+            continue
+        if any(part.startswith(".") for part in parts):
+            continue
+        if not _backlog_source_path(cwd, source).exists():
+            continue
+        filtered.append(item)
+    return filtered
+
+
 def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
     queued = pop_next_task("codex", cwd)
     if queued:
@@ -412,7 +438,10 @@ def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
     if completed >= MAX_TASKS_PER_SESSION:
         log(COMPONENT, "self-spec skipped: max task budget")
         return ""
-    backlog = handoff.get("queued_backlog") or []
+    backlog = filter_handoff_backlog(handoff.get("queued_backlog") or [], cwd)
+    if backlog != (handoff.get("queued_backlog") or []):
+        handoff["queued_backlog"] = backlog
+        write_handoff(handoff)
     if backlog:
         item = backlog.pop(0)
         handoff["queued_backlog"] = backlog

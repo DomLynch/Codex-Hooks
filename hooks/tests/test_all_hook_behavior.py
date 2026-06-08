@@ -935,19 +935,24 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(reason, "missing git origin remote")
 
     def test_self_spec_uses_queued_backlog_and_pops_item(self) -> None:
-        handoff = {
-            "tasks_completed_count": 0,
-            "queued_backlog": [
-                {"description": "Add coverage for parser", "source_file": "agent/parser.py", "priority": 70},
-                {"description": "Resolve TODO", "source_file": "agent/todo.py", "priority": 50},
-            ],
-        }
-        written: dict = {}
-        with (
-            mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-            mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
-        ):
-            task = stop_orchestrator.next_task("session-self-spec", Path("/tmp/repo"), "branch", "pr")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "agent").mkdir()
+            (repo / "agent/parser.py").write_text("# TODO: parser coverage\n")
+            (repo / "agent/todo.py").write_text("# TODO: cleanup\n")
+            handoff = {
+                "tasks_completed_count": 0,
+                "queued_backlog": [
+                    {"description": "Add coverage for parser", "source_file": "agent/parser.py", "priority": 70},
+                    {"description": "Resolve TODO", "source_file": "agent/todo.py", "priority": 50},
+                ],
+            }
+            written: dict = {}
+            with (
+                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
+                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
+            ):
+                task = stop_orchestrator.next_task("session-self-spec", repo, "branch", "pr")
 
         self.assertIn("Add coverage for parser", task)
         self.assertIn("agent/parser.py", task)
