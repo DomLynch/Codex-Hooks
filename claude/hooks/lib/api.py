@@ -8,15 +8,20 @@ from pathlib import Path
 
 
 CLAUDE_SECRETS_DIR = Path.home() / ".claude" / "secrets"
-CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared keys (MiMo)
-MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
-MIMO_MODEL = "mimo-v2.5-pro"
+CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared audit keys
+MIMO_BASE_URL = "https://api.minimax.io/anthropic"
+MIMO_MODEL = "MiniMax-M3"
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
+
+
+def anthropic_text(data: dict) -> str:
+    parts = data.get("content") or []
+    return "\n".join(part.get("text", "") for part in parts if part.get("type") == "text").strip()
 
 
 def load_api_key(env_name: str, secrets_filename: str) -> str:
     """Load an API key. Order: env var → ~/.claude/secrets → ~/.codex/secrets → shell rc parse.
-    The ~/.codex fallback lets MiMo/Anthropic keys be shared across both hook systems.
+    The ~/.codex fallback lets MiniMax/Anthropic keys be shared across both hook systems.
     """
     key = os.environ.get(env_name)
     if key:
@@ -52,25 +57,29 @@ def load_api_key(env_name: str, secrets_filename: str) -> str:
 
 
 def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45) -> str:
-    key = load_api_key("MIMO_API_KEY", "mimo_api_key")
+    key = load_api_key("MINIMAX_API_KEY", "minimax_api_key")
     if not key:
         return ""
     body = json.dumps({
         "model": MIMO_MODEL,
         "max_tokens": max_tokens,
         "temperature": 0.2,
-        "messages": [{"role": "user", "content": prompt}],
+        "thinking": {"type": "disabled"},
+        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
     }).encode("utf-8")
     req = urllib.request.Request(
-        f"{MIMO_BASE_URL}/chat/completions",
+        f"{MIMO_BASE_URL}/v1/messages",
         data=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    msg = (data.get("choices") or [{}])[0].get("message") or {}
-    return (msg.get("content") or msg.get("reasoning_content") or "").strip()
+    return anthropic_text(data)
 
 
 def call_claude(prompt: str, system: str = "", max_tokens: int = 1500, timeout: int = 45) -> str:
@@ -96,5 +105,4 @@ def call_claude(prompt: str, system: str = "", max_tokens: int = 1500, timeout: 
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    parts = data.get("content") or []
-    return "\n".join(part.get("text", "") for part in parts if part.get("type") == "text").strip()
+    return anthropic_text(data)

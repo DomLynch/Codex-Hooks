@@ -1,6 +1,6 @@
 # Claude Code Hooks (port of Codex hooks)
 
-Parallel install of the Codex hook system for Claude Code. Same MiMo audit,
+Parallel install of the Codex hook system for Claude Code. Same MiniMax-M3 audit,
 autonomy contract, quality floor, auto-checkpoint, and stop orchestrator —
 adapted for Claude Code's payload schema and config format.
 
@@ -10,8 +10,8 @@ adapted for Claude Code's payload schema and config format.
 |---|---|---|
 | `UserPromptSubmit` | `user_prompt_submit.py` | Injects autonomy contract + V4/MCP routing on every prompt |
 | `SessionStart` | `session_start.py` | Loads handoff state, mines backlog, captures session spec |
-| `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task MiMo |
-| `Stop` | `mimo_audit.py` | MiMo-v2.5-Pro reviews the turn, blocks on issues |
+| `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task MiniMax-M3 |
+| `Stop` | `mimo_audit.py` | MiniMax-M3 reviews the turn, blocks on issues |
 | `Stop` | `stop_orchestrator.py` | Optional 2nd audit (Claude), AAA gate, Auto-PR, self-spec chaining |
 | launchd | `autonomy_daemon.py` | Shared Codex/Claude queue planner via `~/.codex/state/` |
 
@@ -24,8 +24,8 @@ adapted for Claude Code's payload schema and config format.
    - Parses Claude's transcript schema (`type=user|assistant|tool_use|tool_result`)
 2. **State + logs** live at `~/.claude/state/` and `~/.claude/logs/` — fully
    isolated from the Codex install, so neither can corrupt the other.
-3. **MiMo API key** is shared from `~/.codex/secrets/mimo_api_key` (single source
-   of truth). Override at `~/.claude/secrets/mimo_api_key` if needed.
+3. **MiniMax API key** is shared from `~/.codex/secrets/minimax_api_key` (single
+   source of truth). Override at `~/.claude/secrets/minimax_api_key` if needed.
 4. **Branch naming** uses `claude/<sid>/task-<N>` instead of `codex/<sid>/...`
    so PRs from the two systems don't collide.
 5. **Settings file** is JSON at `~/.claude/settings.json` (not TOML). The install
@@ -96,7 +96,7 @@ on every Edit/Write, `mimo_audit.log` whenever Claude finishes a turn.
 ## Safety
 
 - Logs to `~/.claude/logs/` only — never modifies user code
-- All hooks fail-open: missing MiMo key, network errors, malformed payloads
+- All hooks fail-open: missing MiniMax key, network errors, malformed payloads
   all result in "allow stop" rather than blocking Claude
 - Auto-PR is OFF by default. Side effects (commit/push/PR) only happen when
   you explicitly flip the flag

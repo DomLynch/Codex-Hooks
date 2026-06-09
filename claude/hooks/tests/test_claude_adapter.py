@@ -170,7 +170,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             "VERDICT: ISSUES\n1. Missing regression test",
         )
 
-    def test_mimo_audit_uses_direct_mimo_http(self) -> None:
+    def test_mimo_audit_uses_minimax_m3_anthropic_http(self) -> None:
         class Response:
             def __enter__(self):
                 return self
@@ -179,13 +179,20 @@ class ClaudeAdapterTests(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"choices": [{"message": {"content": "PASS"}}]}).encode()
+                return json.dumps({"content": [{"type": "text", "text": "PASS"}]}).encode()
 
         with mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen:
             verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
         urlopen.assert_called_once()
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, "https://api.minimax.io/anthropic/v1/messages")
+        self.assertEqual(request.headers["X-api-key"], "direct-api-key")
+        self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
+        self.assertEqual(body["model"], "MiniMax-M3")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
 
     def test_claude_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
@@ -212,10 +219,10 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("MiMo audit unavailable", data["reason"])
+        self.assertIn("MiniMax-M3 audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
-    def test_call_mimo_uses_direct_mimo_http(self) -> None:
+    def test_call_mimo_uses_minimax_m3_anthropic_http(self) -> None:
         class Response:
             def __enter__(self):
                 return self
@@ -224,17 +231,36 @@ class ClaudeAdapterTests(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"choices": [{"message": {"content": "VERDICT: PASS"}}]}).encode()
+                return json.dumps({"content": [{"type": "text", "text": "VERDICT: PASS"}]}).encode()
 
         with (
-            mock.patch.object(api, "load_api_key", return_value="mimo-key") as load_key,
+            mock.patch.object(api, "load_api_key", return_value="minimax-key") as load_key,
             mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
         ):
             result = api.call_mimo("audit this", timeout=7)
 
         self.assertEqual(result, "VERDICT: PASS")
-        load_key.assert_called_once()
+        load_key.assert_called_once_with("MINIMAX_API_KEY", "minimax_api_key")
         urlopen.assert_called_once()
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, "https://api.minimax.io/anthropic/v1/messages")
+        self.assertEqual(request.headers["X-api-key"], "minimax-key")
+        self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
+        self.assertEqual(body["model"], "MiniMax-M3")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
+
+    def test_anthropic_text_extracts_text_blocks_only(self) -> None:
+        self.assertEqual(
+            api.anthropic_text({
+                "content": [
+                    {"type": "thinking", "thinking": "hidden"},
+                    {"type": "text", "text": "VERDICT: PASS"},
+                    {"type": "tool_use", "name": "noop"},
+                ]
+            }),
+            "VERDICT: PASS",
+        )
 
     def test_claude_autonomy_daemon_mines_local_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

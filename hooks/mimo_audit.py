@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
 """
-Codex Stop hook: 3rd-party audit with MiMo-v2.5-Pro.
+Codex Stop hook: 3rd-party audit with MiniMax-M3.
 
-When Codex thinks it's done, this script feeds the recent transcript to MiMo
-(via Xiaomi's OpenAI-compatible endpoint) for review. If MiMo finds issues,
+When Codex thinks it's done, this script feeds the recent transcript to MiniMax
+(via MiniMax's Anthropic-compatible endpoint) for review. If MiniMax finds issues,
 the hook BLOCKS the stop and injects the review back into Codex so it keeps
 working. Capped at MAX_ITERATIONS per session to prevent infinite loops.
 
@@ -37,15 +37,16 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
+from lib.api import anthropic_text  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 
 
 # --- Tunables --------------------------------------------------------------
 MAX_ITERATIONS = 3
-MODEL = "mimo-v2.5-pro"
-BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
-API_KEY_ENV = "MIMO_API_KEY"
-MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to MiMo
+MODEL = "MiniMax-M3"
+BASE_URL = "https://api.minimax.io/anthropic"
+API_KEY_ENV = "MINIMAX_API_KEY"
+MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to MiniMax-M3
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
 AUDIT_TIMEOUT_S = 70
 AUDIT_MAX_ATTEMPTS = 2
@@ -58,7 +59,7 @@ TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use"
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
 STATE_FILE = Path.home() / ".codex" / "state" / "audit_iterations.json"
 VERDICT_FILE = Path.home() / ".codex" / "state" / "mimo_last_verdict.json"
-KEY_FILE = Path.home() / ".codex" / "secrets" / "mimo_api_key"
+KEY_FILE = Path.home() / ".codex" / "secrets" / "minimax_api_key"
 
 AUDIT_PROMPT = """Audit Codex's latest task. Do not explain your reasoning.
 Your first line must be exactly one of:
@@ -266,7 +267,7 @@ def read_task_slice(path: str) -> str:
             if text:
                 entries.append((role.upper(), text))
         elif item_type == "function_call":
-            # Edit tools need bigger budget so MiMo can actually review the code being written.
+            # Edit tools need bigger budget so MiniMax-M3 can review the code being written.
             # Without this, a 5000-char Write/Edit gets compacted to 800 chars, hiding bugs in
             # the middle of the diff (cf. the startswith("pass") false-PASS in a prior reviewer).
             tool_name = payload.get("name") or ""
@@ -366,10 +367,10 @@ def block_audit_error(session_id: str, turn_id: str, iterations: int, message: s
         allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})")
         return
     block_stop(
-        f"[MiMo audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
+        f"[MiniMax-M3 audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
         f"{message}\n\n"
-        "MiMo could not complete the audit. Keep working/retry instead of silently "
-        "stopping; side effects remain gated until MiMo returns PASS."
+        "MiniMax-M3 could not complete the audit. Keep working/retry instead of silently "
+        "stopping; side effects remain gated until MiniMax returns PASS."
     )
 
 
@@ -401,46 +402,31 @@ def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
         "model": MODEL,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        "system": "Output only the required VERDICT format. Do not think aloud.",
+        "thinking": {"type": "disabled"},
         "messages": [
             {
-                "role": "system",
-                "content": "Output only the required VERDICT format. Do not think aloud.",
-            },
-            {
                 "role": "user",
-                "content": prompt,
+                "content": [{"type": "text", "text": prompt}],
             },
         ],
     }).encode("utf-8")
     req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions",
+        f"{BASE_URL}/v1/messages",
         data=body,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=AUDIT_TIMEOUT_S) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    choice = data["choices"][0]
-    message = choice.get("message") or {}
-    content = (message.get("content") or "").strip()
+    content = anthropic_text(data)
     if content:
         return normalize_verdict(content)
-    reasoning_content = (message.get("reasoning_content") or "").strip()
-    if reasoning_content:
-        normalized = normalize_verdict(reasoning_content)
-        if normalized.startswith("VERDICT: PASS") or normalized.startswith("VERDICT: ISSUES"):
-            log("EMPTY_CONTENT_REASONING_VERDICT_USED")
-            return normalized
-        log(
-            "EMPTY_CONTENT_REASONING_IGNORED: "
-            f"finish={choice.get('finish_reason')} "
-            f"reasoning_preview={reasoning_content[:160].replace(chr(10), ' ')}"
-        )
-        return ""
-    log(f"EMPTY_RESPONSE: finish={choice.get('finish_reason')} keys={list(message.keys())}")
+    log(f"EMPTY_RESPONSE: keys={list(data.keys())}")
     return ""
 
 
@@ -466,30 +452,28 @@ def repair_verdict_format(api_key: str, response: str) -> str:
         "model": MODEL,
         "max_tokens": 500,
         "temperature": 0.0,
+        "system": "You are a strict formatter. Output only the requested verdict format.",
+        "thinking": {"type": "disabled"},
         "messages": [
             {
-                "role": "system",
-                "content": "You are a strict formatter. Output only the requested verdict format.",
-            },
-            {
                 "role": "user",
-                "content": prompt,
+                "content": [{"type": "text", "text": prompt}],
             },
         ],
     }).encode("utf-8")
     req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions",
+        f"{BASE_URL}/v1/messages",
         data=body,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
             "Content-Type": "application/json",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=AUDIT_TIMEOUT_S) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    message = (data["choices"][0].get("message") or {})
-    return normalize_verdict((message.get("content") or "").strip())
+    return normalize_verdict(anthropic_text(data))
 
 
 # --- Main ------------------------------------------------------------------
@@ -540,7 +524,7 @@ def main() -> None:
         block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}")
         return
 
-    log(f"MiMo verdict (iter {iterations + 1}): {verdict_text[:240]}")
+    log(f"MiniMax verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
 
     if verdict_text and not (
@@ -559,10 +543,10 @@ def main() -> None:
         if not (verdict_text.startswith("VERDICT: PASS") or verdict_text.startswith("VERDICT: ISSUES")):
             verdict_text = (
                 "VERDICT: ISSUES\n"
-                "1. MiMo returned a nonstandard audit instead of the required "
+                "1. MiniMax-M3 returned a nonstandard audit instead of the required "
                 "PASS/ISSUES format after a repair retry. Treat the raw review "
                 "below as blocking feedback and address any concrete misses before stopping.\n\n"
-                f"Raw MiMo review:\n{verdict_text[:1800]}"
+                f"Raw MiniMax-M3 review:\n{verdict_text[:1800]}"
             )
             log("NORMALIZED_NONSTANDARD_VERDICT_TO_ISSUES")
 
@@ -576,9 +560,9 @@ def main() -> None:
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
         record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         feedback = (
-            f"[MiMo code-review hook — iteration "
+            f"[MiniMax-M3 code-review hook — iteration "
             f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
-            f"A second model (MiMo-v2.5-Pro) reviewed your work and found issues. "
+            f"A second model (MiniMax-M3) reviewed your work and found issues. "
             f"Fix these before stopping:\n\n"
             f"{verdict_text}\n\n"
             f"After addressing each item, run any relevant checks and continue."
@@ -589,9 +573,9 @@ def main() -> None:
     save_iterations(session_id, turn_id, iterations + 1)
     save_verdict(session_id, turn_id, "UNPARSEABLE", verdict_text)
     feedback = (
-        f"[MiMo code-review hook — iteration "
+        f"[MiniMax-M3 code-review hook — iteration "
         f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
-        f"MiMo did not return a parseable PASS/ISSUES verdict. Treat this as "
+        f"MiniMax-M3 did not return a parseable PASS/ISSUES verdict. Treat this as "
         f"an audit failure, re-check the user's request, verify the work with "
         f"strong relevant tests/logs, and only stop once the audit passes.\n\n"
         f"Raw verdict preview: {verdict_text[:120]!r}"

@@ -10,7 +10,7 @@ codex_hooks = true
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/mimo_audit.py"
 timeout = 180
-statusMessage = "MiMo audit"
+statusMessage = "MiniMax-M3 audit"
 
 [[hooks.Stop.hooks]]
 type = "command"
