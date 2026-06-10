@@ -114,6 +114,18 @@ Also flag subtle issues, not just blatant ones:
   no diff/output evidence that the change actually works
 - Stub assertions, placeholder values, or mocked-out logic left in production code
 
+Status/check-only calibration:
+- If the user only asked whether something is working, installed, synced, live,
+  or configured, treat direct command/log/state output as sufficient evidence.
+  Do not require a diff, code change, or full test suite unless the answer also
+  claims implementation work was completed.
+- For status/check-only answers, PASS when the transcript includes concrete
+  evidence such as command output, hook stdout/stderr, state-file verdicts, log
+  lines, test summary, source/live parity, or git status that supports the
+  narrow claim being made.
+- Still block unsupported status claims that only summarize prior evidence
+  without showing fresh command/log/state output in the current task.
+
 Also flag avoidable engineering drag when it creates real risk:
 - Broad rewrites, file/module sprawl, speculative abstractions, clever wrappers,
   or future-proofing that the current task did not earn

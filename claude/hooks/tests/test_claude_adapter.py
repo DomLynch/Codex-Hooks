@@ -144,6 +144,12 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
 
+    def test_claude_mimo_prompt_calibrates_status_checks(self) -> None:
+        self.assertIn("Status/check-only calibration", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("direct command/log/state output", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("source/live parity", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("without showing fresh command/log/state output", mimo_audit.AUDIT_PROMPT)
+
     def test_mid_run_prompts_check_codegraph_routing(self) -> None:
         self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn("Codegraph/MCP routing", Path(stop_orchestrator.__file__).read_text())
