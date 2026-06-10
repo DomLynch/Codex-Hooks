@@ -55,6 +55,7 @@ AUDIT_RETRY_DELAY_S = 2
 AUDIT_HOOK_TIMEOUT_S = 180
 AUDIT_RETRY_BUDGET_S = AUDIT_TIMEOUT_S * AUDIT_MAX_ATTEMPTS + AUDIT_RETRY_DELAY_S * (AUDIT_MAX_ATTEMPTS - 1)
 RETRY_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+NETWORK_RETRY_ERRORS = (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionResetError)
 TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
 
 LOG_FILE = Path.home() / ".claude" / "logs" / "mimo_audit.log"
@@ -371,7 +372,7 @@ def block_audit_error(session_id: str, turn_id: str, iterations: int, message: s
     block_stop(
         f"[MiniMax-M3 audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
         f"{message}\n\n"
-        "MiniMax-M3 could not complete the audit. Keep working/retry instead of silently "
+        f"MiniMax-M3 could not complete the audit after {AUDIT_MAX_ATTEMPTS} attempts. Keep working/retry instead of silently "
         "stopping; side effects remain gated until MiniMax returns PASS."
     )
 
@@ -440,9 +441,10 @@ def ask_mimo_with_retry(api_key: str, transcript: str, max_tokens: int = 2500) -
             if exc.code not in RETRY_HTTP_CODES or attempt >= AUDIT_MAX_ATTEMPTS:
                 raise
             log(f"RETRY_HTTP: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} code={exc.code}")
-        except (TimeoutError, socket.timeout, urllib.error.URLError) as exc:
+        except NETWORK_RETRY_ERRORS as exc:
             if attempt >= AUDIT_MAX_ATTEMPTS:
-                raise
+                log(f"RETRY_NETWORK_EXHAUSTED: attempts={AUDIT_MAX_ATTEMPTS} error={exc}")
+                raise RuntimeError(f"MiniMax transport failed after {AUDIT_MAX_ATTEMPTS} attempts: {exc}") from exc
             log(f"RETRY_NETWORK: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} error={exc}")
         time.sleep(AUDIT_RETRY_DELAY_S)
     return ""

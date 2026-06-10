@@ -198,6 +198,32 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
         self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
 
+    def test_claude_minimax_connection_reset_retries_once_then_passes(self) -> None:
+        with (
+            mock.patch.object(mimo_audit, "AUDIT_RETRY_DELAY_S", 0),
+            mock.patch.object(
+                mimo_audit,
+                "ask_mimo",
+                side_effect=[ConnectionResetError("reset by peer"), "VERDICT: PASS"],
+            ) as ask_mimo,
+            mock.patch.object(mimo_audit, "log"),
+        ):
+            verdict = mimo_audit.ask_mimo_with_retry("key", "USER:\nfix code")
+
+        self.assertEqual(verdict, "VERDICT: PASS")
+        self.assertEqual(ask_mimo.call_count, 2)
+
+    def test_claude_minimax_connection_reset_safe_fails_after_two_attempts(self) -> None:
+        with (
+            mock.patch.object(mimo_audit, "AUDIT_RETRY_DELAY_S", 0),
+            mock.patch.object(mimo_audit, "ask_mimo", side_effect=ConnectionResetError("reset by peer")) as ask_mimo,
+            mock.patch.object(mimo_audit, "log"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
+                mimo_audit.ask_mimo_with_retry("key", "USER:\nfix code")
+
+        self.assertEqual(ask_mimo.call_count, 2)
+
     def test_claude_mimo_timeout_blocks_visibly_instead_of_silent_allow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
