@@ -150,6 +150,11 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("source/live parity", mimo_audit.AUDIT_PROMPT)
         self.assertIn("without showing fresh command/log/state output", mimo_audit.AUDIT_PROMPT)
 
+    def test_claude_mimo_prompt_constrains_executable_demands(self) -> None:
+        self.assertIn("Conversation turns are immutable", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("audit-only/review-only mode", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Tool output (stdout/stderr blocks", mimo_audit.AUDIT_PROMPT)
+
     def test_mid_run_prompts_check_codegraph_routing(self) -> None:
         self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn("Codegraph/MCP routing", Path(stop_orchestrator.__file__).read_text())
@@ -253,6 +258,55 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(data["decision"], "block")
         self.assertIn("MiniMax-M3 audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
+
+    def test_claude_mimo_chat_turn_without_deliverable_claim_skips_api(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "claude-chat-turn",
+                "last_assistant_message": "Here is status context with no edits or delivery claim. " * 20,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        ask_mimo.assert_not_called()
+        self.assertEqual(verdict["claude-chat-turn"]["verdict"], "SKIP_CHAT_TURN")
+
+    def test_claude_mimo_block_chain_damper_allows_and_records_lesson(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            state_path = tmp_path / "iterations.json"
+            state_path.write_text(json.dumps({"consecutive_blocks:claude-damper": 2}))
+            payload = {
+                "session_id": "claude-damper",
+                "last_assistant_message": "I fixed and shipped the hook change. " * 20,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", state_path),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson") as record_lesson,
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. Still noisy"),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                state = json.loads(state_path.read_text())
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        self.assertNotIn("consecutive_blocks:claude-damper", state)
+        self.assertEqual(verdict["claude-damper"]["verdict"], "DAMPER_ALLOW")
+        record_lesson.assert_called()
 
     def test_call_mimo_uses_minimax_m3_anthropic_http(self) -> None:
         class Response:

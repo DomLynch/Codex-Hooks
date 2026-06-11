@@ -56,6 +56,13 @@ AUDIT_RETRY_BUDGET_S = AUDIT_TIMEOUT_S * AUDIT_MAX_ATTEMPTS + AUDIT_RETRY_DELAY_
 RETRY_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 NETWORK_RETRY_ERRORS = (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionResetError)
 TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
+DELIVERABLE_RE = re.compile(
+    r"\b(committ?ed|pushed|deployed|fixed|implemented|completed|shipped|merged|"
+    r"task complete|done\b)",
+    re.IGNORECASE,
+)
+CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
+MAX_CONSECUTIVE_BLOCKS = 3
 
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
 STATE_FILE = Path.home() / ".codex" / "state" / "audit_iterations.json"
@@ -123,6 +130,18 @@ Status/check-only calibration:
   narrow claim being made.
 - Still block unsupported status claims that only summarize prior evidence
   without showing fresh command/log/state output in the current task.
+
+Auditor constraints - demands must be executable:
+- Conversation turns are immutable. NEVER demand edits, redactions, or
+  corrections to previous turns. Corrections happen in the current turn only.
+- If the user has set audit-only/review-only mode for the agent, do NOT demand
+  code or config edits from it; findings should be routed to the implementer.
+- Evidence may live in earlier turns of the session that are NOT in your slice.
+  If the agent cites a specific command and its output location, treat that as
+  referenced evidence, not fabrication. Only flag missing evidence when the
+  agent makes a NEW claim with no source.
+- Tool output (stdout/stderr blocks, grep results, test runs) included in the
+  slice IS verification. Do not flag verified-by-shown-output items.
 
 Also flag avoidable engineering drag when it creates real risk:
 - Broad rewrites, file/module sprawl, speculative abstractions, clever wrappers,
@@ -196,6 +215,28 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
         return data
 
     update_json_locked(STATE_FILE, updater)
+
+
+def consecutive_block_key(session_id: str) -> str:
+    return f"{CONSECUTIVE_BLOCK_PREFIX}{session_id or 'unknown'}"
+
+
+def reset_consecutive_blocks(session_id: str) -> None:
+    def updater(data: dict) -> dict:
+        data.pop(consecutive_block_key(session_id), None)
+        return data
+
+    update_json_locked(STATE_FILE, updater)
+
+
+def increment_consecutive_blocks(session_id: str) -> int:
+    key = consecutive_block_key(session_id)
+
+    def updater(data: dict) -> dict:
+        data[key] = int(data.get(key, 0)) + 1
+        return data
+
+    return int(update_json_locked(STATE_FILE, updater).get(key, 0))
 
 
 def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "") -> None:
@@ -409,6 +450,14 @@ def has_tool_activity(transcript: str) -> bool:
     return any(marker in transcript for marker in TOOL_ACTIVITY_MARKERS)
 
 
+def has_deliverable_claim(transcript: str) -> bool:
+    return bool(DELIVERABLE_RE.search(transcript))
+
+
+def is_chat_turn(transcript: str) -> bool:
+    return not has_tool_activity(transcript) and not has_deliverable_claim(transcript)
+
+
 def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
     prompt = AUDIT_PROMPT.format(transcript=transcript)
     body = json.dumps({
@@ -515,12 +564,20 @@ def main() -> None:
     log(f"TASK_SLICE: {len(transcript)} chars")
     if len(transcript) < MIN_TRANSCRIPT_CHARS and not has_tool_activity(transcript):
         save_verdict(session_id, turn_id, "SKIP_TOO_SHORT", f"transcript too short ({len(transcript)} chars)")
+        reset_consecutive_blocks(session_id)
         allow_stop(f"transcript too short ({len(transcript)} chars)")
+        return
+
+    if is_chat_turn(transcript):
+        save_verdict(session_id, turn_id, "SKIP_CHAT_TURN", "no edit tools, no deliverable claims")
+        reset_consecutive_blocks(session_id)
+        allow_stop("chat turn - audit skipped")
         return
 
     api_key = load_api_key()
     if not api_key:
         save_verdict(session_id, turn_id, "SKIP_NO_KEY", f"{API_KEY_ENV} not set")
+        reset_consecutive_blocks(session_id)
         allow_stop(f"{API_KEY_ENV} not set")
         return
 
@@ -566,6 +623,7 @@ def main() -> None:
 
     if verdict_text.startswith("VERDICT: PASS"):
         save_verdict(session_id, turn_id, "PASS", verdict_text)
+        reset_consecutive_blocks(session_id)
         allow_stop("audit passed")
         return
 
@@ -573,6 +631,13 @@ def main() -> None:
         save_iterations(session_id, turn_id, iterations + 1)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
         record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
+        consecutive_blocks = increment_consecutive_blocks(session_id)
+        if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
+            log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
+            save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)
+            reset_consecutive_blocks(session_id)
+            allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns")
+            return
         feedback = (
             f"[MiniMax-M3 code-review hook — iteration "
             f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
