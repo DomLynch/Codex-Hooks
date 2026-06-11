@@ -36,6 +36,8 @@ class AuditRateReportTests(unittest.TestCase):
         self.assertEqual(counts["DAMPER"], 1)
         self.assertEqual(counts["ERROR"], 1)
         self.assertEqual(counts["TOO_SHORT"], 1)
+        self.assertEqual(audit_rate_report.percent(1, 2), "50%")
+        self.assertEqual(audit_rate_report.percent(0, 0), "-")
 
     def test_print_report_outputs_codex_claude_windows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -51,9 +53,12 @@ class AuditRateReportTests(unittest.TestCase):
                     datetime(2026, 6, 11, 11, 0, 0),
                 )
 
-        self.assertIn("agent window PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT", stdout.getvalue())
-        self.assertIn("codex 24h 1 0 0 0 0 0", stdout.getvalue())
-        self.assertIn("claude 7d 0 0 1 0 0 0", stdout.getvalue())
+        self.assertIn(
+            "agent window audited block_rate chat_skips other_skips PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT",
+            stdout.getvalue(),
+        )
+        self.assertIn("codex 24h 1 0% 0 0 1 0 0 0 0 0", stdout.getvalue())
+        self.assertIn("claude 7d 0 - 1 0 0 0 1 0 0 0", stdout.getvalue())
 
 
 if __name__ == "__main__":

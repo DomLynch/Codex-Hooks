@@ -48,6 +48,12 @@ def count_events(lines: list[str], now: datetime, hours: int) -> Counter[str]:
     return counts
 
 
+def percent(part: int, total: int) -> str:
+    if total == 0:
+        return "-"
+    return f"{(part / total) * 100:.0f}%"
+
+
 def read_lines(path: Path) -> list[str]:
     if not path.exists():
         return []
@@ -56,13 +62,16 @@ def read_lines(path: Path) -> list[str]:
 
 def print_report(logs: list[tuple[str, Path]], now: datetime) -> None:
     print(f"now={now:%Y-%m-%d %H:%M:%S}")
-    print("agent window " + " ".join(EVENTS))
+    print("agent window audited block_rate chat_skips other_skips " + " ".join(EVENTS))
     for name, path in logs:
         lines = read_lines(path)
         for hours, label in ((24, "24h"), (24 * 7, "7d")):
             counts = count_events(lines, now, hours)
+            audited = counts["PASS"] + counts["ISSUES"]
+            other_skips = counts["DAMPER"] + counts["ERROR"] + counts["TOO_SHORT"]
+            summary = f"{audited} {percent(counts['ISSUES'], audited)} {counts['SKIP_CHAT']} {other_skips}"
             values = " ".join(str(counts[event]) for event in EVENTS)
-            print(f"{name} {label} {values}")
+            print(f"{name} {label} {summary} {values}")
 
 
 def parse_log_arg(value: str) -> tuple[str, Path]:
