@@ -38,7 +38,7 @@ def compact(text: str, limit: int) -> str:
     text = sanitize(text)
     if len(text) <= limit:
         return text
-    return text[: limit // 2] + "\n...[omitted]...\n" + text[-limit // 2 :]
+    return text[: limit // 2] + "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n" + text[-limit // 2 :]
 
 
 def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:

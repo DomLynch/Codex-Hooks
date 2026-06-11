@@ -142,6 +142,14 @@ Auditor constraints - demands must be executable:
   agent makes a NEW claim with no source.
 - Tool output (stdout/stderr blocks, grep results, test runs) included in the
   slice IS verification. Do not flag verified-by-shown-output items.
+- Tool-call arguments in this slice are MECHANICALLY TRUNCATED by the slice
+  compactor (marked "...[slice-elided by compactor" or ending abruptly
+  mid-text). This is a rendering artifact, NOT evidence the edit was
+  incomplete. Edit integrity is verified deterministically by the Quality Floor
+  hook (py_compile/ruff) right after each edit. NEVER flag an edit as
+  truncated/incomplete/corrupting based on its rendering here - only flag it if
+  the slice shows a subsequent failed syntax check, failed test, or error
+  output for that file.
 
 Also flag avoidable engineering drag when it creates real risk:
 - Broad rewrites, file/module sprawl, speculative abstractions, clever wrappers,
@@ -289,7 +297,7 @@ def compact(text: str, limit: int) -> str:
     text = redact_sensitive(text)
     if len(text) <= limit:
         return text
-    return text[: limit // 2] + "\n...[omitted]...\n" + text[-limit // 2 :]
+    return text[: limit // 2] + "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n" + text[-limit // 2 :]
 
 
 def read_task_slice(path: str) -> str:

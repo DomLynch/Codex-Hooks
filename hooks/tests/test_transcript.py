@@ -81,6 +81,28 @@ class TranscriptSliceTests(unittest.TestCase):
         self.assertNotIn("merge this now", text)
         self.assertNotIn("npm test failed", text)
 
+    def test_compacted_tool_call_marks_slice_elision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "rollout.jsonl"
+            transcript.write_text("\n".join([
+                message("user", "edit app.py"),
+                json.dumps({
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "apply_patch",
+                        "arguments": "new_string=" + ("A" * 10_000),
+                    },
+                }),
+                message("assistant", "quality files=1 ok=True"),
+            ]))
+
+            text = latest_task_slice(str(transcript))
+
+        self.assertIn("slice-elided by compactor", text)
+        self.assertNotIn("...[omitted]...", text)
+        self.assertIn("quality files=1 ok=True", text)
+
 
 if __name__ == "__main__":
     unittest.main()

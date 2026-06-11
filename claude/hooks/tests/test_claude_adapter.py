@@ -154,6 +154,35 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("Conversation turns are immutable", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit-only/review-only mode", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Tool output (stdout/stderr blocks", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("MECHANICALLY TRUNCATED", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Quality Floor", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("py_compile/ruff", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("NEVER flag an edit", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("truncated/incomplete/corrupting", mimo_audit.AUDIT_PROMPT)
+
+    def test_claude_task_slice_marks_tool_arg_elision(self) -> None:
+        path = self._transcript([
+            {"type": "user", "message": {"content": "edit app.py"}},
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Edit",
+                            "input": {"new_string": "A" * 10_000},
+                        },
+                        {"type": "text", "text": "quality files=1 ok=True"},
+                    ]
+                },
+            },
+        ])
+
+        text = latest_task_slice_claude(path)
+
+        self.assertIn("slice-elided by compactor", text)
+        self.assertNotIn("...[omitted]...", text)
+        self.assertIn("quality files=1 ok=True", text)
 
     def test_mid_run_prompts_check_codegraph_routing(self) -> None:
         self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)

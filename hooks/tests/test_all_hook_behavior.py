@@ -171,6 +171,11 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Conversation turns are immutable", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit-only/review-only mode", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Tool output (stdout/stderr blocks", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("MECHANICALLY TRUNCATED", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Quality Floor", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("py_compile/ruff", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("NEVER flag an edit", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("truncated/incomplete/corrupting", mimo_audit.AUDIT_PROMPT)
 
     def test_mid_run_prompts_check_codegraph_routing(self) -> None:
         self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)

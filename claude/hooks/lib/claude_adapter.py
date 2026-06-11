@@ -19,6 +19,15 @@ from pathlib import Path
 from typing import Any
 
 
+ELISION_MARKER = "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n"
+
+
+def compact(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit // 2] + ELISION_MARKER + text[-limit // 2 :]
+
+
 def synthesize_turn_id(session_id: str, transcript_path: str, stop_hook_active: bool = False) -> str:
     """Stable turn id for one Claude turn. Anchored on:
        - session_id (stable across turns of same session)
@@ -122,7 +131,7 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
                         out.append(f"ASSISTANT:\n{item.get('text', '')}")
                     elif itype == "tool_use":
                         name = item.get("name", "?")
-                        inp = json.dumps(item.get("input", {}))[:800]
+                        inp = compact(json.dumps(item.get("input", {})), 800)
                         out.append(f"TOOL CALL: {name}: {inp}")
         elif etype in ("tool_result", "user") and isinstance(content, list):
             for item in content:
@@ -134,8 +143,7 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
     if len(text) <= max_chars:
         return text
     # Keep head + tail to preserve task context and final state
-    half = max_chars // 2
-    return text[:half] + "\n...[omitted]...\n" + text[-half:]
+    return compact(text, max_chars)
 
 
 def normalize_payload(raw: dict) -> dict:
