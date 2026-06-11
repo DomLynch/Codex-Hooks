@@ -54,11 +54,11 @@ class AuditRateReportTests(unittest.TestCase):
                 )
 
         self.assertIn(
-            "agent window audited block_rate chat_skips other_skips PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT",
+            "agent window total_events verdicts issue_rate chat_skips other_skips PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT",
             stdout.getvalue(),
         )
-        self.assertIn("codex 24h 1 0% 0 0 1 0 0 0 0 0", stdout.getvalue())
-        self.assertIn("claude 7d 0 - 1 0 0 0 1 0 0 0", stdout.getvalue())
+        self.assertIn("codex 24h 1 1 0% 0 0 1 0 0 0 0 0", stdout.getvalue())
+        self.assertIn("claude 7d 1 0 - 1 0 0 0 1 0 0 0", stdout.getvalue())
 
 
 if __name__ == "__main__":
