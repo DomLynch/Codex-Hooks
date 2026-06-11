@@ -53,12 +53,15 @@ class AuditRateReportTests(unittest.TestCase):
                     datetime(2026, 6, 11, 11, 0, 0),
                 )
 
+        self.assertIn("agent window summary PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT", stdout.getvalue())
         self.assertIn(
-            "agent window total_events verdicts issue_rate chat_skips other_skips PASS ISSUES SKIP_CHAT DAMPER ERROR TOO_SHORT",
+            "codex 24h total_events=1 verdicts=1 issue_rate=0% chat_skips=0 other_skips=0 1 0 0 0 0 0",
             stdout.getvalue(),
         )
-        self.assertIn("codex 24h 1 1 0% 0 0 1 0 0 0 0 0", stdout.getvalue())
-        self.assertIn("claude 7d 1 0 - 1 0 0 0 1 0 0 0", stdout.getvalue())
+        self.assertIn(
+            "claude 7d total_events=1 verdicts=0 issue_rate=- chat_skips=1 other_skips=0 0 0 1 0 0 0",
+            stdout.getvalue(),
+        )
 
 
 if __name__ == "__main__":

@@ -62,7 +62,7 @@ def read_lines(path: Path) -> list[str]:
 
 def print_report(logs: list[tuple[str, Path]], now: datetime) -> None:
     print(f"now={now:%Y-%m-%d %H:%M:%S}")
-    print("agent window total_events verdicts issue_rate chat_skips other_skips " + " ".join(EVENTS))
+    print("agent window summary " + " ".join(EVENTS))
     for name, path in logs:
         lines = read_lines(path)
         for hours, label in ((24, "24h"), (24 * 7, "7d")):
@@ -70,7 +70,11 @@ def print_report(logs: list[tuple[str, Path]], now: datetime) -> None:
             verdicts = counts["PASS"] + counts["ISSUES"]
             other_skips = counts["DAMPER"] + counts["ERROR"] + counts["TOO_SHORT"]
             total_events = verdicts + counts["SKIP_CHAT"] + other_skips
-            summary = f"{total_events} {verdicts} {percent(counts['ISSUES'], verdicts)} {counts['SKIP_CHAT']} {other_skips}"
+            summary = (
+                f"total_events={total_events} verdicts={verdicts} "
+                f"issue_rate={percent(counts['ISSUES'], verdicts)} "
+                f"chat_skips={counts['SKIP_CHAT']} other_skips={other_skips}"
+            )
             values = " ".join(str(counts[event]) for event in EVENTS)
             print(f"{name} {label} {summary} {values}")
 
