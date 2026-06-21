@@ -23,7 +23,10 @@ from lib.transcript import latest_task_slice
 COMPONENT = "post_tool"
 CHECKPOINT_EDIT_THRESHOLD = 5
 CHECKPOINT_TIME_THRESHOLD_S = 1800
-QUALITY_TIMEOUT_S = 60
+# Large repo test modules can legitimately exceed 60s when the quality floor
+# reruns a whole changed file after patching. Match the stop hook's changed-test
+# budget so post-tool checks fail on real failures, not timeout drift.
+QUALITY_TIMEOUT_S = 120
 EDIT_TOOLS = {"apply_patch", "Edit", "Write", "MultiEdit"}
 MIMO_CHECKPOINT_AUDIT_PATH = Path.home() / ".codex" / "state" / "post_tool_mimo_audit.json"
 MIMO_AUDIT_EDIT_THRESHOLD = 5
