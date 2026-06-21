@@ -441,23 +441,38 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("risky autonomous task", state["tasks"][0]["hold_reason"])
         self.assertIsNone(popped)
 
-    def test_claude_stop_orchestrator_waits_past_stale_same_turn_verdict(self) -> None:
-        now = time.time()
-        states = [
-            {"orch-session": {"turn_id": "turn-1", "verdict": "ISSUES", "updated_at": now - 10}},
-            {"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": now + 1}},
-        ]
-
-        def load_state(*_args, **_kwargs):
-            return states.pop(0) if len(states) > 1 else states[0]
-
+    def test_claude_stop_orchestrator_accepts_same_turn_verdict_written_first(self) -> None:
         with (
             mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=load_state),
+            mock.patch.object(
+                stop_orchestrator,
+                "load_json_locked",
+                return_value={"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": time.time() - 10}},
+            ),
             mock.patch.object(stop_orchestrator.time, "sleep"),
             mock.patch.object(stop_orchestrator, "log"),
         ):
             self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
+
+    def test_claude_stop_orchestrator_rejects_same_turn_chat_skip_without_waiting(self) -> None:
+        with (
+            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
+            mock.patch.object(
+                stop_orchestrator,
+                "load_json_locked",
+                return_value={
+                    "orch-session": {
+                        "turn_id": "turn-1",
+                        "verdict": "SKIP_CHAT_TURN",
+                        "updated_at": time.time() - 10,
+                    }
+                },
+            ),
+            mock.patch.object(stop_orchestrator.time, "sleep") as sleep,
+            mock.patch.object(stop_orchestrator, "log"),
+        ):
+            self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
+            sleep.assert_not_called()
 
 
 if __name__ == "__main__":
