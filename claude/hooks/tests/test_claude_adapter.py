@@ -149,6 +149,11 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("direct command/log/state output", mimo_audit.AUDIT_PROMPT)
         self.assertIn("source/live parity", mimo_audit.AUDIT_PROMPT)
         self.assertIn("without showing fresh command/log/state output", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Public receipt calibration", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("public publish counts", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("public record fields such as `agentId`", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("not proven", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("internal pipeline success alone", mimo_audit.AUDIT_PROMPT)
 
     def test_claude_mimo_prompt_constrains_executable_demands(self) -> None:
         self.assertIn("Conversation turns are immutable", mimo_audit.AUDIT_PROMPT)

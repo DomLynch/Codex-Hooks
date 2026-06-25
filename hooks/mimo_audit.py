@@ -131,6 +131,14 @@ Status/check-only calibration:
 - Still block unsupported status claims that only summarize prior evidence
   without showing fresh command/log/state output in the current task.
 
+Public receipt calibration:
+- For claims about public links/pages, public publish counts, deploy/live state,
+  public version labels, or public record fields such as `agentId`, require
+  visible receipt evidence in the slice: URL/API output, HTTP status, public
+  record fields, service state, log lines, or an explicit "not proven" caveat.
+- If the receipt is missing or contradicts the claim, return ISSUES. Do not
+  infer public truth from internal pipeline success alone.
+
 Auditor constraints - demands must be executable:
 - Conversation turns are immutable. NEVER demand edits, redactions, or
   corrections to previous turns. Corrections happen in the current turn only.
