@@ -9,13 +9,14 @@
           "id": "eval_injection",
           "severity": "high",
           "match_any": [["eval", "injection"], ["eval", "shell"], ["command", "injection"]],
-          "reject_any": [["no", "injection", "risk"], ["eval", "safe"]]
+          "reject_any": [["no injection risk"], ["eval is safe"]]
         }
       ],
       "forbidden_claims": [
         {
           "id": "eval_safe",
-          "match_any": [["eval", "safe"], ["no", "injection", "risk"]]
+          "match_any": [["eval is safe"], ["no injection risk"]],
+          "reject_any": [["not safe"], ["command injection"]]
         }
       ]
     },

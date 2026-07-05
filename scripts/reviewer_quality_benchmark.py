@@ -21,9 +21,16 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.casefold())
 
 
+def term_matches(haystack: str, term: str) -> bool:
+    escaped = re.escape(term.casefold())
+    return re.search(rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])", haystack) is not None
+
+
 def group_matches(text: str, group: list[str]) -> bool:
+    if not isinstance(group, list) or not all(isinstance(term, str) for term in group):
+        raise ValueError("match groups must be lists of strings")
     haystack = normalize(text)
-    return all(term.casefold() in haystack for term in group)
+    return all(term_matches(haystack, term) for term in group)
 
 
 def detected(text: str, match_any: list[list[str]], reject_any: list[list[str]] | None = None) -> bool:
