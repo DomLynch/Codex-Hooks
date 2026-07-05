@@ -90,6 +90,39 @@ Current recipes:
 - unsafe `yaml.load(...)`
 - shell `eval`
 
+## 5. Reviewer Quality Benchmark
+
+Use this to measure whether GPT, Claude, MiMo, or MiniMax actually catches known bugs. It does not call an LLM. Save each reviewer's answer, then score it.
+
+```bash
+python3 scripts/reviewer_quality_benchmark.py --list-cases
+python3 scripts/reviewer_quality_benchmark.py --answers EVALS/sample_reviewer_answers.json --min-recall 0.8
+```
+
+Answer file shape:
+
+```json
+{
+  "reviewer": "mimo",
+  "responses": [
+    {"case_id": "bash_eval_injection", "text": "review output here"}
+  ]
+}
+```
+
+Use this before claiming a hook/model change preserves review quality.
+
+## 6. Tree-sitter Analyzer Miswire Audit
+
+Use this only as a diagnostic challenger when Codegraph edges look suspicious. It is not a replacement for Codegraph.
+
+```bash
+python3 scripts/tree_sitter_miswire_audit.py hooks --dry-run
+python3 scripts/tree_sitter_miswire_audit.py hooks
+```
+
+Run it on `v3` or `v4` when a fix depends on call-graph correctness across many same-named functions.
+
 ## What We Are Not Adding
 
 No Goose/OpenHands/Gemini/Qwen daily-agent layer. The bottleneck is context quality and verification, not agent count.
