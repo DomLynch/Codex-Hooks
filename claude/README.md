@@ -80,6 +80,10 @@ For the Anthropic 2nd audit: drop the key at `~/.claude/secrets/anthropic_api_ke
 python3 -m py_compile claude/hooks/*.py claude/hooks/lib/*.py
 python3 -m unittest discover -s claude/hooks/tests -q
 
+# MCP/codebase tools
+claude mcp get serena
+serena project health-check "/Users/domininclynch/Desktop/Business/Research agent bot v4"
+
 # Watch live activity
 tail -f ~/.claude/logs/*.log
 ```

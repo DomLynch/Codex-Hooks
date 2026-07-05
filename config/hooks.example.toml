@@ -1,6 +1,14 @@
 # Sanitized hook config snippet.
 # Copy these blocks into ~/.codex/config.toml and adjust paths if needed.
 
+[mcp_servers.codegraph]
+command = "codegraph"
+args = ["serve", "--mcp"]
+
+[mcp_servers.serena]
+command = "/Users/domininclynch/.local/bin/serena"
+args = ["start-mcp-server", "--context=codex", "--project-from-cwd", "--enable-web-dashboard", "false", "--open-web-dashboard", "false"]
+
 [features]
 codex_hooks = true
 

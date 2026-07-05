@@ -35,7 +35,18 @@ Local state as of 2026-07-05:
 serena 1.5.3 installed
 global config: ~/.serena/serena_config.yml
 backend: LSP
-MCP client wiring: not enabled yet
+Codex MCP: enabled in ~/.codex/config.toml
+Claude MCP: enabled in ~/.claude.json
+dashboard opening: disabled for both
+```
+
+Verified:
+
+```text
+Claude MCP: serena connected
+Codex MCP command: starts with --context=codex and auto-detects cwd
+Serena health-check: Codex Hooks, v3, and v4 pass
+Serena indexed: hooks=43 Python files, v3=422, v4=230
 ```
 
 Pilot protocol:
