@@ -1,0 +1,46 @@
+{
+  "name": "researka-reviewer-quality-v1",
+  "cases": [
+    {
+      "id": "bash_eval_injection",
+      "title": "Reviewer catches shell eval injection risk",
+      "expected_findings": [
+        {
+          "id": "eval_injection",
+          "severity": "high",
+          "match_any": [["eval", "injection"], ["eval", "shell"], ["command", "injection"]]
+        }
+      ],
+      "forbidden_claims": [
+        {
+          "id": "eval_safe",
+          "match_any": [["eval", "safe"], ["no", "injection", "risk"]]
+        }
+      ]
+    },
+    {
+      "id": "unsafe_yaml_load",
+      "title": "Reviewer catches unsafe yaml.load",
+      "expected_findings": [
+        {
+          "id": "unsafe_yaml",
+          "severity": "high",
+          "match_any": [["yaml.load", "unsafe"], ["yaml.load", "safe_load"], ["arbitrary", "yaml"]]
+        }
+      ],
+      "forbidden_claims": []
+    },
+    {
+      "id": "swallowed_exception",
+      "title": "Reviewer catches broad exception swallowed with pass",
+      "expected_findings": [
+        {
+          "id": "swallowed_exception",
+          "severity": "medium",
+          "match_any": [["except exception", "pass"], ["swallowed", "exception"], ["broad exception", "log"]]
+        }
+      ],
+      "forbidden_claims": []
+    }
+  ]
+}
