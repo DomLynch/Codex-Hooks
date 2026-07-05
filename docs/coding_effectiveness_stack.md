@@ -29,6 +29,15 @@ uv tool install -p 3.13 serena-agent
 serena init
 ```
 
+Local state as of 2026-07-05:
+
+```text
+serena 1.5.3 installed
+global config: ~/.serena/serena_config.yml
+backend: LSP
+MCP client wiring: not enabled yet
+```
+
 Pilot protocol:
 
 1. Pick one hard repo: `Research agent bot v4` or `V5 Memo`.
