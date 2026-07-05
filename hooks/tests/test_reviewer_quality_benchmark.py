@@ -30,7 +30,9 @@ def test_scores_expected_findings_and_false_flags() -> None:
 
     assert result["caught"] == 1
     assert result["missed"] == 0
+    assert result["forbidden_claims"] == 1
     assert result["false_flags"] == 1
+    assert result["false_positive_rate"] == 1.0
     assert result["recall"] == 1.0
 
 
@@ -45,4 +47,6 @@ def test_missing_response_counts_as_miss() -> None:
 
     assert result["caught"] == 0
     assert result["missed"] == 1
+    assert result["forbidden_claims"] == 0
+    assert result["false_positive_rate"] == 0.0
     assert result["recall"] == 0.0

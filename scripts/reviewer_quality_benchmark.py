@@ -47,6 +47,7 @@ def score_suite(suite: dict[str, Any], answer_payload: Any) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     expected_total = 0
     detected_total = 0
+    forbidden_total = 0
     false_total = 0
 
     for case in cases:
@@ -57,6 +58,7 @@ def score_suite(suite: dict[str, Any], answer_payload: Any) -> dict[str, Any]:
         false_flags = [claim["id"] for claim in forbidden if detected(text, claim["match_any"])]
         expected_total += len(expected)
         detected_total += len(caught)
+        forbidden_total += len(forbidden)
         false_total += len(false_flags)
         rows.append(
             {
@@ -69,13 +71,16 @@ def score_suite(suite: dict[str, Any], answer_payload: Any) -> dict[str, Any]:
         )
 
     recall = detected_total / expected_total if expected_total else 1.0
+    false_positive_rate = false_total / forbidden_total if forbidden_total else 0.0
     return {
         "suite": suite.get("name", "reviewer-quality"),
         "cases": len(cases),
         "expected_findings": expected_total,
+        "forbidden_claims": forbidden_total,
         "caught": detected_total,
         "missed": expected_total - detected_total,
         "false_flags": false_total,
+        "false_positive_rate": round(false_positive_rate, 4),
         "recall": round(recall, 4),
         "rows": rows,
     }
@@ -84,7 +89,8 @@ def score_suite(suite: dict[str, Any], answer_payload: Any) -> dict[str, Any]:
 def print_summary(result: dict[str, Any]) -> None:
     print(
         f"{result['suite']}: caught={result['caught']}/{result['expected_findings']} "
-        f"recall={result['recall']:.2%} false_flags={result['false_flags']}"
+        f"recall={result['recall']:.2%} false_flags={result['false_flags']}/{result['forbidden_claims']} "
+        f"false_positive_rate={result['false_positive_rate']:.2%}"
     )
     for row in result["rows"]:
         print(
