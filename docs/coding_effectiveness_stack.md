@@ -45,7 +45,8 @@ Verified:
 ```text
 Claude MCP: serena connected
 Codex MCP command: starts with --context=codex and auto-detects cwd
-Serena health-check: Codex Hooks, v3, and v4 pass
+Codex Desktop: Serena is installed/listed by Codex CLI but not exposed as in-chat tools in this session; reload Codex Desktop or start a fresh session to access the Serena tool namespace
+Serena runtime health-check: Codex Hooks, v3, and v4 pass; this proves project indexing/tool health, not current-session Codex tool exposure
 Serena indexed: hooks=43 Python files, v3=422, v4=230
 ```
 
