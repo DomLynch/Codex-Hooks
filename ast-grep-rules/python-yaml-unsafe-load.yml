@@ -1,0 +1,6 @@
+id: python-yaml-unsafe-load
+language: Python
+severity: warning
+message: yaml.load without SafeLoader can execute unsafe constructors.
+rule:
+  pattern: yaml.load($$$ARGS)

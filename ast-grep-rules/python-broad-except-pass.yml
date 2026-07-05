@@ -1,0 +1,10 @@
+id: python-broad-except-pass
+language: Python
+severity: warning
+message: Broad Exception swallowed with pass; log, narrow, or re-raise.
+rule:
+  pattern: |
+    try:
+      $$$BODY
+    except Exception:
+      pass

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import subprocess
 from pathlib import Path
 
 
@@ -57,6 +58,16 @@ class SessionStartRoutingTests(unittest.TestCase):
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
         self.assertNotIn("cheapest relevant verification", session_start.SESSION_BASELINE)
+
+    def test_codegraph_notice_warns_only_for_indexless_git_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp).resolve()
+            self.assertEqual(session_start.codegraph_notice(str(cwd)), "")
+            subprocess.run(["git", "init"], cwd=cwd, check=True, capture_output=True)
+            self.assertIn("codegraph init -i", session_start.codegraph_notice(str(cwd)))
+            (cwd / ".codegraph").mkdir()
+            (cwd / ".codegraph" / "codegraph.db").write_text("")
+            self.assertEqual(session_start.codegraph_notice(str(cwd)), "")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,6 @@
+id: python-subprocess-shell-true
+language: Python
+severity: warning
+message: subprocess with shell=True is injection-prone; prefer argv arrays.
+rule:
+  pattern: subprocess.$CALL($$$ARGS, shell=True, $$$REST)

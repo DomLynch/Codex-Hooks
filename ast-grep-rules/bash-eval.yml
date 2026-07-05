@@ -1,0 +1,6 @@
+id: bash-eval
+language: Bash
+severity: error
+message: eval executes constructed shell text; use arrays or explicit argv.
+rule:
+  pattern: eval $$$CMD

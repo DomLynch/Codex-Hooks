@@ -61,6 +61,9 @@ def additional_context(context: str) -> None:
 
 def format_briefing(handoff: dict, mined: list[dict]) -> str:
     lines = [SESSION_BASELINE.rstrip(), "", "# Session Handoff"]
+    codegraph = codegraph_notice(handoff.get("cwd"))
+    if codegraph:
+        lines.extend(["", codegraph])
     if handoff.get("last_updated_at"):
         lines.append(f"Previous session updated: {handoff['last_updated_at']}")
     last_task = handoff.get("last_task") or {}
@@ -78,6 +81,17 @@ def format_briefing(handoff: dict, mined: list[dict]) -> str:
             )
         lines.append("Use the top item if the user has not provided a more specific task.")
     return "\n".join(lines)
+
+
+def codegraph_notice(cwd: str | None) -> str:
+    if not cwd:
+        return ""
+    path = Path(cwd).resolve()
+    if not is_git_repo(path):
+        return ""
+    if (path / ".codegraph" / "codegraph.db").exists():
+        return ""
+    return "# Codegraph\n- No local index found for this repo; run `codegraph init -i` before structural code work."
 
 
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:
@@ -145,7 +159,8 @@ def main() -> None:
             additional_context(context)
         else:
             log(COMPONENT, "baseline context injected; no handoff/backlog")
-            additional_context(SESSION_BASELINE)
+            codegraph = codegraph_notice(str(cwd))
+            additional_context(SESSION_BASELINE if not codegraph else f"{SESSION_BASELINE.rstrip()}\n\n{codegraph}")
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 

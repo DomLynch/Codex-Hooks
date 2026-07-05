@@ -79,6 +79,19 @@ python3 -m unittest discover -s hooks/tests -p 'test_*.py'
 tail -f ~/.codex/logs/autonomy_daemon.log
 ```
 
+## Coding Effectiveness Utilities
+
+Optional tools for better Codex/Claude codebase understanding without adding
+more daily agents:
+
+```bash
+python3 scripts/codegraph_fleet_status.py --sync
+python3 scripts/repomix_handoff.py hooks --budget 60000
+python3 scripts/ast_grep_check.py .
+```
+
+See `docs/coding_effectiveness_stack.md`.
+
 ## Safety Boundary
 
 This repo is the source-of-truth for the global hook code. Project repos should
