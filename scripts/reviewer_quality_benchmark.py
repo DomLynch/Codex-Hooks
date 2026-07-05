@@ -26,7 +26,9 @@ def group_matches(text: str, group: list[str]) -> bool:
     return all(term.casefold() in haystack for term in group)
 
 
-def detected(text: str, match_any: list[list[str]]) -> bool:
+def detected(text: str, match_any: list[list[str]], reject_any: list[list[str]] | None = None) -> bool:
+    if reject_any and any(group_matches(text, group) for group in reject_any):
+        return False
     return any(group_matches(text, group) for group in match_any)
 
 
@@ -54,8 +56,16 @@ def score_suite(suite: dict[str, Any], answer_payload: Any) -> dict[str, Any]:
         text = answers.get(case["id"], "")
         expected = case.get("expected_findings", [])
         forbidden = case.get("forbidden_claims", [])
-        caught = [finding["id"] for finding in expected if detected(text, finding["match_any"])]
-        false_flags = [claim["id"] for claim in forbidden if detected(text, claim["match_any"])]
+        caught = [
+            finding["id"]
+            for finding in expected
+            if detected(text, finding["match_any"], finding.get("reject_any"))
+        ]
+        false_flags = [
+            claim["id"]
+            for claim in forbidden
+            if detected(text, claim["match_any"], claim.get("reject_any"))
+        ]
         expected_total += len(expected)
         detected_total += len(caught)
         forbidden_total += len(forbidden)

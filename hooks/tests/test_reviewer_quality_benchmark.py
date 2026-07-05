@@ -50,3 +50,28 @@ def test_missing_response_counts_as_miss() -> None:
     assert result["forbidden_claims"] == 0
     assert result["false_positive_rate"] == 0.0
     assert result["recall"] == 0.0
+
+
+def test_reject_any_prevents_negated_match_credit() -> None:
+    suite = {
+        "cases": [
+            {
+                "id": "case",
+                "expected_findings": [
+                    {
+                        "id": "bug",
+                        "match_any": [["eval", "injection"]],
+                        "reject_any": [["no", "injection", "risk"]],
+                    }
+                ],
+                "forbidden_claims": [{"id": "bad_clearance", "match_any": [["eval", "safe"]]}],
+            }
+        ]
+    }
+    answers = {"responses": [{"case_id": "case", "text": "eval is safe here, no injection risk"}]}
+
+    result = reviewer_quality_benchmark.score_suite(suite, answers)
+
+    assert result["caught"] == 0
+    assert result["missed"] == 1
+    assert result["false_flags"] == 1

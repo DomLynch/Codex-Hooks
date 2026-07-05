@@ -8,7 +8,8 @@
         {
           "id": "eval_injection",
           "severity": "high",
-          "match_any": [["eval", "injection"], ["eval", "shell"], ["command", "injection"]]
+          "match_any": [["eval", "injection"], ["eval", "shell"], ["command", "injection"]],
+          "reject_any": [["no", "injection", "risk"], ["eval", "safe"]]
         }
       ],
       "forbidden_claims": [
