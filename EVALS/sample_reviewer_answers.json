@@ -1,0 +1,17 @@
+{
+  "reviewer": "example",
+  "responses": [
+    {
+      "case_id": "bash_eval_injection",
+      "text": "This uses eval on a shell command, creating command injection risk. Replace it with array-based execution."
+    },
+    {
+      "case_id": "unsafe_yaml_load",
+      "text": "yaml.load is unsafe for untrusted input; use yaml.safe_load."
+    },
+    {
+      "case_id": "swallowed_exception",
+      "text": "A broad Exception is swallowed with pass; log, narrow, or re-raise it."
+    }
+  ]
+}
