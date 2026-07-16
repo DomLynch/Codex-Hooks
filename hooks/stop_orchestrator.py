@@ -459,7 +459,7 @@ Or:
 STATUS: COMPLETE
 """
     try:
-        response = call_mimo(prompt, max_tokens=600)
+        response = call_mimo(prompt, max_tokens=600, lane="self_spec")
     except Exception as exc:
         log(COMPONENT, f"self-spec fail-open: {exc}")
         return ""

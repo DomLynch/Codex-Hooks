@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import time
 import urllib.request
 from pathlib import Path
+
+from .log import log
 
 
 SECRETS_DIR = Path.home() / ".codex" / "secrets"
@@ -16,6 +19,18 @@ CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
 def anthropic_text(data: dict) -> str:
     parts = data.get("content") or []
     return "\n".join(part.get("text", "") for part in parts if part.get("type") == "text").strip()
+
+
+def minimax_usage_message(data: dict, lane: str, elapsed_ms: int) -> str:
+    usage = data.get("usage") or {}
+    return (
+        f"MINIMAX_USAGE lane={lane} model={data.get('model') or MIMO_MODEL} "
+        f"input_tokens={int(usage.get('input_tokens') or 0)} "
+        f"output_tokens={int(usage.get('output_tokens') or 0)} "
+        f"cache_read_tokens={int(usage.get('cache_read_input_tokens') or 0)} "
+        f"cache_write_tokens={int(usage.get('cache_creation_input_tokens') or 0)} "
+        f"elapsed_ms={elapsed_ms}"
+    )
 
 
 def load_api_key(env_name: str, secrets_filename: str) -> str:
@@ -51,7 +66,7 @@ def load_api_key(env_name: str, secrets_filename: str) -> str:
     return ""
 
 
-def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45) -> str:
+def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45, lane: str = "shared") -> str:
     key = load_api_key("MINIMAX_API_KEY", "minimax_api_key")
     if not key:
         return ""
@@ -72,8 +87,10 @@ def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45) -> str:
         },
         method="POST",
     )
+    started = time.monotonic()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    log("minimax_api", minimax_usage_message(data, lane, int((time.monotonic() - started) * 1000)))
     return anthropic_text(data)
 
 

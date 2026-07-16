@@ -37,8 +37,9 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
-from lib.api import anthropic_text  # noqa: E402
+from lib.api import anthropic_text, minimax_usage_message  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
+from lib.transcript import compact_task_entries  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude  # noqa: E402
 
 
@@ -360,27 +361,8 @@ def read_task_slice(path: str) -> str:
             start = idx
             break
 
-    task_entries = entries[start:]
-    text = "\n\n".join(f"{role}:\n{body}" for role, body in task_entries)
-    text = redact_sensitive(text)
-    if len(text) <= MAX_TRANSCRIPT_CHARS:
-        return text
-    # Cap the head entry to a fraction of the budget so the math always converges.
-    # Without this, a huge first_body (e.g. 100k-char user paste or massive edit-tool
-    # payload) makes tail_budget collapse to 0 and we'd return first + marker + "" —
-    # the entire oversized first entry, uncapped. Observed: 133,581-char audit slices.
-    head_budget = MAX_TRANSCRIPT_CHARS // 3  # ~1333 chars
-    first_role, first_body = task_entries[0]
-    first = redact_sensitive(f"{first_role}:\n{first_body}")
-    if len(first) > head_budget:
-        first = first[:head_budget] + "\n...[head truncated]..."
-    marker = "\n\n...[older task details omitted to stay focused]...\n\n"
-    tail_budget = max(0, MAX_TRANSCRIPT_CHARS - len(first) - len(marker))
-    result = first + marker + text[-tail_budget:]
-    # Final hard cap — load-bearing safety net regardless of upstream math.
-    if len(result) > MAX_TRANSCRIPT_CHARS:
-        result = result[:MAX_TRANSCRIPT_CHARS]
-    return result
+    task_entries = [(role, redact_sensitive(body)) for role, body in entries[start:]]
+    return compact_task_entries(task_entries, MAX_TRANSCRIPT_CHARS)
 
 
 def load_api_key() -> str:
@@ -464,6 +446,12 @@ def normalize_verdict(text: str) -> str:
     return f"VERDICT: {verdict}{suffix}"
 
 
+def valid_verdict(text: str) -> bool:
+    if text.startswith("VERDICT: PASS"):
+        return True
+    return text.startswith("VERDICT: ISSUES") and bool(re.search(r"(?m)^\s*\d+[.)]\s+\S", text))
+
+
 def has_tool_activity(transcript: str) -> bool:
     return any(marker in transcript for marker in TOOL_ACTIVITY_MARKERS)
 
@@ -501,8 +489,10 @@ def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
         },
         method="POST",
     )
+    started = time.monotonic()
     with urllib.request.urlopen(req, timeout=AUDIT_TIMEOUT_S) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    log(minimax_usage_message(data, "stop", int((time.monotonic() - started) * 1000)))
     content = anthropic_text(data)
     if content:
         return normalize_verdict(content)
@@ -552,8 +542,10 @@ def repair_verdict_format(api_key: str, response: str) -> str:
         },
         method="POST",
     )
+    started = time.monotonic()
     with urllib.request.urlopen(req, timeout=AUDIT_TIMEOUT_S) as resp:
         data = json.loads(resp.read().decode("utf-8"))
+    log(minimax_usage_message(data, "format_repair", int((time.monotonic() - started) * 1000)))
     return normalize_verdict(anthropic_text(data))
 
 
@@ -618,28 +610,24 @@ def main() -> None:
     log(f"MiniMax verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
 
-    if verdict_text and not (
-        verdict_text.startswith("VERDICT: PASS")
-        or verdict_text.startswith("VERDICT: ISSUES")
-    ):
+    if verdict_text and not valid_verdict(verdict_text):
         try:
             repaired = repair_verdict_format(api_key, verdict_text)
-            if repaired.startswith("VERDICT: PASS") or repaired.startswith("VERDICT: ISSUES"):
+            if valid_verdict(repaired):
                 log(f"FORMAT_REPAIR_VERDICT: {repaired[:160].replace(chr(10), ' ')}")
                 verdict_text = repaired
             else:
                 log(f"FORMAT_REPAIR_FAILED: {repaired[:160].replace(chr(10), ' ')}")
         except Exception as exc:
             log(f"FORMAT_REPAIR_ERROR: {exc}")
-        if not (verdict_text.startswith("VERDICT: PASS") or verdict_text.startswith("VERDICT: ISSUES")):
-            verdict_text = (
-                "VERDICT: ISSUES\n"
-                "1. MiniMax-M3 returned a nonstandard audit instead of the required "
-                "PASS/ISSUES format after a repair retry. Treat the raw review "
-                "below as blocking feedback and address any concrete misses before stopping.\n\n"
-                f"Raw MiniMax-M3 review:\n{verdict_text[:1800]}"
+        if not valid_verdict(verdict_text):
+            block_audit_error(
+                session_id,
+                turn_id,
+                iterations,
+                "audit format error: MiniMax-M3 returned no actionable verdict after repair",
             )
-            log("NORMALIZED_NONSTANDARD_VERDICT_TO_ISSUES")
+            return
 
     if verdict_text.startswith("VERDICT: PASS"):
         save_verdict(session_id, turn_id, "PASS", verdict_text)

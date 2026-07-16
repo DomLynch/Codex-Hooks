@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .transcript import compact_task_entries
+
 
 ELISION_MARKER = "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n"
 
@@ -99,51 +101,60 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
     if not entries:
         return last_assistant_message or ""
 
-    # Find the index of the last user message
+    # Tool results also use type=user; only a real prompt starts a new task.
     last_user_idx = -1
     for idx in range(len(entries) - 1, -1, -1):
-        if entries[idx].get("type") == "user":
+        entry = entries[idx]
+        content = (entry.get("message") or {}).get("content")
+        tool_result_only = isinstance(content, list) and content and all(
+            isinstance(item, dict) and item.get("type") == "tool_result" for item in content
+        )
+        if entry.get("type") == "user" and not tool_result_only:
             last_user_idx = idx
             break
     slice_entries = entries[last_user_idx:] if last_user_idx >= 0 else entries[-30:]
 
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for entry in slice_entries:
         etype = entry.get("type", "")
         msg = entry.get("message") or {}
         content = msg.get("content")
         if etype == "user":
             if isinstance(content, str):
-                out.append(f"USER:\n{content}")
+                out.append(("USER", content))
             elif isinstance(content, list):
-                texts = [str(item.get("content") or item.get("text") or "")[:1500]
-                         for item in content if isinstance(item, dict)]
-                out.append("USER:\n" + "\n".join(t for t in texts if t))
+                texts = []
+                for item in content:
+                    if not isinstance(item, dict):
+                        continue
+                    text = str(item.get("content") or item.get("text") or "")[:1500]
+                    if item.get("type") == "tool_result":
+                        out.append(("TOOL OUTPUT", text))
+                    elif text:
+                        texts.append(text)
+                if texts:
+                    out.append(("USER", "\n".join(texts)))
         elif etype == "assistant":
             if isinstance(content, str):
-                out.append(f"ASSISTANT:\n{content}")
+                out.append(("ASSISTANT", content))
             elif isinstance(content, list):
                 for item in content:
                     if not isinstance(item, dict):
                         continue
                     itype = item.get("type")
                     if itype == "text":
-                        out.append(f"ASSISTANT:\n{item.get('text', '')}")
+                        out.append(("ASSISTANT", str(item.get("text") or "")))
                     elif itype == "tool_use":
                         name = item.get("name", "?")
                         inp = compact(json.dumps(item.get("input", {})), 800)
-                        out.append(f"TOOL CALL: {name}: {inp}")
-        elif etype in ("tool_result", "user") and isinstance(content, list):
+                        out.append(("TOOL CALL", f"{name}: {inp}"))
+        elif etype == "tool_result" and isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "tool_result":
                     raw = str(item.get("content") or "")[:1000]
-                    out.append(f"TOOL OUTPUT:\n{raw}")
+                    out.append(("TOOL OUTPUT", raw))
 
-    text = "\n\n".join(out)
-    if len(text) <= max_chars:
-        return text
-    # Keep head + tail to preserve task context and final state
-    return compact(text, max_chars)
+    return compact_task_entries(out, max_chars) if out else last_assistant_message[-max_chars:]
 
 
 def normalize_payload(raw: dict) -> dict:

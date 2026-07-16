@@ -41,6 +41,43 @@ def compact(text: str, limit: int) -> str:
     return text[: limit // 2] + "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n" + text[-limit // 2 :]
 
 
+def _render_entry(role: str, body: str) -> str:
+    return f"{role}: {body}" if role == "TOOL CALL" else f"{role}:\n{body}"
+
+
+def _bounded_compact(text: str, limit: int) -> str:
+    text = sanitize(text)
+    if len(text) <= limit:
+        return text
+    marker = "\n...[slice-elided by compactor]...\n"
+    body_budget = max(0, limit - len(marker))
+    head = body_budget // 2
+    tail = body_budget - head
+    return (text[:head] + marker + (text[-tail:] if tail else ""))[:limit]
+
+
+def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
+    text = sanitize("\n\n".join(_render_entry(role, body) for role, body in entries))
+    if len(text) <= max_chars:
+        return text
+    first_role, first_body = entries[0]
+    head_budget = max_chars // 4
+    first = sanitize(_render_entry(first_role, first_body))
+    if len(first) > head_budget:
+        first = first[:head_budget] + "\n...[head truncated]..."
+    receipt_budget = max_chars // 4
+    receipts = sanitize("\n\n".join(
+        _render_entry(role, body) for role, body in entries[1:] if role == "TOOL OUTPUT"
+    ))[-receipt_budget:]
+    receipt_block = f"\n\n...[verification receipts preserved]...\n\n{receipts}" if receipts else ""
+    marker = "\n\n...[older task details omitted to stay focused]...\n\n"
+    tail_budget = max(0, max_chars - len(first) - len(receipt_block) - len(marker))
+    final = next((_render_entry(role, body) for role, body in reversed(entries) if role == "ASSISTANT"), "")
+    recent = "\n\n".join(_render_entry(role, body) for role, body in entries[-3:] if role != "TOOL OUTPUT")
+    tail = _bounded_compact("\n\n".join(part for part in (final, recent) if part), tail_budget) if tail_budget else ""
+    return (first + receipt_block + marker + tail)[:max_chars]
+
+
 def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
     if not transcript_path:
         return sanitize(fallback)[-max_chars:]
@@ -83,15 +120,4 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
             start = idx
             break
     task_entries = entries[start:]
-    text = sanitize("\n\n".join(f"{role}:\n{body}" for role, body in task_entries))
-    if len(text) <= max_chars:
-        return text
-    first_role, first_body = task_entries[0]
-    first = sanitize(f"{first_role}:\n{first_body}")
-    head_budget = max(0, max_chars // 3)
-    if len(first) > head_budget:
-        first = first[:head_budget] + "\n...[head truncated]..."
-    marker = "\n\n...[older task details omitted to stay focused]...\n\n"
-    tail_budget = max(0, max_chars - len(first) - len(marker))
-    tail = text[-tail_budget:] if tail_budget else ""
-    return (first + marker + tail)[:max_chars]
+    return compact_task_entries(task_entries, max_chars)

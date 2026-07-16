@@ -102,13 +102,18 @@ class AllHookBehaviorTests(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"content": [{"type": "text", "text": "VERDICT: PASS"}]}).encode()
+                return json.dumps({
+                    "model": "MiniMax-M3",
+                    "usage": {"input_tokens": 100, "output_tokens": 5},
+                    "content": [{"type": "text", "text": "VERDICT: PASS"}],
+                }).encode()
 
         with (
             mock.patch.object(api, "load_api_key", return_value="minimax-key") as load_key,
             mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
+            mock.patch.object(api, "log") as usage_log,
         ):
-            result = api.call_mimo("audit this", timeout=7)
+            result = api.call_mimo("audit this", timeout=7, lane="checkpoint")
 
         self.assertEqual(result, "VERDICT: PASS")
         load_key.assert_called_once_with("MINIMAX_API_KEY", "minimax_api_key")
@@ -120,6 +125,8 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
         self.assertEqual(body["model"], "MiniMax-M3")
         self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertIn("lane=checkpoint", usage_log.call_args.args[1])
+        self.assertIn("input_tokens=100", usage_log.call_args.args[1])
 
     def test_anthropic_text_extracts_text_blocks_only(self) -> None:
         self.assertEqual(
@@ -131,6 +138,10 @@ class AllHookBehaviorTests(unittest.TestCase):
                 ]
             }),
             "VERDICT: PASS",
+        )
+        self.assertIn(
+            "input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_write_tokens=0 elapsed_ms=0",
+            api.minimax_usage_message({"model": "MiniMax-M3"}, "test", 0),
         )
 
     def test_simple_prompt_still_gets_no_babysit_policy(self) -> None:
@@ -200,6 +211,55 @@ class AllHookBehaviorTests(unittest.TestCase):
             mimo_audit.normalize_verdict("issues\n1. Missing regression test"),
             "VERDICT: ISSUES\n1. Missing regression test",
         )
+        self.assertFalse(mimo_audit.valid_verdict("VERDICT: ISSUES"))
+        self.assertTrue(mimo_audit.valid_verdict("VERDICT: ISSUES\n1. Missing regression test"))
+
+    def test_mimo_bare_issues_repair_to_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-bare-issues",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Completed implementation. " * 40,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES"),
+                mock.patch.object(mimo_audit, "repair_verdict_format", return_value="VERDICT: PASS") as repair,
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(out, "")
+        repair.assert_called_once()
+        self.assertEqual(verdict["mimo-bare-issues"]["verdict"], "PASS")
+
+    def test_mimo_bare_issues_failed_repair_is_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-bare-error",
+                "turn_id": "turn-1",
+                "last_assistant_message": "Completed implementation. " * 40,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES"),
+                mock.patch.object(mimo_audit, "repair_verdict_format", return_value="VERDICT: ISSUES"),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(json.loads(out)["decision"], "block")
+        self.assertEqual(verdict["mimo-bare-error"]["verdict"], "ERROR")
 
     def test_mimo_audit_uses_minimax_m3_anthropic_http(self) -> None:
         class Response:
@@ -210,9 +270,16 @@ class AllHookBehaviorTests(unittest.TestCase):
                 return None
 
             def read(self) -> bytes:
-                return json.dumps({"content": [{"type": "text", "text": "PASS"}]}).encode()
+                return json.dumps({
+                    "model": "MiniMax-M3",
+                    "usage": {"input_tokens": 80, "output_tokens": 3},
+                    "content": [{"type": "text", "text": "PASS"}],
+                }).encode()
 
-        with mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen:
+        with (
+            mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen,
+            mock.patch.object(mimo_audit, "log") as usage_log,
+        ):
             verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
@@ -224,6 +291,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
         self.assertEqual(body["model"], "MiniMax-M3")
         self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertIn("lane=stop", usage_log.call_args.args[0])
 
     def test_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
@@ -354,7 +422,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             file_path.write_text("x = 1\n")
             state_path.write_text(json.dumps({
                 "session-midrun": {
-                    "edits_since_last_audit": 4,
+                    "edits_since_last_audit": 14,
                     "last_audit_at": "2026-05-09T00:00:00+00:00",
                 }
             }))
@@ -394,7 +462,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             file_path.write_text("x = 1\n")
             state_path.write_text(json.dumps({
                 "session-midrun": {
-                    "edits_since_last_audit": 4,
+                    "edits_since_last_audit": 14,
                     "last_audit_at": "2026-05-09T00:00:00+00:00",
                 }
             }))
@@ -463,7 +531,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             file_path.write_text("x = 1\n")
             state_path.write_text(json.dumps({
                 "session-midrun": {
-                    "edits_since_last_audit": 4,
+                    "edits_since_last_audit": 14,
                     "last_audit_at": "2026-05-09T00:00:00+00:00",
                 }
             }))
@@ -490,6 +558,46 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIsNone(rc)
         self.assertEqual(out, "")
         self.assertEqual(state["last_verdict"], "ERROR")
+
+    def test_checkpoint_branch_failure_backs_off_per_session(self) -> None:
+        self.assertEqual(post_tool.CHECKPOINT_BRANCH_RETRY_S, 1800)
+        due = {"edits_since_last_commit": 5, "last_commit_at": ""}
+        with (
+            mock.patch.object(post_tool, "is_git_repo", return_value=True),
+            mock.patch.object(post_tool, "checkpoint_state", return_value=due),
+            mock.patch.object(post_tool, "current_session_branch", return_value="codex/session/main"),
+            mock.patch.object(post_tool, "ensure_branch", return_value=False) as ensure_branch,
+            mock.patch.object(post_tool, "update_checkpoint_state") as update_state,
+            mock.patch.object(post_tool, "log"),
+        ):
+            post_tool.maybe_checkpoint("session", Path("/tmp"))
+
+        ensure_branch.assert_called_once()
+        update_state.assert_called_once_with("session", branch_failed=True)
+
+        backed_off = {**due, "last_branch_failure_at": post_tool.now_iso()}
+        with (
+            mock.patch.object(post_tool, "is_git_repo", return_value=True),
+            mock.patch.object(post_tool, "checkpoint_state", return_value=backed_off),
+            mock.patch.object(post_tool, "seconds_since", return_value=1799),
+            mock.patch.object(post_tool, "ensure_branch") as ensure_branch,
+        ):
+            post_tool.maybe_checkpoint("session", Path("/tmp"))
+
+        ensure_branch.assert_not_called()
+
+        with (
+            mock.patch.object(post_tool, "is_git_repo", return_value=True),
+            mock.patch.object(post_tool, "checkpoint_state", return_value=backed_off),
+            mock.patch.object(post_tool, "seconds_since", return_value=1800),
+            mock.patch.object(post_tool, "current_session_branch", return_value="codex/session/main"),
+            mock.patch.object(post_tool, "ensure_branch", return_value=False) as ensure_branch,
+            mock.patch.object(post_tool, "update_checkpoint_state"),
+            mock.patch.object(post_tool, "log"),
+        ):
+            post_tool.maybe_checkpoint("session", Path("/tmp"))
+
+        ensure_branch.assert_called_once()
 
     def test_mimo_audit_pass_path_saves_pass_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

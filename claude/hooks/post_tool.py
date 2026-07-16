@@ -24,13 +24,14 @@ from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 COMPONENT = "post_tool"
 CHECKPOINT_EDIT_THRESHOLD = 5
 CHECKPOINT_TIME_THRESHOLD_S = 1800
+CHECKPOINT_BRANCH_RETRY_S = 1800
 # Large repo test modules can legitimately exceed 60s when the quality floor
 # reruns a whole changed file after patching. Match the stop hook's changed-test
 # budget so post-tool checks fail on real failures, not timeout drift.
 QUALITY_TIMEOUT_S = 120
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}  # Claude Code edit tools
 MIMO_CHECKPOINT_AUDIT_PATH = Path.home() / ".claude" / "state" / "post_tool_mimo_audit.json"
-MIMO_AUDIT_EDIT_THRESHOLD = 5
+MIMO_AUDIT_EDIT_THRESHOLD = 15
 MIMO_AUDIT_TIME_THRESHOLD_S = 1800
 MIMO_AUDIT_MIN_TRANSCRIPT_CHARS = 400
 MIMO_AUDIT_MAX_TRANSCRIPT_CHARS = 3000
@@ -43,9 +44,12 @@ VERDICT: ISSUES
 
 Check only the current task slice. Block only for concrete problems:
 - Claude Code is drifting from the user's request or asking for unnecessary confirmation instead of using a reasonable reversible default
-- The latest edits appear incorrect, unsafe, incomplete, or outside scope
-- Required checks/logs are missing for the risk level
+- The latest edits already show a concrete correctness, security, or scope regression
+- Repeated command or test failures are being ignored instead of diagnosed
 - V4/MCP/project guidance is being ignored on project/code work, including skipped Codegraph MCP on structural code work without a stated reason
+
+This is an in-progress checkpoint. Do NOT block merely because implementation,
+tests, commit, or final verification are unfinished; the Stop audit checks completion.
 
 If there is no concrete blocker, return:
 VERDICT: PASS
@@ -172,7 +176,7 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
 
     prompt = MIMO_CHECKPOINT_PROMPT.format(transcript=transcript)
     try:
-        response = call_mimo(prompt, max_tokens=1000, timeout=MIMO_AUDIT_TIMEOUT_S)
+        response = call_mimo(prompt, max_tokens=1000, timeout=MIMO_AUDIT_TIMEOUT_S, lane="checkpoint")
     except Exception as exc:
         update_audit_state(session_id, audited=True, verdict="ERROR", preview=str(exc))
         log(COMPONENT, f"mimo checkpoint fail-open: {exc}")
@@ -199,6 +203,8 @@ def maybe_checkpoint(session_id: str, cwd: Path) -> None:
         return
     state = checkpoint_state(session_id)
     edits = int(state.get("edits_since_last_commit", 0))
+    if seconds_since(state.get("last_branch_failure_at", "")) < CHECKPOINT_BRANCH_RETRY_S:
+        return
     due_by_edits = edits >= CHECKPOINT_EDIT_THRESHOLD
     last_commit_at = state.get("last_commit_at", "")
     due_by_time = bool(last_commit_at) and seconds_since(last_commit_at) >= CHECKPOINT_TIME_THRESHOLD_S and edits > 0
@@ -206,6 +212,7 @@ def maybe_checkpoint(session_id: str, cwd: Path) -> None:
         return
     branch = current_session_branch(session_id)
     if not ensure_branch(branch, cwd):
+        update_checkpoint_state(session_id, branch_failed=True)
         log(COMPONENT, f"checkpoint skipped: could not ensure {branch}")
         return
     ok, sha = commit(f"[checkpoint] session {session_id[:8]} - {edits} edits", cwd)

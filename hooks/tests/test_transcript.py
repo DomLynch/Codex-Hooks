@@ -10,7 +10,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.transcript import latest_task_slice  # noqa: E402
+from lib.transcript import _bounded_compact, latest_task_slice  # noqa: E402
 
 
 def message(role: str, text: str) -> str:
@@ -24,7 +24,17 @@ def message(role: str, text: str) -> str:
     })
 
 
+def tool_output(text: str) -> str:
+    return json.dumps({
+        "type": "response_item",
+        "payload": {"type": "function_call_output", "output": text},
+    })
+
+
 class TranscriptSliceTests(unittest.TestCase):
+    def test_bounded_compact_handles_tiny_budget(self) -> None:
+        self.assertLessEqual(len(_bounded_compact("x" * 100, 10)), 10)
+
     def test_huge_first_user_entry_is_hard_capped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "rollout.jsonl"
@@ -102,6 +112,23 @@ class TranscriptSliceTests(unittest.TestCase):
         self.assertIn("slice-elided by compactor", text)
         self.assertNotIn("...[omitted]...", text)
         self.assertIn("quality files=1 ok=True", text)
+
+    def test_compaction_preserves_middle_verification_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "rollout.jsonl"
+            transcript.write_text("\n".join([
+                message("user", "verify and deploy " + "U" * 5000),
+                tool_output("Ran 70 tests in 1.4s\nOK\nAll checks passed!"),
+                message("assistant", "Final verified summary. " + "A" * 5000),
+            ]))
+
+            text = latest_task_slice(str(transcript))
+
+        self.assertLessEqual(len(text), 4000)
+        self.assertIn("verification receipts preserved", text)
+        self.assertIn("Ran 70 tests", text)
+        self.assertIn("All checks passed", text)
+        self.assertIn("Final verified summary", text)
 
 
 if __name__ == "__main__":

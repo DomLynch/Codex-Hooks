@@ -65,14 +65,21 @@ def checkpoint_state(session_id: str) -> dict:
     return data.get(session_id, {"edits_since_last_commit": 0, "last_commit_at": ""})
 
 
-def update_checkpoint_state(session_id: str, edits: int | None = None, committed: bool = False) -> None:
+def update_checkpoint_state(
+    session_id: str,
+    edits: int | None = None,
+    committed: bool = False,
+    branch_failed: bool = False,
+) -> None:
     data = load_json(CHECKPOINT_PATH, {})
     state = data.get(session_id, {"edits_since_last_commit": 0, "last_commit_at": ""})
     if edits is not None:
         state["edits_since_last_commit"] = max(0, int(state.get("edits_since_last_commit", 0)) + edits)
+    if branch_failed:
+        state["last_branch_failure_at"] = now_iso()
     if committed:
         state["edits_since_last_commit"] = 0
         state["last_commit_at"] = now_iso()
+        state.pop("last_branch_failure_at", None)
     data[session_id] = state
     write_json(CHECKPOINT_PATH, data)
-
