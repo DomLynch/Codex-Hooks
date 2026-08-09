@@ -58,7 +58,8 @@ class SessionStartRoutingTests(unittest.TestCase):
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
         self.assertIn("three materially different Semble searches", session_start.SESSION_BASELINE)
-        self.assertIn("If Codegraph is unavailable, retry once", session_start.SESSION_BASELINE)
+        self.assertIn("together, not as alternatives", session_start.SESSION_BASELINE)
+        self.assertIn("only then degrade to Semble + `rg`", session_start.SESSION_BASELINE)
         self.assertIn("concise coverage receipt", session_start.SESSION_BASELINE)
         self.assertNotIn("cheapest relevant verification", session_start.SESSION_BASELINE)
 
