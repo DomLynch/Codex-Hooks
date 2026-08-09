@@ -241,6 +241,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("compact context packet", context)
         self.assertIn("three materially different Semble searches", context)
         self.assertIn("Codegraph MCP for structural context/impact", context)
+        self.assertIn("If Codegraph is unavailable, retry once", context)
         self.assertIn("concise coverage receipt", context)
         self.assertIn("two-pass review", context)
 
@@ -249,6 +250,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
         self.assertIn("three materially different Semble searches", session_start.SESSION_BASELINE)
+        self.assertIn("If Codegraph is unavailable, retry once", session_start.SESSION_BASELINE)
         self.assertIn("concise coverage receipt", session_start.SESSION_BASELINE)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:

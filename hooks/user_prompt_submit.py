@@ -44,6 +44,7 @@ CONTEXT_EFFICIENCY_POLICY = "\n".join(
         "- Keep command output lean: use targeted commands, capped output, summarized failures, and narrow paths.",
         "- No full diffs/logs/dependency trees/generated artifacts/archives/repeated output unless explicitly needed.",
         "- No broad scans when repo/file/symbol target exists; use Semble for discovery, Codegraph for structure, and `rg` for literal text.",
+        "- If Codegraph is unavailable, retry once; then use Semble + `rg` and state the fallback in the receipt.",
         "- Avoid duplicate parallel exploration; split agents by scout/surgeon/reviewer roles with non-overlapping scope.",
         "- Start substantial project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.",
     ]

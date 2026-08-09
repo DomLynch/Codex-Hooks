@@ -74,6 +74,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("compact context packet", context)
         self.assertIn("three materially different Semble searches", context)
         self.assertIn("Codegraph MCP for structural context/impact", context)
+        self.assertIn("If Codegraph is unavailable, retry once", context)
         self.assertIn("concise coverage receipt", context)
         self.assertIn("two-pass review", context)
         self.assertIn("reproduce or cite the concrete failure", context)
