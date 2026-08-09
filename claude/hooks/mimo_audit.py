@@ -108,8 +108,9 @@ Check only the current task for:
 - For non-trivial project/code/repo work: evidence that Claude Code used the V4/MCP
   routing contract appropriately (knowledge MCP/get_playbook when available,
   target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
-  mandatory Codegraph MCP first for structural code context/impact when available,
-  a stated reason when it was skipped, and concrete verification before stopping)
+  three materially different Semble searches for high-recall discovery before edits,
+  Codegraph MCP next for structural context/impact, a stated reason when either was
+  skipped, a concise coverage receipt, and concrete verification before stopping)
 
 Also flag subtle issues, not just blatant ones:
 - Error handlers that swallow more cases than the user asked about (bare `except`,

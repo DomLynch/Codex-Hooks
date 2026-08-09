@@ -57,6 +57,8 @@ class SessionStartRoutingTests(unittest.TestCase):
         self.assertIn("capped output", session_start.SESSION_BASELINE)
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
+        self.assertIn("three materially different Semble searches", session_start.SESSION_BASELINE)
+        self.assertIn("concise coverage receipt", session_start.SESSION_BASELINE)
         self.assertNotIn("cheapest relevant verification", session_start.SESSION_BASELINE)
 
     def test_codegraph_notice_warns_only_for_indexless_git_repo(self) -> None:

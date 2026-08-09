@@ -46,7 +46,7 @@ Check only the current task slice. Block only for concrete problems:
 - Claude Code is drifting from the user's request or asking for unnecessary confirmation instead of using a reasonable reversible default
 - The latest edits already show a concrete correctness, security, or scope regression
 - Repeated command or test failures are being ignored instead of diagnosed
-- V4/MCP/project guidance is being ignored on project/code work, including skipped Codegraph MCP on structural code work without a stated reason
+- V4/MCP/project guidance is being ignored on non-trivial code work: no three-query Semble discovery, skipped Codegraph structural/impact analysis, or no stated reason
 
 This is an in-progress checkpoint. Do NOT block merely because implementation,
 tests, commit, or final verification are unfinished; the Stop audit checks completion.

@@ -139,7 +139,9 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
         self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Hardcoded or silo-specific fixes", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("mandatory Codegraph MCP first", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("three materially different Semble searches", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Codegraph MCP next", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("concise coverage receipt", mimo_audit.AUDIT_PROMPT)
         self.assertIn("two-pass review", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Audit-only or review-only requests", mimo_audit.AUDIT_PROMPT)
@@ -207,9 +209,10 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("31 tests passed", text)
         self.assertIn("Final verified summary", text)
 
-    def test_mid_run_prompts_check_codegraph_routing(self) -> None:
-        self.assertIn("skipped Codegraph MCP", post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn("Codegraph/MCP routing", Path(stop_orchestrator.__file__).read_text())
+    def test_mid_run_prompts_check_semble_and_codegraph_routing(self) -> None:
+        self.assertIn("three-query Semble discovery", post_tool.MIMO_CHECKPOINT_PROMPT)
+        self.assertIn("Codegraph structural/impact analysis", post_tool.MIMO_CHECKPOINT_PROMPT)
+        self.assertIn("Semble discovery plus Codegraph", Path(stop_orchestrator.__file__).read_text())
 
     def test_claude_mid_run_audit_is_sparse_and_not_a_completion_gate(self) -> None:
         self.assertEqual(post_tool.MIMO_AUDIT_EDIT_THRESHOLD, 15)
@@ -236,13 +239,17 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("capped output", context)
         self.assertIn("Avoid duplicate parallel exploration", context)
         self.assertIn("compact context packet", context)
-        self.assertIn("Mandatory: use Codegraph MCP first", context)
+        self.assertIn("three materially different Semble searches", context)
+        self.assertIn("Codegraph MCP for structural context/impact", context)
+        self.assertIn("concise coverage receipt", context)
         self.assertIn("two-pass review", context)
 
     def test_claude_session_baseline_includes_context_efficiency(self) -> None:
         self.assertIn("capped output", session_start.SESSION_BASELINE)
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
+        self.assertIn("three materially different Semble searches", session_start.SESSION_BASELINE)
+        self.assertIn("concise coverage receipt", session_start.SESSION_BASELINE)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:
         self.assertEqual(mimo_audit.normalize_verdict("PASS"), "VERDICT: PASS")

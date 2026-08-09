@@ -43,7 +43,7 @@ CONTEXT_EFFICIENCY_POLICY = "\n".join(
         "# Context Efficiency Contract",
         "- Keep command output lean: use targeted commands, capped output, summarized failures, and narrow paths.",
         "- No full diffs/logs/dependency trees/generated artifacts/archives/repeated output unless explicitly needed.",
-        "- No broad scans when repo/file/symbol target exists; use Codegraph for structure and `rg` for literal text.",
+        "- No broad scans when repo/file/symbol target exists; use Semble for discovery, Codegraph for structure, and `rg` for literal text.",
         "- Avoid duplicate parallel exploration; split agents by scout/surgeon/reviewer roles with non-overlapping scope.",
         "- Start substantial project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.",
     ]
@@ -89,7 +89,8 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
             "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
             "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
-            "- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping, state why.",
+            "- Mandatory before non-trivial edits: run three materially different Semble searches for high-recall discovery, then use Codegraph MCP for structural context/impact; if skipping either, state why.",
+            "- Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.",
             "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",

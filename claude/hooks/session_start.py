@@ -22,7 +22,8 @@ COMPONENT = "session_start"
 SESSION_BASELINE = """# V4/MCP Session Baseline
 - Project/code/repo work: use knowledge MCP `get_playbook()` when available; read local `AGENTS.md` and `PROJECT_STATE.md` when present.
 - Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
-- Mandatory: use Codegraph MCP first for structural code context/impact when available; if skipping, state why.
+- Mandatory before non-trivial edits: run three materially different Semble searches for high-recall discovery, then use Codegraph MCP for structural context/impact; if skipping either, state why.
+- Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.
 - Keep command output lean: targeted commands, capped output, summarized failures, narrow `rg` paths.
 - No full diffs/logs/generated files/archives/dependency trees/repeated output unless needed.
 - Avoid duplicate parallel exploration. Split scout, surgeon, reviewer with non-overlapping scope.
