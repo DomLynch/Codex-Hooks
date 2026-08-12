@@ -91,6 +91,7 @@ def call_mimo(
         "model": MIMO_MODEL,
         "max_tokens": max_tokens,
         "temperature": 0.2,
+        "thinking": {"type": "disabled"},
         "messages": messages,
     }).encode("utf-8")
     req = urllib.request.Request(

@@ -127,6 +127,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(request.full_url, "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions")
         self.assertEqual(request.headers["Authorization"], "Bearer mimo-key")
         self.assertEqual(body["model"], "mimo-v2.5-pro")
+        self.assertEqual(body["thinking"], {"type": "disabled"})
         self.assertEqual(body["messages"], [{"role": "user", "content": "audit this"}])
         self.assertIn("lane=checkpoint", usage_log.call_args.args[1])
         self.assertIn("input_tokens=100", usage_log.call_args.args[1])
