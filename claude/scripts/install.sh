@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install Claude Code hooks: MiniMax-M3 audit, autonomy contract, quality floor,
+# Install Claude Code hooks: MiMo-v2.5-Pro audit, autonomy contract, quality floor,
 # auto-checkpoint, and stop orchestrator.
 #
 # Idempotent: safe to re-run. Backs up settings.json before merging.
@@ -31,14 +31,14 @@ cp -f "$SRC_DIR/hooks/lib/"*.py "$HOOKS_DIR/lib/"
 cp -f "$SRC_DIR/hooks/tests/"*.py "$HOOKS_DIR/tests/"
 chmod +x "$HOOKS_DIR/"*.py 2>/dev/null || true
 
-# 3. Verify MiniMax key is accessible (shared from Codex install)
-MINIMAX_KEY_CODEX="$HOME/.codex/secrets/minimax_api_key"
-MINIMAX_KEY_CLAUDE="$SECRETS_DIR/minimax_api_key"
-if [ ! -f "$MINIMAX_KEY_CLAUDE" ] && [ ! -f "$MINIMAX_KEY_CODEX" ]; then
-  echo "WARNING: No MiniMax API key found at $MINIMAX_KEY_CLAUDE or $MINIMAX_KEY_CODEX"
+# 3. Verify MiMo key is accessible (shared from Codex install)
+MIMO_KEY_CODEX="$HOME/.codex/secrets/mimo_api_key"
+MIMO_KEY_CLAUDE="$SECRETS_DIR/mimo_api_key"
+if [ ! -f "$MIMO_KEY_CLAUDE" ] && [ ! -f "$MIMO_KEY_CODEX" ]; then
+  echo "WARNING: No MiMo API key found at $MIMO_KEY_CLAUDE or $MIMO_KEY_CODEX"
   echo "         Audit hook will fail-open (no audit). Add key to either path."
-elif [ -f "$MINIMAX_KEY_CODEX" ] && [ ! -f "$MINIMAX_KEY_CLAUDE" ]; then
-  echo "==> MiniMax key shared from Codex install: $MINIMAX_KEY_CODEX"
+elif [ -f "$MIMO_KEY_CODEX" ] && [ ! -f "$MIMO_KEY_CLAUDE" ]; then
+  echo "==> MiMo key shared from Codex install: $MIMO_KEY_CODEX"
 fi
 
 # 4. Initialize hook env file with safe defaults if absent

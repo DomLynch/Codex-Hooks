@@ -17,12 +17,12 @@ DEFAULT_LOGS = (
     ("claude-checkpoint", Path.home() / ".claude" / "logs" / "post_tool.log"),
 )
 DEFAULT_USAGE_LOGS = (
-    ("codex", (Path.home() / ".codex" / "logs" / "mimo_audit.log", Path.home() / ".codex" / "logs" / "minimax_api.log")),
-    ("claude", (Path.home() / ".claude" / "logs" / "mimo_audit.log", Path.home() / ".claude" / "logs" / "minimax_api.log")),
+    ("codex", (Path.home() / ".codex" / "logs" / "mimo_audit.log", Path.home() / ".codex" / "logs" / "mimo_api.log", Path.home() / ".codex" / "logs" / "minimax_api.log")),
+    ("claude", (Path.home() / ".claude" / "logs" / "mimo_audit.log", Path.home() / ".claude" / "logs" / "mimo_api.log", Path.home() / ".claude" / "logs" / "minimax_api.log")),
 )
 EVENTS = ("PASS", "ISSUES", "SKIP_CHAT", "DAMPER", "ERROR", "TOO_SHORT")
 USAGE_RE = re.compile(
-    r"MINIMAX_USAGE lane=(?P<lane>\S+) model=(?P<model>\S+) "
+    r"(?:MIMO|MINIMAX)_USAGE lane=(?P<lane>\S+) model=(?P<model>\S+) "
     r"input_tokens=(?P<input>\d+) output_tokens=(?P<output>\d+) "
     r"cache_read_tokens=(?P<cache_read>\d+) cache_write_tokens=(?P<cache_write>\d+) "
     r"elapsed_ms=(?P<elapsed>\d+)"
@@ -34,9 +34,9 @@ def classify(message: str) -> str | None:
         return "PASS"
     if "mimo checkpoint verdict=ISSUES" in message:
         return "ISSUES"
-    if "MiniMax verdict" in message and "VERDICT: PASS" in message:
+    if ("MiMo verdict" in message or "MiniMax verdict" in message) and "VERDICT: PASS" in message:
         return "PASS"
-    if "MiniMax verdict" in message and "VERDICT: ISSUES" in message:
+    if ("MiMo verdict" in message or "MiniMax verdict" in message) and "VERDICT: ISSUES" in message:
         return "ISSUES"
     if "ALLOW: chat turn - audit skipped" in message:
         return "SKIP_CHAT"
@@ -139,7 +139,7 @@ def parse_log_arg(value: str) -> tuple[str, Path]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Summarize MiniMax audit hook verdict rates.")
+    parser = argparse.ArgumentParser(description="Summarize audit hook verdict rates.")
     parser.add_argument(
         "--log",
         action="append",

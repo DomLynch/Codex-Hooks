@@ -146,7 +146,7 @@ Current task transcript:
             "[Claude audit]\n\n"
             "Claude audit did not run before commit/PR side effects. Configure "
             "`ANTHROPIC_API_KEY` or `~/.claude/secrets/anthropic_api_key`, or set "
-            "`CODEX_HOOK_AUTO_PR=0` if you want to allow audited-by-MiniMax-only stops."
+            "`CODEX_HOOK_AUTO_PR=0` if you want to allow audited-by-MiMo-only stops."
         )
         return False
     verdict, normalized = parse_verdict(response)
@@ -358,7 +358,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
         return "", "", "", "branch_failed"
 
     summary = transcript.splitlines()[0][:80] if transcript.strip() else "Claude Code task"
-    auditors = ["MiniMax-M3"]
+    auditors = ["MiMo-v2.5-Pro"]
     if CLAUDE_AUDIT_ENABLED:
         auditors.append("Claude")
     message = f"[task {task_n}] {summary}\n\nAudited-by: {', '.join(auditors)}\nSession: {session_id}"
@@ -486,7 +486,7 @@ def main() -> None:
         if is_git_repo(cwd) and not run_aaa_gate(cwd, transcript):
             return
         if not wait_for_mimo_pass(session_id, turn_id):
-            log(COMPONENT, "side effects skipped: MiniMax did not pass current turn")
+            log(COMPONENT, "side effects skipped: MiMo did not pass current turn")
             return
         branch, sha, pr_url, auto_pr_status = commit_push_pr(session_id, cwd, transcript)
         if auto_pr_status in {"push_failed", "pr_failed"}:

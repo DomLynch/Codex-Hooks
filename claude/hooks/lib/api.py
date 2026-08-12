@@ -12,9 +12,14 @@ from .log import log
 
 CLAUDE_SECRETS_DIR = Path.home() / ".claude" / "secrets"
 CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared audit keys
-MIMO_BASE_URL = "https://api.minimax.io/anthropic"
-MIMO_MODEL = "MiniMax-M3"
+MIMO_BASE_URL = "https://token-plan-sgp.xiaomimimo.com/v1"
+MIMO_MODEL = "mimo-v2.5-pro"
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
+
+
+def openai_text(data: dict) -> str:
+    message = ((data.get("choices") or [{}])[0].get("message") or {})
+    return (message.get("content") or message.get("reasoning_content") or "").strip()
 
 
 def anthropic_text(data: dict) -> str:
@@ -22,21 +27,22 @@ def anthropic_text(data: dict) -> str:
     return "\n".join(part.get("text", "") for part in parts if part.get("type") == "text").strip()
 
 
-def minimax_usage_message(data: dict, lane: str, elapsed_ms: int) -> str:
+def mimo_usage_message(data: dict, lane: str, elapsed_ms: int) -> str:
     usage = data.get("usage") or {}
+    details = usage.get("prompt_tokens_details") or {}
     return (
-        f"MINIMAX_USAGE lane={lane} model={data.get('model') or MIMO_MODEL} "
-        f"input_tokens={int(usage.get('input_tokens') or 0)} "
-        f"output_tokens={int(usage.get('output_tokens') or 0)} "
-        f"cache_read_tokens={int(usage.get('cache_read_input_tokens') or 0)} "
-        f"cache_write_tokens={int(usage.get('cache_creation_input_tokens') or 0)} "
+        f"MIMO_USAGE lane={lane} model={data.get('model') or MIMO_MODEL} "
+        f"input_tokens={int(usage.get('prompt_tokens') or 0)} "
+        f"output_tokens={int(usage.get('completion_tokens') or 0)} "
+        f"cache_read_tokens={int(details.get('cached_tokens') or 0)} "
+        "cache_write_tokens=0 "
         f"elapsed_ms={elapsed_ms}"
     )
 
 
 def load_api_key(env_name: str, secrets_filename: str) -> str:
     """Load an API key. Order: env var → ~/.claude/secrets → ~/.codex/secrets → shell rc parse.
-    The ~/.codex fallback lets MiniMax/Anthropic keys be shared across both hook systems.
+    The ~/.codex fallback lets MiMo/Anthropic keys be shared across both hook systems.
     """
     key = os.environ.get(env_name)
     if key:
@@ -71,23 +77,32 @@ def load_api_key(env_name: str, secrets_filename: str) -> str:
     return ""
 
 
-def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45, lane: str = "shared") -> str:
-    key = load_api_key("MINIMAX_API_KEY", "minimax_api_key")
+def call_mimo(
+    prompt: str,
+    max_tokens: int = 1500,
+    timeout: int = 45,
+    lane: str = "shared",
+    system: str = "",
+    api_key: str = "",
+) -> str:
+    key = api_key or load_api_key("MIMO_API_KEY", "mimo_api_key")
     if not key:
         return ""
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
     body = json.dumps({
         "model": MIMO_MODEL,
         "max_tokens": max_tokens,
         "temperature": 0.2,
-        "thinking": {"type": "disabled"},
-        "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        "messages": messages,
     }).encode("utf-8")
     req = urllib.request.Request(
-        f"{MIMO_BASE_URL}/v1/messages",
+        f"{MIMO_BASE_URL}/chat/completions",
         data=body,
         headers={
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
+            "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
         },
         method="POST",
@@ -95,8 +110,8 @@ def call_mimo(prompt: str, max_tokens: int = 1500, timeout: int = 45, lane: str 
     started = time.monotonic()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-    log("minimax_api", minimax_usage_message(data, lane, int((time.monotonic() - started) * 1000)))
-    return anthropic_text(data)
+    log("mimo_api", mimo_usage_message(data, lane, int((time.monotonic() - started) * 1000)))
+    return openai_text(data)
 
 
 def call_claude(prompt: str, system: str = "", max_tokens: int = 1500, timeout: int = 45) -> str:

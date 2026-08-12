@@ -288,43 +288,20 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(json.loads(out)["decision"], "block")
         self.assertEqual(verdict["claude-bare-issues"]["verdict"], "ERROR")
 
-    def test_mimo_audit_uses_minimax_m3_anthropic_http(self) -> None:
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return None
-
-            def read(self) -> bytes:
-                return json.dumps({
-                    "model": "MiniMax-M3",
-                    "usage": {"input_tokens": 80, "output_tokens": 3},
-                    "content": [{"type": "text", "text": "PASS"}],
-                }).encode()
-
-        with (
-            mock.patch.object(mimo_audit.urllib.request, "urlopen", return_value=Response()) as urlopen,
-            mock.patch.object(mimo_audit, "log") as usage_log,
-        ):
+    def test_mimo_audit_uses_shared_mimo_transport(self) -> None:
+        with mock.patch.object(mimo_audit, "call_mimo", return_value="PASS") as call_mimo:
             verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
-        urlopen.assert_called_once()
-        request = urlopen.call_args.args[0]
-        body = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(request.full_url, "https://api.minimax.io/anthropic/v1/messages")
-        self.assertEqual(request.headers["X-api-key"], "direct-api-key")
-        self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
-        self.assertEqual(body["model"], "MiniMax-M3")
-        self.assertEqual(body["thinking"], {"type": "disabled"})
-        self.assertIn("lane=stop", usage_log.call_args.args[0])
+        self.assertEqual(call_mimo.call_args.kwargs["api_key"], "direct-api-key")
+        self.assertEqual(call_mimo.call_args.kwargs["lane"], "stop")
+        self.assertEqual(call_mimo.call_args.kwargs["max_tokens"], 20)
 
     def test_claude_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
         self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
 
-    def test_claude_minimax_connection_reset_retries_once_then_passes(self) -> None:
+    def test_claude_mimo_connection_reset_retries_once_then_passes(self) -> None:
         with (
             mock.patch.object(mimo_audit, "AUDIT_RETRY_DELAY_S", 0),
             mock.patch.object(
@@ -339,7 +316,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(verdict, "VERDICT: PASS")
         self.assertEqual(ask_mimo.call_count, 2)
 
-    def test_claude_minimax_connection_reset_safe_fails_after_two_attempts(self) -> None:
+    def test_claude_mimo_connection_reset_safe_fails_after_two_attempts(self) -> None:
         with (
             mock.patch.object(mimo_audit, "AUDIT_RETRY_DELAY_S", 0),
             mock.patch.object(mimo_audit, "ask_mimo", side_effect=ConnectionResetError("reset by peer")) as ask_mimo,
@@ -371,7 +348,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("MiniMax-M3 audit unavailable", data["reason"])
+        self.assertIn("MiMo-v2.5-Pro audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_claude_mimo_chat_turn_without_deliverable_claim_skips_api(self) -> None:
@@ -423,7 +400,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(verdict["claude-damper"]["verdict"], "DAMPER_ALLOW")
         record_lesson.assert_called()
 
-    def test_call_mimo_uses_minimax_m3_anthropic_http(self) -> None:
+    def test_call_mimo_uses_mimo_v2_5_pro_openai_http(self) -> None:
         class Response:
             def __enter__(self):
                 return self
@@ -433,32 +410,35 @@ class ClaudeAdapterTests(unittest.TestCase):
 
             def read(self) -> bytes:
                 return json.dumps({
-                    "model": "MiniMax-M3",
-                    "usage": {"input_tokens": 100, "output_tokens": 5},
-                    "content": [{"type": "text", "text": "VERDICT: PASS"}],
+                    "model": "mimo-v2.5-pro",
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 5},
+                    "choices": [{"message": {"content": "VERDICT: PASS"}}],
                 }).encode()
 
         with (
-            mock.patch.object(api, "load_api_key", return_value="minimax-key") as load_key,
+            mock.patch.object(api, "load_api_key", return_value="mimo-key") as load_key,
             mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
             mock.patch.object(api, "log") as usage_log,
         ):
             result = api.call_mimo("audit this", timeout=7, lane="checkpoint")
 
         self.assertEqual(result, "VERDICT: PASS")
-        load_key.assert_called_once_with("MINIMAX_API_KEY", "minimax_api_key")
+        load_key.assert_called_once_with("MIMO_API_KEY", "mimo_api_key")
         urlopen.assert_called_once()
         request = urlopen.call_args.args[0]
         body = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(request.full_url, "https://api.minimax.io/anthropic/v1/messages")
-        self.assertEqual(request.headers["X-api-key"], "minimax-key")
-        self.assertEqual(request.headers["Anthropic-version"], "2023-06-01")
-        self.assertEqual(body["model"], "MiniMax-M3")
-        self.assertEqual(body["thinking"], {"type": "disabled"})
+        self.assertEqual(request.full_url, "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions")
+        self.assertEqual(request.headers["Authorization"], "Bearer mimo-key")
+        self.assertEqual(body["model"], "mimo-v2.5-pro")
+        self.assertEqual(body["messages"], [{"role": "user", "content": "audit this"}])
         self.assertIn("lane=checkpoint", usage_log.call_args.args[1])
         self.assertIn("input_tokens=100", usage_log.call_args.args[1])
 
-    def test_anthropic_text_extracts_text_blocks_only(self) -> None:
+    def test_api_response_extractors_and_mimo_usage(self) -> None:
+        self.assertEqual(
+            api.openai_text({"choices": [{"message": {"content": "VERDICT: PASS"}}]}),
+            "VERDICT: PASS",
+        )
         self.assertEqual(
             api.anthropic_text({
                 "content": [
@@ -471,7 +451,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         )
         self.assertIn(
             "input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_write_tokens=0 elapsed_ms=0",
-            api.minimax_usage_message({"model": "MiniMax-M3"}, "test", 0),
+            api.mimo_usage_message({"model": "mimo-v2.5-pro"}, "test", 0),
         )
 
     def test_claude_autonomy_daemon_mines_local_tasks(self) -> None:

@@ -12,9 +12,9 @@ logs, trusted hashes, or full local Codex app config.
   and V4/MCP routing guidance.
 - `SessionStart`: injects session handoff and project baseline context.
 - `PostToolUse`: runs quality checks after tool use, checkpoint commits, and
-  periodic mid-task MiniMax-M3 checkpoint audits.
-- `Stop / MiniMax-M3 audit`: final MiniMax-M3 review before Codex ends a turn.
-- `Stop / orchestrator`: waits for MiniMax pass, runs milestone gates, optional
+  periodic mid-task MiMo-v2.5-Pro checkpoint audits.
+- `Stop / MiMo-v2.5-Pro audit`: final MiMo review before Codex ends a turn.
+- `Stop / orchestrator`: waits for MiMo pass, runs milestone gates, optional
   Auto-PR, and self-spec chaining.
 - `Autonomy daemon`: launchd job that keeps a shared task queue warm for
   Codex/Claude long-horizon runs using local repo mining only.
@@ -42,12 +42,12 @@ The active local install path is:
 
 ## Secrets
 
-Do not commit secrets. MiniMax credentials should live in one of:
+Do not commit secrets. Xiaomi MiMo credentials should live in one of:
 
 ```text
-MINIMAX_API_KEY
-~/.codex/secrets/minimax_api_key
-shell rc export MINIMAX_API_KEY=...
+MIMO_API_KEY
+~/.codex/secrets/mimo_api_key
+shell rc export MIMO_API_KEY=...
 ```
 
 Runtime feature flags live in:

@@ -19,7 +19,7 @@ SPEC.loader.exec_module(audit_rate_report)
 class AuditRateReportTests(unittest.TestCase):
     def test_counts_recent_audit_events(self) -> None:
         lines = [
-            "[2026-06-11 10:00:00] MiniMax verdict (iter 1): VERDICT: PASS",
+            "[2026-06-11 10:00:00] MiMo verdict (iter 1): VERDICT: PASS",
             "[2026-06-11 10:01:00] MiniMax verdict (iter 1): VERDICT: ISSUES",
             "[2026-06-11 10:02:00] ALLOW: chat turn - audit skipped",
             "[2026-06-11 10:03:00] BLOCK_CHAIN_DAMPER: session=s blocks=3",
@@ -67,7 +67,7 @@ class AuditRateReportTests(unittest.TestCase):
     def test_usage_report_sums_tokens_and_latency(self) -> None:
         lines = [
             "[2026-06-11 10:00:00] MINIMAX_USAGE lane=stop model=MiniMax-M3 input_tokens=100 output_tokens=10 cache_read_tokens=20 cache_write_tokens=0 elapsed_ms=500",
-            "[2026-06-11 10:01:00] MINIMAX_USAGE lane=checkpoint model=MiniMax-M3 input_tokens=200 output_tokens=20 cache_read_tokens=30 cache_write_tokens=5 elapsed_ms=900",
+            "[2026-06-11 10:01:00] MIMO_USAGE lane=checkpoint model=mimo-v2.5-pro input_tokens=200 output_tokens=20 cache_read_tokens=30 cache_write_tokens=5 elapsed_ms=900",
         ]
 
         counts, latencies = audit_rate_report.count_usage(lines, datetime(2026, 6, 11, 11, 0, 0), 24)
