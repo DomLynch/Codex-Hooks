@@ -552,6 +552,31 @@ class ClaudeAdapterTests(unittest.TestCase):
             self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
             sleep.assert_not_called()
 
+    def test_claude_mimo_expired_quota_skips_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "claude-mimo-expired",
+                "turn_id": "turn-1",
+                "last_assistant_message": "I implemented and verified the requested change. " * 20,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="expired-key"),
+                mock.patch.object(
+                    mimo_audit,
+                    "ask_mimo_with_retry",
+                    side_effect=mimo_audit.AuditQuotaExhausted("MiMo quota exhausted"),
+                ),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual((rc, out), (0, ""))
+        self.assertEqual(verdict["claude-mimo-expired"]["verdict"], "SKIP_BUDGET_EXHAUSTED")
+
 
 if __name__ == "__main__":
     unittest.main()

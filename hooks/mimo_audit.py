@@ -62,6 +62,11 @@ DELIVERABLE_RE = re.compile(
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
 MAX_CONSECUTIVE_BLOCKS = 3
 
+
+class AuditQuotaExhausted(RuntimeError):
+    pass
+
+
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
 STATE_FILE = Path.home() / ".codex" / "state" / "audit_iterations.json"
 VERDICT_FILE = Path.home() / ".codex" / "state" / "mimo_last_verdict.json"
@@ -482,6 +487,8 @@ def ask_mimo_with_retry(api_key: str, transcript: str, max_tokens: int = 2500) -
         try:
             return ask_mimo(api_key, transcript, max_tokens=max_tokens)
         except urllib.error.HTTPError as exc:
+            if exc.code == 429 and "quota exhausted" in exc.read().decode("utf-8", errors="replace").lower():
+                raise AuditQuotaExhausted("MiMo quota exhausted") from exc
             if exc.code not in RETRY_HTTP_CODES or attempt >= AUDIT_MAX_ATTEMPTS:
                 raise
             log(f"RETRY_HTTP: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} code={exc.code}")
@@ -554,6 +561,11 @@ def main() -> None:
             retry_transcript = compact(transcript, 3_000)
             log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
             verdict_text = ask_mimo_with_retry(api_key, retry_transcript, max_tokens=800)
+    except AuditQuotaExhausted as e:
+        save_verdict(session_id, turn_id, "SKIP_BUDGET_EXHAUSTED", str(e))
+        reset_consecutive_blocks(session_id)
+        allow_stop(str(e))
+        return
     except urllib.error.HTTPError as e:
         body_preview = e.read().decode("utf-8", errors="replace")[:300]
         block_audit_error(session_id, turn_id, iterations, f"audit HTTP {e.code}: {body_preview}")

@@ -701,6 +701,31 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(out, "")
         ask_mimo.assert_called_once()
 
+    def test_mimo_expired_quota_skips_without_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            payload = {
+                "session_id": "mimo-expired",
+                "turn_id": "turn-1",
+                "last_assistant_message": "I implemented and verified the requested change. " * 20,
+            }
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "load_api_key", return_value="expired-key"),
+                mock.patch.object(
+                    mimo_audit,
+                    "ask_mimo_with_retry",
+                    side_effect=mimo_audit.AuditQuotaExhausted("MiMo quota exhausted"),
+                ),
+            ):
+                rc, out = run_main_with_stdin(mimo_audit.main, payload)
+                verdict = json.loads((tmp_path / "verdict.json").read_text())
+
+        self.assertEqual((rc, out), (0, ""))
+        self.assertEqual(verdict["mimo-expired"]["verdict"], "SKIP_BUDGET_EXHAUSTED")
+
     def test_mimo_block_chain_damper_allows_and_records_lesson(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
