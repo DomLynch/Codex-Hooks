@@ -489,8 +489,12 @@ def ask_mimo_with_retry(api_key: str, transcript: str, max_tokens: int = 2500) -
         try:
             return ask_mimo(api_key, transcript, max_tokens=max_tokens)
         except urllib.error.HTTPError as exc:
-            if exc.code == 429 and "quota exhausted" in exc.read().decode("utf-8", errors="replace").lower():
-                raise AuditQuotaExhausted("MiMo quota exhausted") from exc
+            if exc.code == 429:
+                body = exc.read().decode("utf-8", errors="replace")
+                if "quota exhausted" in body.lower():
+                    raise AuditQuotaExhausted("MiMo quota exhausted") from exc
+                if attempt >= AUDIT_MAX_ATTEMPTS:
+                    raise RuntimeError(f"MiMo HTTP 429: {body[:300]}") from exc
             if exc.code not in RETRY_HTTP_CODES or attempt >= AUDIT_MAX_ATTEMPTS:
                 raise
             log(f"RETRY_HTTP: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} code={exc.code}")
