@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
 """
-Codex Stop hook: third-party audit with MiMo-v2.5-Pro.
+Codex Stop hook: independent audit with GPT-5.6-Sol via Codex CLI.
 
-When Codex thinks it's done, this script feeds the recent transcript to MiMo
-(via Xiaomi's OpenAI-compatible endpoint) for review. If MiMo finds issues,
+When Codex thinks it's done, this script feeds the recent transcript to a fresh
+ephemeral Codex session. If the reviewer finds issues,
 the hook BLOCKS the stop and injects the review back into Codex so it keeps
 working. Capped at MAX_ITERATIONS per session to prevent infinite loops.
 
@@ -23,13 +23,9 @@ Protocol (Codex Stop hook, per developers.openai.com/codex/hooks):
 from __future__ import annotations
 
 import json
-import os
 import re
-import shlex
-import socket
 import sys
 import time
-import urllib.error
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent
@@ -43,16 +39,15 @@ from lib.transcript import compact_task_entries  # noqa: E402
 
 # --- Tunables --------------------------------------------------------------
 MAX_ITERATIONS = 3
-API_KEY_ENV = "MIMO_API_KEY"
-MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to MiMo-v2.5-Pro
+AUDITOR_NAME = "GPT-5.6-Sol"
+MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to the reviewer
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
 AUDIT_TIMEOUT_S = 70
 AUDIT_MAX_ATTEMPTS = 2
 AUDIT_RETRY_DELAY_S = 2
 AUDIT_HOOK_TIMEOUT_S = 180
 AUDIT_RETRY_BUDGET_S = AUDIT_TIMEOUT_S * AUDIT_MAX_ATTEMPTS + AUDIT_RETRY_DELAY_S * (AUDIT_MAX_ATTEMPTS - 1)
-RETRY_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
-NETWORK_RETRY_ERRORS = (TimeoutError, socket.timeout, urllib.error.URLError, ConnectionResetError)
+NETWORK_RETRY_ERRORS = (TimeoutError, ConnectionResetError)
 TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
 DELIVERABLE_RE = re.compile(
     r"\b(committ?ed|pushed|deployed|fixed|implemented|completed|shipped|merged|"
@@ -62,15 +57,9 @@ DELIVERABLE_RE = re.compile(
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
 MAX_CONSECUTIVE_BLOCKS = 3
 
-
-class AuditQuotaExhausted(RuntimeError):
-    pass
-
-
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
 STATE_FILE = Path.home() / ".codex" / "state" / "audit_iterations.json"
 VERDICT_FILE = Path.home() / ".codex" / "state" / "mimo_last_verdict.json"
-KEY_FILE = Path.home() / ".codex" / "secrets" / "mimo_api_key"
 
 AUDIT_PROMPT = """Audit Codex's latest task. Do not explain your reasoning.
 Your first line must be exactly one of:
@@ -275,9 +264,6 @@ def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "")
     update_json_locked(VERDICT_FILE, updater)
 
 def redact_sensitive(text: str) -> str:
-    api_key = load_api_key()
-    if api_key:
-        text = text.replace(api_key, "<redacted>")
     text = re.sub(r'tp-[A-Za-z0-9]+', 'tp-<redacted>', text)
     text = re.sub(
         r'"encrypted_content":\s*"[^"]+"',
@@ -342,7 +328,7 @@ def read_task_slice(path: str) -> str:
             if text:
                 entries.append((role.upper(), text))
         elif item_type == "function_call":
-            # Edit tools need a bigger budget so MiMo can review the code being written.
+            # Edit tools need a bigger budget so the reviewer can inspect the code.
             # Without this, a 5000-char Write/Edit gets compacted to 800 chars, hiding bugs in
             # the middle of the diff (cf. the startswith("pass") false-PASS in a prior reviewer).
             tool_name = payload.get("name") or ""
@@ -367,42 +353,6 @@ def read_task_slice(path: str) -> str:
     return compact_task_entries(task_entries, MAX_TRANSCRIPT_CHARS)
 
 
-def load_api_key() -> str:
-    api_key = os.environ.get(API_KEY_ENV)
-    if api_key:
-        return api_key
-
-    if KEY_FILE.exists():
-        try:
-            return KEY_FILE.read_text().strip()
-        except Exception:
-            pass
-
-    # Codex app hooks may not inherit interactive shell env. Read the single
-    # assignment without sourcing arbitrary shell code.
-    for rc_file in (".zshrc", ".zprofile", ".profile"):
-        path = Path.home() / rc_file
-        if not path.exists():
-            continue
-        try:
-            lines = path.read_text(errors="replace").splitlines()
-        except Exception:
-            continue
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("export "):
-                stripped = stripped[len("export "):].strip()
-            if not stripped.startswith(f"{API_KEY_ENV}="):
-                continue
-            raw_value = stripped.split("=", 1)[1].strip()
-            try:
-                parts = shlex.split(raw_value, comments=False, posix=True)
-            except ValueError:
-                parts = [raw_value.strip("\"'")]
-            return parts[0] if parts else ""
-    return ""
-
-
 def allow_stop(reason: str = "") -> None:
     log(f"ALLOW: {reason}")
     sys.exit(0)
@@ -423,10 +373,10 @@ def block_audit_error(session_id: str, turn_id: str, iterations: int, message: s
         allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})")
         return
     block_stop(
-        f"[MiMo-v2.5-Pro audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
+        f"[{AUDITOR_NAME} audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
         f"{message}\n\n"
-        f"MiMo-v2.5-Pro could not complete the audit after {AUDIT_MAX_ATTEMPTS} attempts. Keep working/retry instead of silently "
-        "stopping; side effects remain gated until MiMo returns PASS."
+        f"{AUDITOR_NAME} could not complete the audit after {AUDIT_MAX_ATTEMPTS} attempts. Keep working/retry instead of silently "
+        "stopping; side effects remain gated until the reviewer returns PASS."
     )
 
 
@@ -466,7 +416,7 @@ def is_chat_turn(transcript: str) -> bool:
     return not has_tool_activity(transcript) and not has_deliverable_claim(transcript)
 
 
-def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
+def ask_mimo(transcript: str, max_tokens: int = 2500) -> str:
     prompt = AUDIT_PROMPT.format(transcript=transcript)
     content = call_mimo(
         prompt,
@@ -474,7 +424,6 @@ def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
         timeout=AUDIT_TIMEOUT_S,
         lane="stop",
         system="Output only the required VERDICT format. Do not think aloud.",
-        api_key=api_key,
     )
     if content:
         return normalize_verdict(content)
@@ -482,30 +431,20 @@ def ask_mimo(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
     return ""
 
 
-def ask_mimo_with_retry(api_key: str, transcript: str, max_tokens: int = 2500) -> str:
+def ask_mimo_with_retry(transcript: str, max_tokens: int = 2500) -> str:
     for attempt in range(1, AUDIT_MAX_ATTEMPTS + 1):
         try:
-            return ask_mimo(api_key, transcript, max_tokens=max_tokens)
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                body = exc.read().decode("utf-8", errors="replace")
-                if "quota exhausted" in body.lower():
-                    raise AuditQuotaExhausted("MiMo quota exhausted") from exc
-                if attempt >= AUDIT_MAX_ATTEMPTS:
-                    raise RuntimeError(f"MiMo HTTP 429: {body[:300]}") from exc
-            if exc.code not in RETRY_HTTP_CODES or attempt >= AUDIT_MAX_ATTEMPTS:
-                raise
-            log(f"RETRY_HTTP: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} code={exc.code}")
+            return ask_mimo(transcript, max_tokens=max_tokens)
         except NETWORK_RETRY_ERRORS as exc:
             if attempt >= AUDIT_MAX_ATTEMPTS:
                 log(f"RETRY_NETWORK_EXHAUSTED: attempts={AUDIT_MAX_ATTEMPTS} error={exc}")
-                raise RuntimeError(f"MiMo transport failed after {AUDIT_MAX_ATTEMPTS} attempts: {exc}") from exc
+                raise RuntimeError(f"Codex audit transport failed after {AUDIT_MAX_ATTEMPTS} attempts: {exc}") from exc
             log(f"RETRY_NETWORK: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} error={exc}")
         time.sleep(AUDIT_RETRY_DELAY_S)
     return ""
 
 
-def repair_verdict_format(api_key: str, response: str) -> str:
+def repair_verdict_format(response: str) -> str:
     prompt = FORMAT_REPAIR_PROMPT.format(response=response[:2500])
     return normalize_verdict(call_mimo(
         prompt,
@@ -513,7 +452,6 @@ def repair_verdict_format(api_key: str, response: str) -> str:
         timeout=AUDIT_TIMEOUT_S,
         lane="format_repair",
         system="You are a strict formatter. Output only the requested verdict format.",
-        api_key=api_key,
     ))
 
 
@@ -552,38 +490,22 @@ def main() -> None:
         allow_stop("chat turn - audit skipped")
         return
 
-    api_key = load_api_key()
-    if not api_key:
-        save_verdict(session_id, turn_id, "SKIP_NO_KEY", f"{API_KEY_ENV} not set")
-        reset_consecutive_blocks(session_id)
-        allow_stop(f"{API_KEY_ENV} not set")
-        return
-
     try:
-        verdict_text = ask_mimo_with_retry(api_key, transcript)
+        verdict_text = ask_mimo_with_retry(transcript)
         if not verdict_text:
             retry_transcript = compact(transcript, 3_000)
             log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
-            verdict_text = ask_mimo_with_retry(api_key, retry_transcript, max_tokens=800)
-    except AuditQuotaExhausted as e:
-        save_verdict(session_id, turn_id, "SKIP_BUDGET_EXHAUSTED", str(e))
-        reset_consecutive_blocks(session_id)
-        allow_stop(str(e))
-        return
-    except urllib.error.HTTPError as e:
-        body_preview = e.read().decode("utf-8", errors="replace")[:300]
-        block_audit_error(session_id, turn_id, iterations, f"audit HTTP {e.code}: {body_preview}")
-        return
+            verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
     except Exception as e:
         block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}")
         return
 
-    log(f"MiMo verdict (iter {iterations + 1}): {verdict_text[:240]}")
+    log(f"{AUDITOR_NAME} verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
 
     if verdict_text and not valid_verdict(verdict_text):
         try:
-            repaired = repair_verdict_format(api_key, verdict_text)
+            repaired = repair_verdict_format(verdict_text)
             if valid_verdict(repaired):
                 log(f"FORMAT_REPAIR_VERDICT: {repaired[:160].replace(chr(10), ' ')}")
                 verdict_text = repaired
@@ -596,7 +518,7 @@ def main() -> None:
                 session_id,
                 turn_id,
                 iterations,
-                "audit format error: MiMo-v2.5-Pro returned no actionable verdict after repair",
+                f"audit format error: {AUDITOR_NAME} returned no actionable verdict after repair",
             )
             return
 
@@ -618,9 +540,9 @@ def main() -> None:
             allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns")
             return
         feedback = (
-            f"[MiMo-v2.5-Pro code-review hook — iteration "
+            f"[{AUDITOR_NAME} code-review hook — iteration "
             f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
-            f"A second model (MiMo-v2.5-Pro) reviewed your work and found issues. "
+            f"A fresh {AUDITOR_NAME} session reviewed your work and found issues. "
             f"Fix these before stopping:\n\n"
             f"{verdict_text}\n\n"
             f"After addressing each item, run any relevant checks and continue."
@@ -631,9 +553,9 @@ def main() -> None:
     save_iterations(session_id, turn_id, iterations + 1)
     save_verdict(session_id, turn_id, "UNPARSEABLE", verdict_text)
     feedback = (
-        f"[MiMo-v2.5-Pro code-review hook — iteration "
+        f"[{AUDITOR_NAME} code-review hook — iteration "
         f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
-        f"MiMo-v2.5-Pro did not return a parseable PASS/ISSUES verdict. Treat this as "
+        f"{AUDITOR_NAME} did not return a parseable PASS/ISSUES verdict. Treat this as "
         f"an audit failure, re-check the user's request, verify the work with "
         f"strong relevant tests/logs, and only stop once the audit passes.\n\n"
         f"Raw verdict preview: {verdict_text[:120]!r}"

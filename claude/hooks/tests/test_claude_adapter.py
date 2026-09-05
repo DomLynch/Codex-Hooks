@@ -277,7 +277,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
-                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES"),
                 mock.patch.object(mimo_audit, "repair_verdict_format", return_value="VERDICT: ISSUES"),
             ):
@@ -288,12 +287,11 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(json.loads(out)["decision"], "block")
         self.assertEqual(verdict["claude-bare-issues"]["verdict"], "ERROR")
 
-    def test_mimo_audit_uses_shared_mimo_transport(self) -> None:
+    def test_mimo_audit_uses_shared_audit_transport(self) -> None:
         with mock.patch.object(mimo_audit, "call_mimo", return_value="PASS") as call_mimo:
-            verdict = mimo_audit.ask_mimo("direct-api-key", "USER:\nfix code", max_tokens=20)
+            verdict = mimo_audit.ask_mimo("USER:\nfix code", max_tokens=20)
 
         self.assertEqual(verdict, "VERDICT: PASS")
-        self.assertEqual(call_mimo.call_args.kwargs["api_key"], "direct-api-key")
         self.assertEqual(call_mimo.call_args.kwargs["lane"], "stop")
         self.assertEqual(call_mimo.call_args.kwargs["max_tokens"], 20)
 
@@ -311,7 +309,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             ) as ask_mimo,
             mock.patch.object(mimo_audit, "log"),
         ):
-            verdict = mimo_audit.ask_mimo_with_retry("key", "USER:\nfix code")
+            verdict = mimo_audit.ask_mimo_with_retry("USER:\nfix code")
 
         self.assertEqual(verdict, "VERDICT: PASS")
         self.assertEqual(ask_mimo.call_count, 2)
@@ -323,7 +321,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             mock.patch.object(mimo_audit, "log"),
         ):
             with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
-                mimo_audit.ask_mimo_with_retry("key", "USER:\nfix code")
+                mimo_audit.ask_mimo_with_retry("USER:\nfix code")
 
         self.assertEqual(ask_mimo.call_count, 2)
 
@@ -339,7 +337,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
-                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=TimeoutError("read timeout")),
             ):
                 rc, out = run_main_with_stdin(mimo_audit.main, payload)
@@ -348,7 +345,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("MiMo-v2.5-Pro audit unavailable", data["reason"])
+        self.assertIn("GPT-5.6-Sol audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_claude_mimo_chat_turn_without_deliverable_claim_skips_api(self) -> None:
@@ -362,7 +359,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
-                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
             ):
                 rc, out = run_main_with_stdin(mimo_audit.main, payload)
@@ -387,7 +383,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson") as record_lesson,
-                mock.patch.object(mimo_audit, "load_api_key", return_value="test-key"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. Still noisy"),
             ):
                 rc, out = run_main_with_stdin(mimo_audit.main, payload)
@@ -400,46 +395,28 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(verdict["claude-damper"]["verdict"], "DAMPER_ALLOW")
         record_lesson.assert_called()
 
-    def test_call_mimo_uses_mimo_v2_5_pro_openai_http(self) -> None:
-        class Response:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return None
-
-            def read(self) -> bytes:
-                return json.dumps({
-                    "model": "mimo-v2.5-pro",
-                    "usage": {"prompt_tokens": 100, "completion_tokens": 5},
-                    "choices": [{"message": {"content": "VERDICT: PASS"}}],
-                }).encode()
-
+    def test_call_mimo_uses_chatgpt_codex_cli(self) -> None:
+        completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
         with (
-            mock.patch.object(api, "load_api_key", return_value="mimo-key") as load_key,
-            mock.patch.object(api.urllib.request, "urlopen", return_value=Response()) as urlopen,
-            mock.patch.object(api, "log") as usage_log,
+            mock.patch.object(api, "codex_binary", return_value="/app/codex"),
+            mock.patch.object(api.subprocess, "run", return_value=completed) as run,
+            mock.patch.object(api, "log") as audit_log,
         ):
-            result = api.call_mimo("audit this", timeout=7, lane="checkpoint")
+            result = api.call_mimo("audit this", timeout=7, lane="checkpoint", system="verdict only")
 
+        command = run.call_args.args[0]
         self.assertEqual(result, "VERDICT: PASS")
-        load_key.assert_called_once_with("MIMO_API_KEY", "mimo_api_key")
-        urlopen.assert_called_once()
-        request = urlopen.call_args.args[0]
-        body = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(request.full_url, "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions")
-        self.assertEqual(request.headers["Authorization"], "Bearer mimo-key")
-        self.assertEqual(body["model"], "mimo-v2.5-pro")
-        self.assertEqual(body["thinking"], {"type": "disabled"})
-        self.assertEqual(body["messages"], [{"role": "user", "content": "audit this"}])
-        self.assertIn("lane=checkpoint", usage_log.call_args.args[1])
-        self.assertIn("input_tokens=100", usage_log.call_args.args[1])
+        self.assertEqual(command[0:2], ["/app/codex", "exec"])
+        self.assertIn("--ignore-user-config", command)
+        self.assertIn("--ephemeral", command)
+        self.assertIn("read-only", command)
+        self.assertIn("gpt-5.6-sol", command)
+        self.assertIn('model_reasoning_effort="high"', command)
+        self.assertEqual(run.call_args.kwargs["input"], "verdict only\n\naudit this")
+        self.assertEqual(run.call_args.kwargs["timeout"], 7)
+        self.assertIn("lane=checkpoint", audit_log.call_args.args[1])
 
-    def test_api_response_extractors_and_mimo_usage(self) -> None:
-        self.assertEqual(
-            api.openai_text({"choices": [{"message": {"content": "VERDICT: PASS"}}]}),
-            "VERDICT: PASS",
-        )
+    def test_api_response_extractors(self) -> None:
         self.assertEqual(
             api.anthropic_text({
                 "content": [
@@ -449,10 +426,6 @@ class ClaudeAdapterTests(unittest.TestCase):
                 ]
             }),
             "VERDICT: PASS",
-        )
-        self.assertIn(
-            "input_tokens=0 output_tokens=0 cache_read_tokens=0 cache_write_tokens=0 elapsed_ms=0",
-            api.mimo_usage_message({"model": "mimo-v2.5-pro"}, "test", 0),
         )
 
     def test_claude_autonomy_daemon_mines_local_tasks(self) -> None:
@@ -551,31 +524,6 @@ class ClaudeAdapterTests(unittest.TestCase):
         ):
             self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
             sleep.assert_not_called()
-
-    def test_claude_mimo_expired_quota_skips_without_blocking(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            payload = {
-                "session_id": "claude-mimo-expired",
-                "turn_id": "turn-1",
-                "last_assistant_message": "I implemented and verified the requested change. " * 20,
-            }
-            with (
-                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
-                mock.patch.object(mimo_audit, "log"),
-                mock.patch.object(mimo_audit, "load_api_key", return_value="expired-key"),
-                mock.patch.object(
-                    mimo_audit,
-                    "ask_mimo_with_retry",
-                    side_effect=mimo_audit.AuditQuotaExhausted("MiMo quota exhausted"),
-                ),
-            ):
-                rc, out = run_main_with_stdin(mimo_audit.main, payload)
-                verdict = json.loads((tmp_path / "verdict.json").read_text())
-
-        self.assertEqual((rc, out), (0, ""))
-        self.assertEqual(verdict["claude-mimo-expired"]["verdict"], "SKIP_BUDGET_EXHAUSTED")
 
 
 if __name__ == "__main__":

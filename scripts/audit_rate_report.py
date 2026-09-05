@@ -34,9 +34,9 @@ def classify(message: str) -> str | None:
         return "PASS"
     if "mimo checkpoint verdict=ISSUES" in message:
         return "ISSUES"
-    if ("MiMo verdict" in message or "MiniMax verdict" in message) and "VERDICT: PASS" in message:
+    if "verdict" in message and "VERDICT: PASS" in message:
         return "PASS"
-    if ("MiMo verdict" in message or "MiniMax verdict" in message) and "VERDICT: ISSUES" in message:
+    if "verdict" in message and "VERDICT: ISSUES" in message:
         return "ISSUES"
     if "ALLOW: chat turn - audit skipped" in message:
         return "SKIP_CHAT"

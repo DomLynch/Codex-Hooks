@@ -10,7 +10,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.api import call_mimo, load_api_key
+from lib.api import call_mimo
 from lib.autonomy import record_lesson, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
@@ -169,11 +169,6 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
         update_audit_state(session_id, audited=True, verdict="SKIP_TOO_SHORT", preview=f"{len(transcript)} chars")
         log(COMPONENT, f"mimo checkpoint skipped: transcript too short ({len(transcript)} chars)")
         return
-    if not load_api_key("MIMO_API_KEY", "mimo_api_key"):
-        update_audit_state(session_id, audited=True, verdict="SKIP_NO_KEY", preview="MIMO_API_KEY missing")
-        log(COMPONENT, "mimo checkpoint skipped: MIMO_API_KEY missing")
-        return
-
     prompt = MIMO_CHECKPOINT_PROMPT.format(transcript=transcript)
     try:
         response = call_mimo(prompt, max_tokens=1000, timeout=MIMO_AUDIT_TIMEOUT_S, lane="checkpoint")
@@ -188,8 +183,8 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     if verdict == "ISSUES":
         record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized)
         block(
-            "[MiMo-v2.5-Pro checkpoint audit]\n\n"
-            "MiMo-v2.5-Pro reviewed this in-progress task checkpoint and found concrete issues. "
+            "[GPT-5.6-Sol checkpoint audit]\n\n"
+            "A fresh GPT-5.6-Sol session reviewed this in-progress task checkpoint and found concrete issues. "
             "Fix these before continuing:\n\n"
             f"{normalized[:5000]}"
         )
