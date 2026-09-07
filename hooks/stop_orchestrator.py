@@ -31,7 +31,7 @@ from lib.git import (
 )
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
-from lib.quality import run_quality_checks
+from lib.quality import pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import latest_task_slice
 
@@ -197,7 +197,16 @@ def milestone_detected(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
-def run_aaa_gate(cwd: Path, transcript: str) -> bool:
+def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 120) -> bool:
+    if (cwd / ".quality-gate.json").exists():
+        result = run_project_gate(cwd, timeout=timeout)
+        log(COMPONENT, f"repository quality gate ok={result['ok']}")
+        if not result["ok"]:
+            block("[Repository Quality Gate]\n\n" + "\n".join(
+                f"{item['tool']}: {item['output']}" for item in result["results"] if not item["ok"]
+            ))
+            return False
+        return True
     if not milestone_detected(transcript):
         return True
     protocol = ""
@@ -481,9 +490,19 @@ def main() -> None:
         session_spec = read_session_spec(session_id)
 
         log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")
-        if not audit_with_claude(session_id, transcript, session_spec):
+        pending = pending_quality(session_id)
+        quality_deadline = time.monotonic() + 120
+        for project in pending:
+            target = Path(project)
+            if not (target / ".quality-gate.json").exists():
+                block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
+            if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic()):
+                return
+        if str(cwd) not in pending and is_git_repo(cwd) and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic()):
             return
-        if is_git_repo(cwd) and not run_aaa_gate(cwd, transcript):
+        if pending:
+            pending_quality(session_id, clear=True)
+        if not audit_with_claude(session_id, transcript, session_spec):
             return
         if not wait_for_mimo_pass(session_id, turn_id):
             log(COMPONENT, "side effects skipped: GPT-5.6-Terra did not pass current turn")
@@ -508,7 +527,8 @@ def main() -> None:
                 )
         log(COMPONENT, "allow stop")
     except Exception as exc:
-        log(COMPONENT, f"fail-open: {exc}")
+        log(COMPONENT, f"gate error: {exc}")
+        block(f"[Repository Quality Gate] Unable to verify completion: {exc}")
 
 
 if __name__ == "__main__":

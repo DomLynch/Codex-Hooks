@@ -91,3 +91,24 @@ See `docs/coding_effectiveness_stack.md`.
 This repo is the source-of-truth for the global hook code. Project repos should
 not vendor or own these hooks. The hooks apply to all Codex projects through the
 user-level Codex config.
+# Repository quality contracts
+
+Both Stop adapters run a repository's `.quality-gate.json` commands as argv
+lists. An empty/invalid contract, missing executable, nonzero exit or timeout
+blocks completion. Explicit edited repositories remain pending across
+checkpoints; all pending contracts share a 120-second budget. Stop registration
+allows 360 seconds for that budget, the reviewer wait and orchestration.
+PostToolUse has a shared 120-second check budget and a 180-second registration.
+
+Each new edited repository needs its own contract; do not copy Python commands
+into a TypeScript project. Project-local binaries take precedence. Baselines
+freeze existing complexity/duplication, not new regressions. Dead-code and
+mock-density reports need human assessment before deleting anything.
+
+Semble discovery and CodeGraph impact analysis remain mandatory in the existing
+instructions/reviewer, with the documented unavailable/index-free fallback.
+This is not deterministic proof every tool was used: wrapped tool output is not
+an authenticated invocation record. Profiles, mutation tests and state-machine
+tests apply to the relevant failure, not every edit. Hooks do not prevent direct
+shell edits, disabled hooks or repository owners weakening configuration;
+required CI branch checks are the merge boundary.

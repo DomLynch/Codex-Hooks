@@ -23,7 +23,7 @@ statusMessage = "GPT-5.6-Terra audit"
 [[hooks.Stop.hooks]]
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/stop_orchestrator.py"
-timeout = 180
+timeout = 360
 statusMessage = "Stop orchestrator"
 
 [[hooks.SessionStart]]
@@ -48,5 +48,5 @@ statusMessage = "AAA task router"
 [[hooks.PostToolUse.hooks]]
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/post_tool.py"
-timeout = 90
+timeout = 180
 statusMessage = "Quality floor"

@@ -43,6 +43,9 @@ WORK_QUALITY_POLICY = "\n".join(
         "- Use boring explicit code. When debugging, reproduce or cite the concrete failure, localize, fix minimally, verify gone.",
         "- Respect mode: audit-only means no edits; implementation means changed files and checks.",
         "- Before done: two-pass review plus strongest relevant automated/judge check.",
+        "- Code changes: run the repository .quality-gate.json commands; never skip missing tools, regenerate baselines to pass, or report a failed check as success.",
+        "- Debugging: require a reproducer and regression test. Use ast-grep for structural bug patterns, Hypothesis/randomized tests for state/order bugs, VizTracer/py-spy for slowness/hangs, and bounded mutation tests for suspect assertions.",
+        "- Use Tree-sitter miswire audit when Codegraph edges are disputed and a bounded, secret-free Repomix pack for cross-agent handoffs. Report applicable tool evidence or a concrete reason it cannot run; do not run unrelated diagnostics.",
     ]
 )
 

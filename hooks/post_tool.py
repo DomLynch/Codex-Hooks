@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,10 +13,10 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import call_mimo
 from lib.autonomy import record_lesson, remember_repo
-from lib.git import changed_files, commit, current_session_branch, ensure_branch, is_git_repo, push, resolve_git_cwd
+from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
-from lib.quality import changed_files_in_payload, run_quality_checks
+from lib.quality import changed_files_in_payload, pending_quality, run_quality_checks
 from lib.state import checkpoint_state, now_iso, update_checkpoint_state
 from lib.transcript import latest_task_slice
 
@@ -223,24 +224,38 @@ def main() -> None:
         payload = json.loads(sys.stdin.read() or "{}")
         tool_name = payload.get("tool_name") or ""
         session_id = payload.get("session_id") or "unknown"
-        cwd = Path(payload.get("cwd") or ".").resolve()
-        files = changed_files_in_payload(payload)
+        tool_input = payload.get("tool_input") or {}
+        workdir = tool_input.get("workdir") if isinstance(tool_input, dict) else None
+        cwd = Path(workdir or payload.get("cwd") or ".").resolve()
+        is_edit = tool_name.rsplit("__", 1)[-1] in EDIT_TOOLS or "*** Begin Patch" in str(tool_input)
+        files = changed_files_in_payload(payload) if is_edit else []
+        targets = {}
+        for file in files:
+            root = git_root(file.parent)
+            if root:
+                targets.setdefault(root, []).append(file)
+        for root in targets:
+            pending_quality(session_id, root)
         cwd = resolve_git_cwd(cwd, files)
         remember_repo(cwd)
         if not files and is_git_repo(cwd):
-            files = changed_files(cwd)[:10]
-        if files:
-            result = run_quality_checks(files, cwd, timeout=QUALITY_TIMEOUT_S)
-            log(COMPONENT, f"quality files={len(files)} ok={result.get('ok')}")
+            files = changed_files(cwd)
+        if not targets and files:
+            targets[cwd] = files
+        deadline = time.monotonic() + QUALITY_TIMEOUT_S
+        for root, target_files in targets.items():
+            result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic())
+            log(COMPONENT, f"quality files={len(target_files)} ok={result.get('ok')} cwd={root}")
             if not result.get("ok"):
                 block(format_quality_failures(result))
-        if tool_name in EDIT_TOOLS or files:
+        if is_edit:
             update_checkpoint_state(session_id, edits=1)
             update_audit_state(session_id, edits=1)
             maybe_mimo_checkpoint_audit(payload, session_id, cwd)
             maybe_checkpoint(session_id, cwd)
     except Exception as exc:
-        log(COMPONENT, f"fail-open: {exc}")
+        log(COMPONENT, f"quality error: {exc}")
+        block(f"[Quality Floor] Unable to verify edited files: {exc}")
 
 
 if __name__ == "__main__":

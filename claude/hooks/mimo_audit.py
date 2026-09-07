@@ -136,6 +136,12 @@ Public receipt calibration:
   infer public truth from internal pipeline success alone.
 
 Auditor constraints - demands must be executable:
+- Code deliveries must pass the repository .quality-gate.json commands. For debugging,
+  check reproducer/regression evidence and applicable structural, state/order or
+  performance diagnostics (ast-grep, Hypothesis, randomized tests, VizTracer/py-spy).
+  Require Tree-sitter only for disputed graph edges, mutation tests for suspect
+  assertions, and bounded secret-free Repomix for handoffs. Do not demand every
+  tool on unrelated edits or status turns; unavailable tools need a concrete reason.
 - Conversation turns are immutable. NEVER demand edits, redactions, or
   corrections to previous turns. Corrections happen in the current turn only.
 - If the user has set audit-only/review-only mode for the agent, do NOT demand

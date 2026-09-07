@@ -32,6 +32,8 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.
 - Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless scoped.
 - Before stopping, run self-review plus strongest relevant automated/judge check.
+- Code changes must pass the repository .quality-gate.json commands; missing tools and failed checks are blockers, not skips.
+- Match debugging evidence to the failure: reproducer/regression, ast-grep patterns, Hypothesis/randomized state tests, VizTracer/py-spy performance traces, bounded mutation tests; Tree-sitter for disputed graph edges and secret-free Repomix for handoffs. Require applicable evidence or an explicit unavailable reason, not every tool on every edit.
 - Keep context on current task; avoid old-history trawling unless required.
 - Default to autonomous execution. Do not ask for confirmation when a reasonable reversible default exists.
 - Missing detail: choose conservative project-local default, state briefly, keep working.

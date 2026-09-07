@@ -1,0 +1,28 @@
+{
+  "commands": [
+    [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "hooks/tests",
+      "-q"
+    ],
+    [
+      "python3",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "claude/hooks/tests",
+      "-q"
+    ],
+    [
+      "ruff",
+      "check",
+      "hooks",
+      "claude/hooks"
+    ]
+  ]
+}

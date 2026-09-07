@@ -31,7 +31,7 @@
           {
             "type": "command",
             "command": "python3 /Users/domininclynch/.claude/hooks/post_tool.py",
-            "timeout": 90
+            "timeout": 180
           }
         ]
       }
@@ -47,7 +47,7 @@
           {
             "type": "command",
             "command": "python3 /Users/domininclynch/.claude/hooks/stop_orchestrator.py",
-            "timeout": 180
+            "timeout": 360
           }
         ]
       }
