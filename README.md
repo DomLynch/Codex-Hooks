@@ -12,8 +12,8 @@ logs, trusted hashes, or full local Codex app config.
   and V4/MCP routing guidance.
 - `SessionStart`: injects session handoff and project baseline context.
 - `PostToolUse`: runs quality checks after tool use, checkpoint commits, and
-  periodic mid-task GPT-5.6-Sol checkpoint audits.
-- `Stop / GPT-5.6-Sol audit`: fresh read-only Codex review before a turn ends.
+  periodic mid-task GPT-5.6-Terra checkpoint audits.
+- `Stop / GPT-5.6-Terra audit`: fresh read-only Codex review before a turn ends.
 - `Stop / orchestrator`: waits for the audit pass, runs milestone gates, optional
   Auto-PR, and self-spec chaining.
 - `Autonomy daemon`: launchd job that keeps a shared task queue warm for

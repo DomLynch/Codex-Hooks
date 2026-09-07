@@ -1,6 +1,6 @@
 # Claude Code Hooks (port of Codex hooks)
 
-Parallel install of the Codex hook system for Claude Code. Same GPT-5.6-Sol audit,
+Parallel install of the Codex hook system for Claude Code. Same GPT-5.6-Terra audit,
 autonomy contract, quality floor, auto-checkpoint, and stop orchestrator —
 adapted for Claude Code's payload schema and config format.
 
@@ -11,7 +11,7 @@ adapted for Claude Code's payload schema and config format.
 | `UserPromptSubmit` | `user_prompt_submit.py` | Injects autonomy contract + V4/MCP routing on every prompt |
 | `SessionStart` | `session_start.py` | Loads handoff state, mines backlog, captures session spec |
 | `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task GPT audit |
-| `Stop` | `mimo_audit.py` | GPT-5.6-Sol reviews the turn and blocks on issues |
+| `Stop` | `mimo_audit.py` | GPT-5.6-Terra reviews the turn and blocks on issues |
 | `Stop` | `stop_orchestrator.py` | Optional 2nd audit (Claude), AAA gate, Auto-PR, self-spec chaining |
 | launchd | `autonomy_daemon.py` | Shared Codex/Claude queue planner via `~/.codex/state/` |
 

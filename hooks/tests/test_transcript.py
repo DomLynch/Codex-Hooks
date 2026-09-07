@@ -71,7 +71,7 @@ class TranscriptSliceTests(unittest.TestCase):
         self.assertNotIn("ready to merge this branch", text)
         self.assertNotIn("npm test failed", text)
 
-    def test_hook_only_feedback_still_resets_current_user_boundary(self) -> None:
+    def test_hook_only_feedback_preserves_request_and_failure_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "rollout.jsonl"
             transcript.write_text("\n".join([
@@ -87,9 +87,9 @@ class TranscriptSliceTests(unittest.TestCase):
 
             text = latest_task_slice(str(transcript))
 
-        self.assertIn("[hook feedback omitted]", text)
-        self.assertNotIn("merge this now", text)
-        self.assertNotIn("npm test failed", text)
+        self.assertIn("PRIOR REVIEW (not a new request)", text)
+        self.assertIn("merge this now", text)
+        self.assertIn("npm test failed", text)
 
     def test_compacted_tool_call_marks_slice_elision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

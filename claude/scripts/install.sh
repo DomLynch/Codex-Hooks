@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install Claude Code hooks: GPT-5.6-Sol audit, autonomy contract, quality floor,
+# Install Claude Code hooks: GPT-5.6-Terra audit, autonomy contract, quality floor,
 # auto-checkpoint, and stop orchestrator.
 #
 # Idempotent: safe to re-run. Backs up settings.json before merging.

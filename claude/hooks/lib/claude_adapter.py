@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
 
-from .transcript import compact_task_entries
+from .transcript import _content_text, compact_task_entries, strip_hook_prompts, tool_entry
 
 
 ELISION_MARKER = "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n"
@@ -109,17 +110,26 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
         tool_result_only = isinstance(content, list) and content and all(
             isinstance(item, dict) and item.get("type") == "tool_result" for item in content
         )
-        if entry.get("type") == "user" and not tool_result_only:
+        hook_feedback = _content_text(content).lstrip().startswith("<hook_prompt") and not strip_hook_prompts(_content_text(content))
+        if entry.get("type") == "user" and not tool_result_only and not hook_feedback:
             last_user_idx = idx
             break
     slice_entries = entries[last_user_idx:] if last_user_idx >= 0 else entries[-30:]
 
     out: list[tuple[str, str]] = []
+    calls: dict[str, str] = {}
     for entry in slice_entries:
         etype = entry.get("type", "")
         msg = entry.get("message") or {}
         content = msg.get("content")
         if etype == "user":
+            if _content_text(content).lstrip().startswith("<hook_prompt"):
+                remaining = strip_hook_prompts(_content_text(content))
+                if remaining:
+                    out.append(("USER", remaining))
+                    continue
+                out.append(("PRIOR REVIEW (not a new request)", re.sub(r"</?hook_prompt\b[^>]*>", "", _content_text(content))))
+                continue
             if isinstance(content, str):
                 out.append(("USER", content))
             elif isinstance(content, list):
@@ -127,9 +137,11 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
                 for item in content:
                     if not isinstance(item, dict):
                         continue
-                    text = str(item.get("content") or item.get("text") or "")[:1500]
+                    text = str(item.get("text") or "")
                     if item.get("type") == "tool_result":
-                        out.append(("TOOL OUTPUT", text))
+                        result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content")}, calls)
+                        if result:
+                            out.append(result)
                     elif text:
                         texts.append(text)
                 if texts:
@@ -145,14 +157,15 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
                     if itype == "text":
                         out.append(("ASSISTANT", str(item.get("text") or "")))
                     elif itype == "tool_use":
-                        name = item.get("name", "?")
-                        inp = compact(json.dumps(item.get("input", {})), 800)
-                        out.append(("TOOL CALL", f"{name}: {inp}"))
+                        result = tool_entry({"type": "function_call", "call_id": item.get("id"), "name": item.get("name"), "arguments": json.dumps(item.get("input", {}))}, calls)
+                        if result:
+                            out.append(result)
         elif etype == "tool_result" and isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "tool_result":
-                    raw = str(item.get("content") or "")[:1000]
-                    out.append(("TOOL OUTPUT", raw))
+                    result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content")}, calls)
+                    if result:
+                        out.append(result)
 
     return compact_task_entries(out, max_chars) if out else last_assistant_message[-max_chars:]
 

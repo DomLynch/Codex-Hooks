@@ -151,7 +151,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("Status/check-only calibration", mimo_audit.AUDIT_PROMPT)
         self.assertIn("direct command/log/state output", mimo_audit.AUDIT_PROMPT)
         self.assertIn("source/live parity", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("without showing fresh command/log/state output", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Do not demand fresh checks merely", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Public receipt calibration", mimo_audit.AUDIT_PROMPT)
         self.assertIn("public publish counts", mimo_audit.AUDIT_PROMPT)
         self.assertIn("public record fields such as `agentId`", mimo_audit.AUDIT_PROMPT)
@@ -209,6 +209,26 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("verification receipts preserved", text)
         self.assertIn("31 tests passed", text)
         self.assertIn("Final verified summary", text)
+
+    def test_native_receipt_keeps_tail_and_original_request_after_feedback(self) -> None:
+        path = self._transcript([
+            {"type": "user", "message": {"content": "Check tests, no edits"}},
+            {"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "receipt-1", "name": "Bash", "input": {"command": "pytest -q"}},
+            ]}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "receipt-1", "content": [
+                    {"type": "text", "text": "x" * 5000 + "\nFAILED test_boundary; exit_code=1"},
+                ]},
+            ]}},
+            {"type": "user", "message": {"content": "<hook_prompt>Show evidence</hook_prompt>"}},
+            {"type": "assistant", "message": {"content": "The boundary test failed."}},
+        ])
+        text = latest_task_slice_claude(path)
+        for receipt in ("Check tests, no edits", "pytest -q", "receipt-1",
+                        "FAILED test_boundary; exit_code=1", "PRIOR REVIEW"):
+            self.assertIn(receipt, text)
+        self.assertLessEqual(len(text), 4000)
 
     def test_mid_run_prompts_check_semble_and_codegraph_routing(self) -> None:
         self.assertIn("three-query Semble discovery", post_tool.MIMO_CHECKPOINT_PROMPT)
@@ -345,7 +365,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("GPT-5.6-Sol audit unavailable", data["reason"])
+        self.assertIn("GPT-5.6-Terra audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_claude_mimo_chat_turn_without_deliverable_claim_skips_api(self) -> None:
@@ -410,7 +430,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ephemeral", command)
         self.assertIn("read-only", command)
-        self.assertIn("gpt-5.6-sol", command)
+        self.assertIn("gpt-5.6-terra", command)
         self.assertIn('model_reasoning_effort="high"', command)
         self.assertEqual(run.call_args.kwargs["input"], "verdict only\n\naudit this")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)

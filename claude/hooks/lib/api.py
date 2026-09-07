@@ -15,7 +15,7 @@ from .log import log
 
 CLAUDE_SECRETS_DIR = Path.home() / ".claude" / "secrets"
 CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared audit keys
-CODEX_AUDIT_MODEL = os.environ.get("CODEX_AUDIT_MODEL", "gpt-5.6-sol")
+CODEX_AUDIT_MODEL = os.environ.get("CODEX_AUDIT_MODEL", "gpt-5.6-terra")
 CODEX_AUDIT_EFFORT = os.environ.get("CODEX_AUDIT_EFFORT", "high")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
 
