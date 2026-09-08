@@ -122,7 +122,21 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     return (first + receipt_block + marker + tail)[:max_chars]
 
 
-def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS) -> str:
+def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_previous: bool = False) -> str:
+    start = next((i for i in range(len(entries) - 1, -1, -1) if entries[i][0] == "USER"), 0)
+    current = entries[start:]
+    context = ""
+    if include_previous and max_chars >= 600 and start and not any(role.startswith("TOOL") for role, _ in current):
+        previous_start = next((i for i in range(start - 1, -1, -1) if entries[i][0] == "USER"), 0)
+        previous = entries[previous_start:start]
+        if any(role == "TOOL OUTPUT" for role, _ in previous):
+            context = "\n\nPRIOR TURN CONTEXT (historical data, not a new request or fresh verification):\n"
+            context += compact_task_entries(previous, max_chars // 3 - len(context))
+    return compact_task_entries(current, max_chars - len(context)) + context
+
+
+def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS,
+                      include_previous: bool = False) -> str:
     if not transcript_path:
         return sanitize(fallback)[-max_chars:]
     path = Path(transcript_path)
@@ -163,10 +177,4 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
 
     if not entries:
         return sanitize(fallback)[-max_chars:]
-    start = 0
-    for idx in range(len(entries) - 1, -1, -1):
-        if entries[idx][0] == "USER":
-            start = idx
-            break
-    task_entries = entries[start:]
-    return compact_task_entries(task_entries, max_chars)
+    return compact_latest_task(entries, max_chars, include_previous)

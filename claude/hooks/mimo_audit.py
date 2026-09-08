@@ -521,7 +521,7 @@ def main() -> None:
     # Prefer Claude's transcript JSONL parser; fall back to last_assistant_message.
     transcript = latest_task_slice_claude(transcript_path, last_msg, MAX_TRANSCRIPT_CHARS) or redact_sensitive(last_msg)
     log(f"TASK_SLICE: {len(transcript)} chars")
-    if len(transcript) < MIN_TRANSCRIPT_CHARS and not has_tool_activity(transcript):
+    if len(transcript) < MIN_TRANSCRIPT_CHARS and is_chat_turn(transcript):
         save_verdict(session_id, turn_id, "SKIP_TOO_SHORT", f"transcript too short ({len(transcript)} chars)")
         reset_consecutive_blocks(session_id)
         allow_stop(f"transcript too short ({len(transcript)} chars)")
@@ -532,6 +532,9 @@ def main() -> None:
         reset_consecutive_blocks(session_id)
         allow_stop("chat turn - audit skipped")
         return
+
+    if not has_tool_activity(transcript):
+        transcript = latest_task_slice_claude(transcript_path, transcript, MAX_TRANSCRIPT_CHARS, include_previous=True)
 
     try:
         verdict_text = ask_mimo_with_retry(transcript)

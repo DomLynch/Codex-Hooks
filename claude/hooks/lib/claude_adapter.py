@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .transcript import _content_text, compact_task_entries, strip_hook_prompts, tool_entry
+from .transcript import _content_text, compact_latest_task, strip_hook_prompts, tool_entry
 
 
 ELISION_MARKER = "\n...[slice-elided by compactor - full content was present in the actual tool call]...\n"
@@ -92,7 +92,8 @@ def extract_last_assistant_message(transcript_path: str) -> str:
     return ""
 
 
-def latest_task_slice_claude(transcript_path: str, last_assistant_message: str = "", max_chars: int = 4000) -> str:
+def latest_task_slice_claude(transcript_path: str, last_assistant_message: str = "", max_chars: int = 4000,
+                             include_previous: bool = False) -> str:
     """Build the 'current task' slice from a Claude transcript.
 
     Strategy: walk back to the last `user` entry and include everything from there.
@@ -115,6 +116,8 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
             last_user_idx = idx
             break
     slice_entries = entries[last_user_idx:] if last_user_idx >= 0 else entries[-30:]
+    if include_previous:
+        slice_entries = entries
 
     out: list[tuple[str, str]] = []
     calls: dict[str, str] = {}
@@ -133,19 +136,16 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
             if isinstance(content, str):
                 out.append(("USER", content))
             elif isinstance(content, list):
-                texts = []
+                result_only = content and all(isinstance(item, dict) and item.get("type") == "tool_result" for item in content)
+                if not result_only:
+                    out.append(("USER", _content_text(content) or "[non-text user message]"))
                 for item in content:
                     if not isinstance(item, dict):
                         continue
-                    text = str(item.get("text") or "")
                     if item.get("type") == "tool_result":
                         result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content")}, calls)
                         if result:
                             out.append(result)
-                    elif text:
-                        texts.append(text)
-                if texts:
-                    out.append(("USER", "\n".join(texts)))
         elif etype == "assistant":
             if isinstance(content, str):
                 out.append(("ASSISTANT", content))
@@ -167,7 +167,7 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
                     if result:
                         out.append(result)
 
-    return compact_task_entries(out, max_chars) if out else last_assistant_message[-max_chars:]
+    return compact_latest_task(out, max_chars, include_previous) if out else last_assistant_message[-max_chars:]
 
 
 def normalize_payload(raw: dict) -> dict:

@@ -1,19 +1,69 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 HOOKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS))
 import mimo_audit  # noqa: E402
-from lib.transcript import compact_task_entries, latest_task_slice  # noqa: E402
+from lib.transcript import compact_latest_task, compact_task_entries, latest_task_slice  # noqa: E402
 
 
 class ReviewEvidenceTests(unittest.TestCase):
+    def test_short_completion_is_audited_but_chat_still_skips(self):
+        for message, expected in (("I deployed it.", "ISSUES"), ("Thanks.", "SKIP_TOO_SHORT")):
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                payload = {"session_id": "short", "last_assistant_message": message}
+                with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()), \
+                     mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"), \
+                     mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"), \
+                     mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"), \
+                     mock.patch.object(mimo_audit, "record_lesson"), \
+                     mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. No deployment evidence") as audit:
+                    try:
+                        mimo_audit.main()
+                    except SystemExit as exc:
+                        self.assertEqual(exc.code, 0)
+                verdict = json.loads((root / "verdict.json").read_text())["short"]["verdict"]
+                self.assertEqual(verdict, expected)
+                self.assertEqual(audit.call_count, int(expected == "ISSUES"))
+
+    def test_followup_can_reuse_bounded_previous_receipts(self):
+        entries = [("USER", "Check hooks"), ("TOOL OUTPUT", "PASS=4 skips=5; parity=0; sk-SECRET"),
+                   ("ASSISTANT", "Earlier check passed"), ("USER", "Is suppression working?"),
+                   ("ASSISTANT", "The earlier check confirms the deployed fix")]
+        self.assertNotIn("PASS=4", compact_latest_task(entries, 4000))
+        text = compact_latest_task(entries, 4000, include_previous=True)
+        self.assertIn("PASS=4 skips=5", text)
+        self.assertIn("historical data, not a new request or fresh verification", text)
+        self.assertNotIn("SECRET", text)
+        self.assertTrue(text.startswith("USER:\nIs suppression working?"))
+        self.assertLessEqual(len(text), 4000)
+
+    def test_previous_receipts_do_not_replace_current_failures(self):
+        entries = [("USER", "Old check"), ("TOOL OUTPUT", "OLD_PASS"),
+                   ("USER", "Fresh check"), ("TOOL OUTPUT", "FAILED current_test"),
+                   ("ASSISTANT", "All passed")]
+        text = compact_latest_task(entries, 4000, include_previous=True)
+        self.assertNotIn("OLD_PASS", text)
+        self.assertIn("FAILED current_test", text)
+
+    def test_history_is_one_turn_only_and_respects_small_budgets(self):
+        entries = [("USER", "Older"), ("TOOL OUTPUT", "STALE_RECEIPT"),
+                   ("USER", "Previous"), ("ASSISTANT", "No checks"),
+                   ("USER", "Now"), ("ASSISTANT", "Follow-up")]
+        self.assertNotIn("STALE_RECEIPT", compact_latest_task(entries, 4000, True))
+        entries[3] = ("TOOL OUTPUT", "evidence " * 1000)
+        for limit in (100, 599, 600, 4000):
+            self.assertLessEqual(len(compact_latest_task(entries, limit, True)), limit)
+
     def slice(self, records):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "transcript.jsonl"

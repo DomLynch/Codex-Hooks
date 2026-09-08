@@ -43,6 +43,48 @@ def run_main_with_stdin(fn, payload: dict) -> tuple[int | None, str]:
 
 
 class ClaudeAdapterTests(unittest.TestCase):
+    def test_mixed_user_result_stays_in_current_turn(self):
+        path = self._transcript([
+            {"type": "user", "message": {"content": "Old task"}},
+            {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "now", "content": "FAILED current_test"},
+                {"type": "text", "text": "Diagnose this failure"},
+            ]}},
+            {"type": "assistant", "message": {"content": "I am diagnosing it"}},
+        ])
+        for previous in (False, True):
+            text = latest_task_slice_claude(path, include_previous=previous)
+            self.assertIn("FAILED current_test", text)
+            self.assertNotIn("PRIOR TURN CONTEXT", text)
+            self.assertNotIn("Old task", text)
+
+    def test_image_user_preserves_boundary_with_history(self):
+        path = self._transcript([
+            {"type": "user", "message": {"content": "Old task"}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "OLD_RECEIPT"}]}},
+            {"type": "user", "message": {"content": [{"type": "image", "source": {"type": "base64", "data": "fake"}}]}},
+            {"type": "assistant", "message": {"content": "Inspecting the image"}},
+        ])
+        for previous in (False, True):
+            text = latest_task_slice_claude(path, include_previous=previous)
+            current = text.split("PRIOR TURN CONTEXT")[0]
+            self.assertIn("[non-text user message]", current)
+            self.assertNotIn("OLD_RECEIPT", current)
+            self.assertNotIn("Old task", current)
+
+    def test_native_followup_retains_labelled_historical_receipt(self):
+        path = self._transcript([
+            {"type": "user", "message": {"content": "Check hooks"}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "check", "content": "PASS=4; parity=0"}]}},
+            {"type": "assistant", "message": {"content": "The installed hooks passed"}},
+            {"type": "user", "message": {"content": "And the suppression?"}},
+            {"type": "assistant", "message": {"content": "The deployed fix passed that check"}},
+        ])
+        self.assertNotIn("PASS=4", latest_task_slice_claude(path))
+        text = latest_task_slice_claude(path, include_previous=True)
+        self.assertIn("PASS=4; parity=0", text)
+        self.assertIn("PRIOR TURN CONTEXT", text)
+
     def _transcript(self, entries: list[dict]) -> str:
         tmp = tempfile.NamedTemporaryFile("w", delete=False, suffix=".jsonl")
         with tmp:
