@@ -126,6 +126,15 @@ Status/check-only calibration:
   narrow claim being made.
 - A follow-up confirmation may cite previously verified evidence without rerunning
   it. Do not demand fresh checks merely because a new message arrived.
+- For a follow-up summarizing an identified earlier check ("the check just completed",
+  "earlier tests"), missing repeated receipts alone is NOT a blocker: the slicer
+  starts at the latest user message and can exclude those earlier tool results.
+  Apply this before the public-receipt rule: recapping that check's counts and
+  already-reported deployment state is not a new check/deployment. "The check
+  just completed showed..." refers back; "I ran a fresh check now..." does not.
+  This exception does not establish truth; it only prevents a missing-context
+  complaint. Still block contradictions, new unverified numbers/resources, claims
+  of a fresh check without output, or new implementation/deployment claims.
 
 Public receipt calibration:
 - Match evidence to the exact URL/resource and expected outcome. An expected
@@ -134,7 +143,7 @@ Public receipt calibration:
 - Distinguish proposed wording ("should say", "suggest", "could") from claims
   about existing behavior. Suggestions need no implementation receipt unless
   the agent claims they were implemented; still flag unsafe recommendations.
-- For claims about public links/pages, public publish counts, deploy/live state,
+- For NEW claims about public links/pages, public publish counts, deploy/live state,
   public version labels, or public record fields such as `agentId`, require
   visible receipt evidence in the slice: URL/API output, HTTP status, public
   record fields, service state, log lines, or an explicit "not proven" caveat.

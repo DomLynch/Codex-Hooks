@@ -248,6 +248,11 @@ class ClaudeAdapterTests(unittest.TestCase):
                        "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
             self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
 
+    def test_followup_receipt_exception_keeps_new_claims_gated(self) -> None:
+        for phrase in ("missing repeated receipts alone is NOT a blocker", "does not establish truth",
+                       "Still block contradictions", "fresh check without output", "For NEW claims"):
+            self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
+
     def test_claude_checkpoint_branch_failure_state_clears_after_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "checkpoint.json"

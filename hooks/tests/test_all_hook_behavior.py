@@ -195,6 +195,11 @@ class AllHookBehaviorTests(unittest.TestCase):
                        "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
             self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
 
+    def test_followup_receipt_exception_keeps_new_claims_gated(self) -> None:
+        for phrase in ("missing repeated receipts alone is NOT a blocker", "does not establish truth",
+                       "Still block contradictions", "fresh check without output", "For NEW claims"):
+            self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
+
     def test_mimo_audit_prompt_blocks_metadata_only_false_alarms(self) -> None:
         self.assertIn('what counts as "task content"', mimo_audit.AUDIT_PROMPT)
         self.assertIn("metadata only", mimo_audit.AUDIT_PROMPT)
