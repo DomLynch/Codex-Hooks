@@ -240,6 +240,14 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("This is an in-progress checkpoint", post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn("Do NOT block merely", post_tool.MIMO_CHECKPOINT_PROMPT)
 
+    def test_review_calibration_preserves_real_failure_gates(self) -> None:
+        for phrase in ("exact URL/resource", "negative test", "proposed wording",
+                       "still flag unsafe recommendations", "internal pipeline success alone"):
+            self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
+        for phrase in ("acknowledged failure under active diagnosis", "unless completion is claimed",
+                       "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
+            self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
+
     def test_claude_checkpoint_branch_failure_state_clears_after_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "checkpoint.json"

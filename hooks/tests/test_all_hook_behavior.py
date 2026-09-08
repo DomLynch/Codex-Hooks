@@ -187,6 +187,14 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("Codegraph structural/impact analysis", post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn("Semble discovery plus Codegraph", Path(stop_orchestrator.__file__).read_text())
 
+    def test_review_calibration_preserves_real_failure_gates(self) -> None:
+        for phrase in ("exact URL/resource", "negative test", "proposed wording",
+                       "still flag unsafe recommendations", "internal pipeline success alone"):
+            self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
+        for phrase in ("acknowledged failure under active diagnosis", "unless completion is claimed",
+                       "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
+            self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
+
     def test_mimo_audit_prompt_blocks_metadata_only_false_alarms(self) -> None:
         self.assertIn('what counts as "task content"', mimo_audit.AUDIT_PROMPT)
         self.assertIn("metadata only", mimo_audit.AUDIT_PROMPT)

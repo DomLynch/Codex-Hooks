@@ -50,6 +50,11 @@ Check only the current task slice. Block only for concrete problems:
 
 This is an in-progress checkpoint. Do NOT block merely because implementation,
 tests, commit, or final verification are unfinished; the Stop audit checks completion.
+An acknowledged failure under active diagnosis is not an ignored failure. Do not
+demand final tests/deployment at this checkpoint unless completion is claimed.
+Still block a concrete unsafe edit or an unsupported claim that work is complete.
+Match failures to the exact resource and expected outcome: negative tests are not
+regressions. Proposed wording is not a claim about existing behavior.
 
 If there is no concrete blocker, return:
 VERDICT: PASS

@@ -16,9 +16,10 @@ DEFAULT_LOGS = (
     ("claude-stop", Path.home() / ".claude" / "logs" / "mimo_audit.log"),
     ("claude-checkpoint", Path.home() / ".claude" / "logs" / "post_tool.log"),
 )
-DEFAULT_USAGE_LOGS = (
-    ("codex", (Path.home() / ".codex" / "logs" / "mimo_audit.log", Path.home() / ".codex" / "logs" / "mimo_api.log", Path.home() / ".codex" / "logs" / "minimax_api.log")),
-    ("claude", (Path.home() / ".claude" / "logs" / "mimo_audit.log", Path.home() / ".claude" / "logs" / "mimo_api.log", Path.home() / ".claude" / "logs" / "minimax_api.log")),
+DEFAULT_USAGE_LOGS = tuple(
+    (agent, tuple(Path.home() / f".{agent}" / "logs" / name for name in
+                  ("mimo_audit.log", "mimo_api.log", "minimax_api.log", "codex_audit.log")))
+    for agent in ("codex", "claude")
 )
 EVENTS = ("PASS", "ISSUES", "SKIP_CHAT", "DAMPER", "ERROR", "TOO_SHORT")
 USAGE_RE = re.compile(
@@ -26,6 +27,9 @@ USAGE_RE = re.compile(
     r"input_tokens=(?P<input>\d+) output_tokens=(?P<output>\d+) "
     r"cache_read_tokens=(?P<cache_read>\d+) cache_write_tokens=(?P<cache_write>\d+) "
     r"elapsed_ms=(?P<elapsed>\d+)"
+)
+CODEX_USAGE_RE = re.compile(
+    r"CODEX_AUDIT lane=(?P<lane>\S+) model=\S+ effort=\S+ elapsed_ms=(?P<elapsed>\d+)"
 )
 
 
@@ -71,14 +75,17 @@ def count_usage(lines: list[str], now: datetime, hours: int) -> tuple[Counter[st
     latencies: list[int] = []
     for line in lines:
         event = EVENT_RE.match(line)
-        usage = USAGE_RE.search(line)
+        usage = USAGE_RE.search(line) or CODEX_USAGE_RE.search(line)
         if not event or not usage:
             continue
-        if datetime.strptime(event.group("ts"), "%Y-%m-%d %H:%M:%S") < cutoff:
+        if not cutoff <= datetime.strptime(event.group("ts"), "%Y-%m-%d %H:%M:%S") <= now:
             continue
         counts["calls"] += 1
-        for key in ("input", "output", "cache_read", "cache_write"):
-            counts[key] += int(usage.group(key))
+        counts[f"lane:{usage.group('lane')}"] += 1
+        if usage.re is USAGE_RE:
+            counts["token_calls"] += 1
+            for key in ("input", "output", "cache_read", "cache_write"):
+                counts[key] += int(usage.group(key))
         latencies.append(int(usage.group("elapsed")))
     return counts, latencies
 
@@ -123,10 +130,15 @@ def print_usage_report(logs: tuple[tuple[str, tuple[Path, ...]], ...], now: date
             counts, latencies = count_usage(lines, now, hours)
             p50 = int(median(latencies)) if latencies else 0
             p95 = sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)] if latencies else 0
+            tokens = {key: counts[key] if counts["token_calls"] == counts["calls"] and counts["calls"] else "unknown"
+                      for key in ("input", "output", "cache_read", "cache_write")}
             print(
-                f"{name} usage {label} calls={counts['calls']} input_tokens={counts['input']} "
-                f"output_tokens={counts['output']} cache_read_tokens={counts['cache_read']} "
-                f"cache_write_tokens={counts['cache_write']} latency_p50_ms={p50} latency_p95_ms={p95}"
+                f"{name} usage {label} completed_calls={counts['calls']} "
+                f"stop_calls={counts['lane:stop']} checkpoint_calls={counts['lane:checkpoint']} "
+                f"other_calls={counts['calls'] - counts['lane:stop'] - counts['lane:checkpoint']} "
+                f"token_measured_calls={counts['token_calls']} input_tokens={tokens['input']} "
+                f"output_tokens={tokens['output']} cache_read_tokens={tokens['cache_read']} "
+                f"cache_write_tokens={tokens['cache_write']} latency_p50_ms={p50} latency_p95_ms={p95}"
             )
 
 

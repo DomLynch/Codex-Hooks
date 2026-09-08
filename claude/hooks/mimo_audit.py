@@ -128,6 +128,12 @@ Status/check-only calibration:
   it. Do not demand fresh checks merely because a new message arrived.
 
 Public receipt calibration:
+- Match evidence to the exact URL/resource and expected outcome. An expected
+  negative test (e.g. a missing route returns 404) is not a failed deployment
+  of a different route. Elided or ambiguous output is not proof of failure.
+- Distinguish proposed wording ("should say", "suggest", "could") from claims
+  about existing behavior. Suggestions need no implementation receipt unless
+  the agent claims they were implemented; still flag unsafe recommendations.
 - For claims about public links/pages, public publish counts, deploy/live state,
   public version labels, or public record fields such as `agentId`, require
   visible receipt evidence in the slice: URL/API output, HTTP status, public

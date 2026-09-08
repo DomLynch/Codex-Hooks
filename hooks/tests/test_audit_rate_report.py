@@ -95,6 +95,38 @@ class AuditRateReportTests(unittest.TestCase):
             stdout.getvalue(),
         )
 
+    def test_codex_usage_counts_completed_calls_without_inventing_tokens(self) -> None:
+        row = "[2026-09-07 10:00:00] CODEX_AUDIT lane=stop model=gpt-5.6-terra effort=high elapsed_ms=8000"
+        lines = [row, row.replace("lane=stop", "lane=checkpoint"),
+                 row.replace("09-07", "09-05"), row.replace("10:00", "12:00")]
+        counts, latencies = audit_rate_report.count_usage(lines, datetime(2026, 9, 7, 11), 24)
+        self.assertEqual(counts["calls"], 2)
+        self.assertEqual(counts["token_calls"], 0)
+        self.assertEqual(counts["lane:stop"], 1)
+        self.assertEqual(counts["lane:checkpoint"], 1)
+        self.assertEqual(latencies, [8000, 8000])
+
+    def test_mixed_usage_reports_unknown_total_tokens_and_keeps_legacy_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "usage.log"
+            log.write_text(
+                "[2026-09-07 10:00:00] CODEX_AUDIT lane=stop model=gpt-5.6-terra effort=high elapsed_ms=8000\n"
+                "[2026-09-07 10:01:00] MIMO_USAGE lane=checkpoint model=mimo-v2.5-pro input_tokens=100 output_tokens=10 cache_read_tokens=0 cache_write_tokens=0 elapsed_ms=500\n"
+            )
+            out = io.StringIO()
+            with redirect_stdout(out):
+                audit_rate_report.print_usage_report((("codex", (log,)),), datetime(2026, 9, 7, 11))
+        self.assertIn("completed_calls=2 stop_calls=1 checkpoint_calls=1 other_calls=0", out.getvalue())
+        self.assertIn("token_measured_calls=1 input_tokens=unknown", out.getvalue())
+        self.assertIn("output_tokens=unknown", out.getvalue())
+
+    def test_default_usage_paths_include_both_codex_logs_and_are_reusable(self) -> None:
+        for _ in range(2):
+            logs = dict(audit_rate_report.DEFAULT_USAGE_LOGS)
+            self.assertEqual(set(logs), {"codex", "claude"})
+            for paths in logs.values():
+                self.assertEqual(sum(p.name == "codex_audit.log" for p in paths), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
