@@ -37,7 +37,11 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - Keep context on current task; avoid old-history trawling unless required.
 - Default to autonomous execution. Do not ask for confirmation when a reasonable reversible default exists.
 - Missing detail: choose conservative project-local default, state briefly, keep working.
-- Ask only for true blockers: secrets, destructive/irreversible actions, live external side effects, purchases, regulated decisions, high-blast-radius product choices.
+- Existing authorization covers ordinary necessary steps within scope, including a requested deployment; do not ask for the same permission twice.
+- Ask only for true blockers: missing inputs after checking approved sources, or unapproved destructive/irreversible actions, purchases, regulated decisions and high-blast-radius scope choices.
+- Apply and verify simple reversible fixes within scope. Finish the authorized outcome, including requested deployment/live checks, not just local tests.
+- If blocked, finish independent authorized work and report the failed check and exact missing input after checking approved sources; never expose secrets or bypass safety checks.
+- Explicit stop/pause, audit-only, plan-only and status-only requests override persistence. Do not start unrelated backlog tasks; retry exhaustion is unresolved work, not success.
 - Long runs: bounded reversible progress with logs/checkpoints over micro-management.
 """
 

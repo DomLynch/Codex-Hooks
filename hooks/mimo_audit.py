@@ -33,6 +33,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
 from lib.api import call_mimo  # noqa: E402
+from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import latest_task_slice  # noqa: E402
 
@@ -55,6 +56,12 @@ DELIVERABLE_RE = re.compile(
     re.IGNORECASE,
 )
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
+PENDING_WORK_RE = re.compile(
+    r"\b(shall I|should I|may I|want me to|would you like me to|can I proceed|"
+    r"I can (do|fix|apply|implement|deploy|continue)|still needs? to|"
+    r"remaining (work|job|steps?)|not (yet )?(fully )?(deployed|finished|complete))\b",
+    re.IGNORECASE,
+)
 MAX_CONSECUTIVE_BLOCKS = 3
 
 LOG_FILE = Path.home() / ".codex" / "logs" / "mimo_audit.log"
@@ -112,6 +119,20 @@ Also flag subtle issues, not just blatant ones:
 - "Task complete" claims that lack verification — no test run, no log shown,
   no diff/output evidence that the change actually works
 - Stub assertions, placeholder values, or mocked-out logic left in production code
+
+Completion discipline (implementation requests only):
+- An honest unfinished summary is still premature stopping when an authorized,
+  executable next step remains. Return ISSUES with that specific next action.
+- Apply and verify simple reversible fixes within scope without asking again.
+  A deployment request authorizes its ordinary necessary steps, not unrelated
+  destructive actions, purchases, or bypassing failed safety checks.
+- If blocked, require independent authorized work to be finished where feasible,
+  then the concrete failed check or missing input after approved sources were
+  checked. Never demand invented credentials, secret disclosure, or endless retries.
+- Explicit stop/pause, audit-only, plan-only and status-only requests take
+  precedence: do not revive old work or demand implementation for those requests.
+- Missing context alone is not proof work remains. Only block a visible unmet
+  requirement with an executable next step; retry exhaustion is not completion.
 
 Status/check-only calibration:
 - If the user only asked whether something is working, installed, synced, live,
@@ -342,8 +363,11 @@ def read_task_slice(path: str) -> str:
     return latest_task_slice(path, max_chars=MAX_TRANSCRIPT_CHARS)
 
 
-def allow_stop(reason: str = "") -> None:
+def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
     log(f"ALLOW: {reason}")
+    if unresolved:
+        print(f"[{AUDITOR_NAME}] Review limit reached without PASS. "
+              "Outstanding work is unresolved; this is not completion.", file=sys.stderr)
     sys.exit(0)
 
 
@@ -359,7 +383,7 @@ def block_audit_error(session_id: str, turn_id: str, iterations: int, message: s
     save_iterations(session_id, turn_id, next_iteration)
     save_verdict(session_id, turn_id, "ERROR", message)
     if next_iteration >= MAX_ITERATIONS:
-        allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})")
+        allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})", unresolved=True)
         return
     block_stop(
         f"[{AUDITOR_NAME} audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
@@ -402,7 +426,10 @@ def has_deliverable_claim(transcript: str) -> bool:
 
 
 def is_chat_turn(transcript: str) -> bool:
-    return not has_tool_activity(transcript) and not has_deliverable_claim(transcript)
+    # Review work requests regardless of how the assistant phrases its handoff.
+    request, _, answer = transcript.rpartition("ASSISTANT:")
+    return not (has_tool_activity(transcript) or has_deliverable_claim(transcript)
+                or is_project_work(request) or PENDING_WORK_RE.search(answer))
 
 
 def ask_mimo(transcript: str, max_tokens: int = 2500) -> str:
@@ -461,7 +488,7 @@ def main() -> None:
     iterations = load_iterations(session_id, turn_id)
     if iterations >= MAX_ITERATIONS:
         save_verdict(session_id, turn_id, "MAX_ALLOW", f"max iterations reached ({iterations}/{MAX_ITERATIONS})")
-        allow_stop(f"max iterations reached ({iterations}/{MAX_ITERATIONS})")
+        allow_stop(f"max iterations reached ({iterations}/{MAX_ITERATIONS})", unresolved=True)
         return
 
     # Prefer a clean latest-task slice; fall back to last_assistant_message.
@@ -529,7 +556,7 @@ def main() -> None:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)
             reset_consecutive_blocks(session_id)
-            allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns")
+            allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns", unresolved=True)
             return
         feedback = (
             f"[{AUDITOR_NAME} code-review hook — iteration "

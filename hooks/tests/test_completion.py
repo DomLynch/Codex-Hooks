@@ -1,0 +1,107 @@
+from __future__ import annotations
+
+import io
+import json
+import sys
+import tempfile
+import unittest
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+HOOKS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HOOKS))
+import mimo_audit  # noqa: E402
+import session_start  # noqa: E402
+import user_prompt_submit  # noqa: E402
+
+
+class CompletionTests(unittest.TestCase):
+    def invoke(self, user, answer, verdict="PASS", exhausted=None):
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            root = Path(tmp)
+            rows = []
+            for role, text in (("user", user), ("assistant", answer)):
+                if hasattr(mimo_audit, "latest_task_slice_claude"):
+                    rows.append({"type": role, "message": {"content": text}})
+                else:
+                    rows.append({"type": "response_item", "payload":
+                                 {"type": "message", "role": role, "content": text}})
+            path = root / "transcript.jsonl"
+            path.write_text("\n".join(map(json.dumps, rows)))
+            payload = {"session_id": "completion", "transcript_path": str(path)}
+            stdout, stderr = io.StringIO(), io.StringIO()
+            stack.enter_context(mock.patch("sys.stdin", io.StringIO(json.dumps(payload))))
+            stack.enter_context(redirect_stdout(stdout))
+            stack.enter_context(redirect_stderr(stderr))
+            for name, value in (("STATE_FILE", root / "iterations.json"),
+                                ("VERDICT_FILE", root / "verdict.json"),
+                                ("LOG_FILE", root / "audit.log")):
+                stack.enter_context(mock.patch.object(mimo_audit, name, value))
+            stack.enter_context(mock.patch.object(mimo_audit, "record_lesson"))
+            if exhausted == "iterations":
+                stack.enter_context(mock.patch.object(mimo_audit, "load_iterations", return_value=3))
+            elif exhausted == "damper":
+                stack.enter_context(mock.patch.object(mimo_audit, "increment_consecutive_blocks", return_value=3))
+            transport = stack.enter_context(mock.patch.object(
+                mimo_audit, "call_mimo", return_value=f"VERDICT: {verdict}\n1. Continue the authorized fix." if verdict == "ISSUES" else "VERDICT: PASS"))
+            with self.assertRaises(SystemExit) as exit:
+                mimo_audit.main()
+            self.assertEqual(exit.exception.code, 0)
+            state = json.loads((root / "verdict.json").read_text())["completion"]["verdict"]
+            return state, stdout.getvalue(), stderr.getvalue(), transport
+
+    def test_short_handoffs_reach_reviewer_and_block(self):
+        for answer in ("Shall I correct the typo?", "Would you like me to proceed?",
+                       "I can fix the typo.", "The work is not yet complete.",
+                       "May I correct it?", "I can correct it if you like.",
+                       "Next: replace teh with the.",
+                       "The release is not yet fully deployed.",
+                       "The remaining work is running the approved script."):
+            with self.subTest(answer=answer):
+                state, out, _, transport = self.invoke("Apply the approved fix now.", answer, "ISSUES")
+                self.assertEqual(state, "ISSUES")
+                self.assertEqual(json.loads(out)["decision"], "block")
+                prompt = transport.call_args.args[0]
+                self.assertIn(answer, prompt)
+                self.assertIn("An honest unfinished summary is still premature stopping", prompt)
+                self.assertIn("Explicit stop/pause", prompt)
+
+    def test_reviewer_can_allow_legitimate_pause(self):
+        state, out, _, transport = self.invoke("Stop now; do not deploy.",
+                                              "The release is not yet fully deployed.")
+        transport.assert_called_once()
+        self.assertEqual((state, out), ("PASS", ""))
+
+    def test_request_variations_cannot_hide_behind_chat_skip(self):
+        for user, answer in (
+            ("Change teh to the in README.md now.", "May I correct it?"),
+            ("Rename foo to bar in app.py now.", "I can do that if you like."),
+            ("Update README.md now.", "Next: replace teh with the."),
+        ):
+            with self.subTest(user=user):
+                state, out, _, transport = self.invoke(user, answer, "ISSUES")
+                transport.assert_called_once()
+                self.assertEqual(state, "ISSUES")
+                self.assertEqual(json.loads(out)["decision"], "block")
+
+    def test_ordinary_chat_still_skips(self):
+        state, out, _, transport = self.invoke("Thanks.", "You're welcome.")
+        transport.assert_not_called()
+        self.assertEqual((state, out), ("SKIP_TOO_SHORT", ""))
+
+    def test_exhaustion_is_visible_not_pass_or_infinite_loop(self):
+        for limit, expected in (("iterations", "MAX_ALLOW"), ("damper", "DAMPER_ALLOW")):
+            with self.subTest(limit=limit):
+                state, out, err, transport = self.invoke("Fix the typo.", "Shall I fix it?", "ISSUES", limit)
+                self.assertEqual((state, out), (expected, ""))
+                self.assertIn("without PASS", err)
+                self.assertIn("not completion", err)
+                self.assertEqual(transport.call_count, int(limit == "damper"))
+
+    def test_both_injection_surfaces_preserve_authorization_and_scope(self):
+        for policy in (session_start.SESSION_BASELINE, user_prompt_submit.AUTONOMY_POLICY):
+            self.assertIn("do not ask for the same permission twice", policy)
+            self.assertIn("Explicit stop/pause", policy)
+            self.assertIn("unrelated backlog tasks", policy)
+            self.assertIn("retry exhaustion is unresolved work, not success", policy.lower())
