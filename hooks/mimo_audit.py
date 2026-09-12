@@ -33,6 +33,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
 from lib.api import call_mimo  # noqa: E402
+from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import latest_task_slice  # noqa: E402
@@ -133,6 +134,12 @@ Completion discipline (implementation requests only):
   precedence: do not revive old work or demand implementation for those requests.
 - Missing context alone is not proof work remains. Only block a visible unmet
   requirement with an executable next step; retry exhaustion is not completion.
+- Major code changes include release close-out by default: required checks/review,
+  scoped commit/push, configured deployment and live verification. Respect explicit
+  local-only/no-commit/no-push/no-deploy overrides and projects with no deploy target.
+  Matching SHAs alone do not prove active runtime parity. Never demand an empty
+  commit or deletion/stashing/committing of unrelated work to manufacture cleanliness.
+  A real ownership/access blocker requires an honest exception, not a false clean claim.
 
 Status/check-only calibration:
 - If the user only asked whether something is working, installed, synced, live,
@@ -379,6 +386,7 @@ def block_stop(reason: str) -> None:
 
 
 def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str) -> None:
+    report_failure("mimo_audit", "audit_unavailable")
     next_iteration = iterations + 1
     save_iterations(session_id, turn_id, next_iteration)
     save_verdict(session_id, turn_id, "ERROR", message)

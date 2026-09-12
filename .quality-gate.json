@@ -1,6 +1,8 @@
 {
   "commands": [
     [
+      "env",
+      "HOOK_SENTRY_DSN=",
       "python3",
       "-m",
       "unittest",
@@ -10,6 +12,8 @@
       "-q"
     ],
     [
+      "env",
+      "HOOK_SENTRY_DSN=",
       "python3",
       "-m",
       "unittest",

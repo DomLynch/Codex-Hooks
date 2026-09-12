@@ -16,6 +16,13 @@ from lib.log import log
 
 COMPONENT = "user_prompt_submit"
 
+RELEASE_POLICY = """# Release Close-out
+- After major code changes, complete required checks/review, scoped commit/push, the repository's configured deployment workflow, and live verification before declaring done.
+- This is the default for implementation, not permission to invent deployment targets or bypass release safeguards. Explicit local-only, no-commit, no-push, no-deploy, review-only and stop requests override it; no configured deployment is a valid not-applicable case.
+- Verify git status --porcelain, local/remote/deployed revision or artifact parity, active config/service and relevant user-visible behavior. A clean checkout or matching SHA alone is not proof the release is live. Report exact blockers or exceptions; never call partial sync clean.
+- Commit only task-owned changes; do not delete, stash or commit unrelated work to manufacture no dirt. Isolate or coordinate safely. If the correct change is already committed, verify it rather than creating an empty commit.
+"""
+
 AUTONOMY_POLICY = "\n".join(
     [
         "# Autonomous Execution Contract",
@@ -28,8 +35,11 @@ AUTONOMY_POLICY = "\n".join(
         "- If one step is blocked, finish independent authorized work, then report the failed command/check, exact missing input and what remains. Never invent credentials or bypass failed safety checks.",
         "- Explicit stop/pause, audit-only, plan-only and status-only requests override persistence. Retry exhaustion is unresolved work, not success; avoid infinite retries.",
         "- Long runs: make bounded reversible progress with logs/checkpoints instead of waiting for micro-management.",
+        RELEASE_POLICY,
     ]
 )
+
+SENTRY_POLICY = "- For production incidents, consult the project's Sentry errors when configured and accessible, then reproduce locally. Cite the project/environment/release and event receipt; unavailable Sentry is not a clean bill of health. Never upload secrets, prompts or private user content."
 
 WORK_QUALITY_POLICY = "\n".join(
     [
@@ -38,6 +48,7 @@ WORK_QUALITY_POLICY = "\n".join(
         "- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless scoped.",
         "- Use boring explicit code. When debugging, reproduce or cite the concrete failure, localize, fix minimally, verify gone.",
         "- Respect mode: audit-only means no edits; implementation means changed files and checks.",
+        SENTRY_POLICY,
         "- Before done: two-pass review plus strongest relevant automated/judge check.",
         "- Code changes: run the repository .quality-gate.json commands; never skip missing tools, regenerate baselines to pass, or report a failed check as success.",
         "- Debugging: require a reproducer and regression test. Use ast-grep for structural bug patterns, Hypothesis/randomized tests for state/order bugs, VizTracer/py-spy for slowness/hangs, and bounded mutation tests for suspect assertions.",

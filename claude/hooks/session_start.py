@@ -15,6 +15,7 @@ from lib.git import is_git_repo
 from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
+from user_prompt_submit import RELEASE_POLICY, SENTRY_POLICY
 
 
 COMPONENT = "session_start"
@@ -44,6 +45,7 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - Explicit stop/pause, audit-only, plan-only and status-only requests override persistence. Do not start unrelated backlog tasks; retry exhaustion is unresolved work, not success.
 - Long runs: bounded reversible progress with logs/checkpoints over micro-management.
 """
+SESSION_BASELINE += RELEASE_POLICY + SENTRY_POLICY + "\n"
 
 BACKLOG_SKIP_PARTS = {
     ".git",

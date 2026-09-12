@@ -14,6 +14,7 @@ sys.path.insert(0, str(HOOKS))
 import mimo_audit  # noqa: E402
 import session_start  # noqa: E402
 import user_prompt_submit  # noqa: E402
+from lib import log as hook_log  # noqa: E402
 
 
 class CompletionTests(unittest.TestCase):
@@ -105,3 +106,35 @@ class CompletionTests(unittest.TestCase):
             self.assertIn("Explicit stop/pause", policy)
             self.assertIn("unrelated backlog tasks", policy)
             self.assertIn("retry exhaustion is unresolved work, not success", policy.lower())
+
+    def test_release_closeout_shared_between_injection_surfaces(self):
+        self.assertIn(user_prompt_submit.SENTRY_POLICY, session_start.SESSION_BASELINE)
+        self.assertIn(user_prompt_submit.SENTRY_POLICY, user_prompt_submit.WORK_QUALITY_POLICY)
+        policy = user_prompt_submit.RELEASE_POLICY
+        self.assertIn(policy, session_start.SESSION_BASELINE)
+        self.assertIn(policy, user_prompt_submit.AUTONOMY_POLICY)
+        for requirement in ("configured deployment workflow", "git status --porcelain",
+                            "no-deploy", "unrelated work", "empty commit"):
+            self.assertIn(requirement, policy)
+        self.assertIn("release close-out by default", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("real ownership/access blocker", mimo_audit.AUDIT_PROMPT)
+
+    def test_audit_outage_reports_metadata_and_still_blocks(self):
+        with mock.patch.object(mimo_audit, "report_failure") as report, \
+                mock.patch.object(mimo_audit, "save_iterations"), \
+                mock.patch.object(mimo_audit, "save_verdict") as verdict, \
+                mock.patch.object(mimo_audit, "block_stop") as block:
+            mimo_audit.block_audit_error("session", "turn", 0, "private provider details")
+        report.assert_called_once_with("mimo_audit", "audit_unavailable")
+        self.assertEqual(verdict.call_args.args[2], "ERROR")
+        block.assert_called_once()
+
+    def test_log_reports_hook_exceptions_not_expected_outcomes(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(hook_log, "LOG_DIR", Path(tmp)), \
+                mock.patch.object(hook_log, "report_failure") as report:
+            for message in ("quality files=1 ok=False", "VERDICT: ISSUES", "ALLOW: chat turn"):
+                hook_log.log("post_tool", message)
+            report.assert_not_called()
+            hook_log.log("post_tool", "quality error: private path and secret")
+            report.assert_called_once_with("post_tool", "hook_exception")
