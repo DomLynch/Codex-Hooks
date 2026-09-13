@@ -234,6 +234,13 @@ Evidence and current-request discipline (takes precedence over generic checklist
   referenced evidence, not a new unsupported deployment claim.
 - Before repeating a PRIOR REVIEW finding, check subsequent command results and
   corrections. Do not repeat a resolved finding; retain unresolved concrete bugs.
+- An acknowledged past procedural mistake cannot be undone. Once any remaining
+  consequences are addressed or explicitly routed in review-only mode, do not
+  block solely to repair historical ordering or demand a ceremonial new edit.
+  Acknowledge it as a warning, not a claim that the past was compliant.
+  Acknowledgement alone does not resolve current defects, missing required checks,
+  unauthorized changes still present, repeated violations in new actions, or
+  unsupported completion claims. Block those on their current evidence.
 - Every ISSUES item must identify a current requirement or concrete defect and
   the visible evidence supporting it. Missing context alone, style preferences,
   or speculative improvements are warnings: return PASS with optional Warnings.

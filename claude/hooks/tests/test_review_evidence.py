@@ -127,7 +127,10 @@ class ReviewEvidenceTests(unittest.TestCase):
             self.assertEqual(mimo_audit.ask_mimo(text), "VERDICT: PASS")
         prompt = call.call_args.args[0]
         for phrase in ("12 passed; exit_code=0", "not new user tasks", "Do not repeat a resolved finding",
-                       "Missing context alone", "Still block visible broken code"):
+                       "Missing context alone", "Still block visible broken code",
+                       "An acknowledged past procedural mistake cannot be undone",
+                       "Acknowledgement alone does not resolve current defects",
+                       "repeated violations in new actions", "unsupported completion claims"):
             self.assertIn(phrase, prompt)
 
     def test_early_verification_survives_later_poll_outputs(self):
