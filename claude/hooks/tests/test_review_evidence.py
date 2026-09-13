@@ -16,6 +16,28 @@ from lib.transcript import compact_latest_task, compact_task_entries, latest_tas
 
 
 class ReviewEvidenceTests(unittest.TestCase):
+    def test_middle_failure_survives_later_unrelated_green_output(self):
+        entries = [('USER', 'Fix the swipe workflow'), ('TOOL OUTPUT', 'initial check passed')]
+        entries += [('TOOL OUTPUT', '[browser] swipe test\nAssertionError: swipe heavy consumes stamina')]
+        entries += [('TOOL OUTPUT', f'poll-{i} ' + 'progress ' * 300) for i in range(8)]
+        entries += [('TOOL OUTPUT', 'unrelated unit checks: 14 passed'), ('ASSISTANT', 'All fixed.')]
+        text = compact_task_entries(entries, 4000)
+        self.assertIn('CHECK HISTORY', text)
+        self.assertIn('AssertionError: swipe heavy consumes stamina', text)
+        self.assertIn('unrelated unit checks: 14 passed', text)
+        self.assertLessEqual(len(text), 4000)
+        entries += [('TOOL OUTPUT', 'same swipe browser check: PASS exit_code=0')]
+        self.assertIn('same swipe browser check: PASS', compact_task_entries(entries, 4000))
+
+    def test_failure_inside_long_tool_output_survives_first_compaction(self):
+        text = self.slice([
+            {'type': 'message', 'role': 'user', 'content': 'Fix the failing workflow'},
+            {'type': 'function_call_output', 'output': 'before ' * 300 +
+             '\nAssertionError: WORKFLOW_FAILED\n' + 'after ' * 300},
+            {'type': 'message', 'role': 'assistant', 'content': 'The issue was reported.'},
+        ])
+        self.assertIn('AssertionError: WORKFLOW_FAILED', text)
+
     def test_short_completion_is_audited_but_chat_still_skips(self):
         for message, expected in (("I deployed it.", "ISSUES"), ("Thanks.", "SKIP_TOO_SHORT")):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:

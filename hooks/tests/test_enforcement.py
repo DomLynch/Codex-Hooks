@@ -27,6 +27,24 @@ class EnforcementTests(unittest.TestCase):
             self.contract([[sys.executable, '-c', f'raise SystemExit({code})']])
             self.assertEqual(quality.run_project_gate(self.root)['ok'], code == 0)
 
+    def test_completion_checks_cannot_hide_behind_green_unit_checks(self):
+        for code in (1, 0):
+            (self.root / '.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'print("unit checks pass")']],
+                'completion_commands': [[sys.executable, '-c', f'print("workflow receipt"); raise SystemExit({code})']],
+            }))
+            result = quality.run_project_gate(self.root)
+            self.assertEqual(result['ok'], code == 0)
+            self.assertEqual(len(result['results']), 2)
+            self.assertIn('workflow receipt', result['results'][-1]['output'])
+
+    def test_invalid_completion_checks_fail_closed(self):
+        for commands in ('echo pass', [[]], [['missing-workflow-tool']]):
+            (self.root / '.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'pass']], 'completion_commands': commands,
+            }))
+            self.assertFalse(quality.run_project_gate(self.root)['ok'])
+
     def test_missing_invalid_empty_and_missing_executable_block(self):
         self.assertFalse(quality.run_project_gate(self.root)['ok'])
         for commands in ([], 'echo pass', [[]], [['definitely-missing-quality-tool']]):
@@ -81,7 +99,10 @@ class EnforcementTests(unittest.TestCase):
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Checked the project.'})
         for code in (1, 0):
-            self.contract([[sys.executable, '-c', f'raise SystemExit({code})']])
+            (self.root / '.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'pass']],
+                'completion_commands': [[sys.executable, '-c', f'raise SystemExit({code})']],
+            }))
             result = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
                                     capture_output=True, text=True, env=env, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)

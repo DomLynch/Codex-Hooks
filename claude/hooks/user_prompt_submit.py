@@ -31,6 +31,14 @@ RELEASE_POLICY = """# Release Close-out
 - Commit only task-owned changes; do not delete, stash or commit unrelated work to manufacture no dirt. Isolate or coordinate safely. If the correct change is already committed, verify it rather than creating an empty commit.
 """
 
+COMPLETION_POLICY = """# Finding Closure
+- On implementation tasks, keep current-task failures open until the same check/workflow passes on the changed code, or concrete evidence establishes an expected/unrelated result. Track check/resource, failing receipt, disposition and confirming receipt in task notes.
+- Reporting, delegating, acknowledging or resolving a Sentry issue is not a fix. Do not substitute unrelated green tests, weakened assertions, deleted checks or raised baselines for closure.
+- Put repeatable browser/workflow checks in .quality-gate.json completion_commands (argv lists) so Stop runs them alongside commands; manual check descriptions alone are not executable gates. No production writes or paid calls in automatic checks.
+- Before claiming live resolution, verify the deployed revision and affected workflow; inspect relevant older Sentry issues as well as the latest release. Do not require zero historical issues: document evidence-based dispositions.
+- Preserve explicit stop/pause, audit-only, plan-only and status-only modes. A genuine access/input/ownership blocker needs its failed check and owner/next step; do not loop forever or start unrelated repairs.
+"""
+
 AUTONOMY_POLICY = "\n".join(
     [
         "# Autonomous Execution Contract",
@@ -44,6 +52,7 @@ AUTONOMY_POLICY = "\n".join(
         "- Explicit stop/pause, audit-only, plan-only and status-only requests override persistence. Retry exhaustion is unresolved work, not success; avoid infinite retries.",
         "- Long runs: make bounded reversible progress with logs/checkpoints instead of waiting for micro-management.",
         RELEASE_POLICY,
+        COMPLETION_POLICY,
     ]
 )
 

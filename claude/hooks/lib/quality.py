@@ -117,9 +117,14 @@ def run_project_gate(cwd: Path, timeout: float = 120) -> dict:
     path = cwd / ".quality-gate.json"
     results = []
     try:
-        commands = json.loads(path.read_text())["commands"]
+        contract = json.loads(path.read_text())
+        commands = contract["commands"]
         if not isinstance(commands, list) or not commands:
             raise ValueError("commands must be a nonempty list of argv lists")
+        completion = contract.get("completion_commands", [])
+        if not isinstance(completion, list):
+            raise ValueError("completion_commands must be a list of argv lists")
+        commands = commands + completion
         started = time.monotonic()
         for command in commands:
             if not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command):

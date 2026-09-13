@@ -112,3 +112,25 @@ an authenticated invocation record. Profiles, mutation tests and state-machine
 tests apply to the relevant failure, not every edit. Hooks do not prevent direct
 shell edits, disabled hooks or repository owners weakening configuration;
 required CI branch checks are the merge boundary.
+
+## Finding closure
+
+SessionStart and UserPromptSubmit inject the same finding-closure policy for
+Codex and Claude; Stop reviews it. Current-task failures require a matching
+passing rerun or an evidence-based expected/unrelated disposition. Reporting,
+delegation, unrelated green tests or closing a Sentry issue do not resolve them.
+Status/audit-only questions, explicit pauses and concrete external blockers
+remain exceptions; bounded reviewer exhaustion is unresolved, never PASS.
+
+Put repeatable, non-destructive workflow/browser checks in the optional
+`completion_commands` argv-list array in `.quality-gate.json`. Stop runs
+`commands` followed by `completion_commands`, within the existing deadline;
+either failing blocks. The shared installer cannot invent application-specific
+tests: each project's developer owns those commands and regressions. Manual
+descriptions are not executed. Do not put publication, paid calls or production
+mutations in automatic checks.
+
+The bounded reviewer slice preserves middle-of-turn failure excerpts as
+CHECK HISTORY, including errors inside long tool output. These are evidence,
+not a deterministic verdict: expected negative tests and successful reruns must
+be assessed in context. No new daemon or cross-project failure backlog is added.

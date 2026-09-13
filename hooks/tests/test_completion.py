@@ -108,6 +108,12 @@ class CompletionTests(unittest.TestCase):
             self.assertIn("retry exhaustion is unresolved work, not success", policy.lower())
 
     def test_release_closeout_shared_between_injection_surfaces(self):
+        policy = user_prompt_submit.COMPLETION_POLICY
+        self.assertIn(policy, session_start.SESSION_BASELINE)
+        self.assertIn(policy, user_prompt_submit.AUTONOMY_POLICY)
+        for phrase in ('completion_commands', 'same check/workflow', 'weakened assertions',
+                       'status-only', 'blocker', 'older Sentry'):
+            self.assertIn(phrase, policy)
         self.assertIn(user_prompt_submit.SENTRY_POLICY, session_start.SESSION_BASELINE)
         self.assertIn(user_prompt_submit.SENTRY_POLICY, user_prompt_submit.WORK_QUALITY_POLICY)
         policy = user_prompt_submit.RELEASE_POLICY

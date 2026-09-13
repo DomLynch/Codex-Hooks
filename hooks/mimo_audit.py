@@ -122,6 +122,19 @@ Also flag subtle issues, not just blatant ones:
 - Stub assertions, placeholder values, or mocked-out logic left in production code
 
 Completion discipline (implementation requests only):
+- Treat current-task failed checks as open findings, even if unrelated checks
+  later pass. Require the same check/workflow to pass on the changed code or
+  concrete evidence it was expected/unrelated. A failed test being reported,
+  acknowledged, delegated or marked resolved in Sentry is not closure.
+- Do not accept weakened/deleted assertions or raised baselines as a fix.
+  A corrected test must explain its faulty expectation and retain coverage of
+  the original invariant. Relevant repeatable browser/workflow checks belong
+  in .quality-gate.json completion_commands, not only prose/manual checklists.
+- CHECK HISTORY is bounded evidence, not an automatic failure verdict. Match
+  chronology, command/resource, expected outcome and current scope; a passing
+  rerun can close it. Preserve status/audit-only/pause and genuine blocker
+  exceptions below. Do not demand all historical Sentry issues be repaired;
+  require an evidence-based disposition only for relevant findings.
 - An honest unfinished summary is still premature stopping when an authorized,
   executable next step remains. Return ISSUES with that specific next action.
 - Apply and verify simple reversible fixes within scope without asking again.

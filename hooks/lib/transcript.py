@@ -74,7 +74,8 @@ def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
         output = payload.get("output") or ""
         text = _tool_output_text(output)
         command = _bounded_compact(calls.get(call_id, "command outside slice"), 120)
-        return "TOOL OUTPUT", f"[{call_id}] {command}\n{compact(text, 1000)}"
+        failure = _failure_excerpt(text, 350) if len(text) > 1000 else ""
+        return "TOOL OUTPUT", f"[{call_id}] {command}\n{failure}\n{compact(text, 1000)}"
     return None
 
 
@@ -88,10 +89,26 @@ def _bounded_compact(text: str, limit: int, marker: str = "\n...[slice-elided by
     return (text[:head] + marker + (text[-tail:] if tail else ""))[:limit]
 
 
+def _failure_excerpt(text: str, limit: int) -> str:
+    lines = [line for line in text.splitlines() if re.search(
+        r'\bFAILED\b|AssertionError|\bERROR\b|\bError:|exit_code["\s:=]+[1-9]|Process exited with code [1-9]',
+        line)]
+    return _bounded_compact("\n".join(lines), limit) if lines else ""
+
+
 def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     text = sanitize("\n\n".join(_render_entry(role, body) for role, body in entries))
     if len(text) <= max_chars:
         return text
+    failures = [(body, _failure_excerpt(body, 220)) for role, body in entries if role == "TOOL OUTPUT"]
+    failures = [(body, excerpt) for body, excerpt in failures if excerpt]
+    history = ""
+    if failures and max_chars >= 1600:
+        history = "\n\nCHECK HISTORY (excerpts, not verdicts; match later reruns and expected outcomes):\n"
+        history += "\n".join(_bounded_compact(body.splitlines()[0], 100) + "\n" + excerpt
+                             for body, excerpt in failures[-4:])
+        history = _bounded_compact(history, min(900, max_chars // 4))
+    max_chars -= len(history)
     first_role, first_body = entries[0]
     head_budget = max_chars // 4
     first = sanitize(_render_entry(first_role, first_body))
@@ -120,7 +137,7 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
         receipt_budget -= len(excerpts[idx]) + 1
     receipts = "\n".join(excerpts)
     receipt_block = header + receipts
-    return (first + receipt_block + marker + tail)[:max_chars]
+    return (first + receipt_block + marker + tail)[:max_chars] + history
 
 
 def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_previous: bool = False) -> str:
