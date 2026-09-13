@@ -113,7 +113,8 @@ def _before_send(event: dict, hint: dict) -> dict | None:
             event_id = uuid.uuid4().hex
         return {
             "event_id": event_id, "level": "error", "message": MESSAGE,
-            "tags": {"component": component, "category": category, "agent": AGENT},
+            "tags": {"component": component, "category": category, "agent": AGENT,
+                     "synthetic_test": str(category == "smoke_test").lower()},
             "fingerprint": ["agent-hooks", AGENT, component, category],
             "environment": _label(event.get("environment", "production")),
             "release": _label(event.get("release", "agent-hooks")),

@@ -47,12 +47,19 @@ outside the repository with only a minimal PATH environment.
 A dedicated SDK Client disables integrations, tracing, sessions, logs, metrics,
 client reports and PII/local-variable capture. No global SDK initialization or
 exception capture occurs. `before_send` rebuilds the event with only an event ID,
-fixed message/level, component/category/agent tags and configured environment/release.
+fixed message/level, component/category/agent/synthetic_test tags and configured environment/release.
 Its fingerprint is exactly `[agent-hooks, agent, component, category]`, keeping
 distinct operational failures in separate groups.
 Hostname, request, user, breadcrumbs, extra, contexts, stacks and locals are removed.
 Transport event IDs/timestamps and ordinary network connection metadata still exist.
 Reporting is best-effort; worker success is not proof that Sentry ingested an event.
+
+`synthetic_test` is derived from the internal category: `smoke_test` yields `true`,
+operational failures yield `false`. Incoming synthetic tags are never trusted.
+Exclude `synthetic_test:true` from production incident views and alert conditions,
+not ingestion. Keep untagged historical failures visible; legacy hook smoke events
+can be identified by `category:smoke_test`. Never suppress normal operational
+failures, HTTP 500s or reviewer transport failures merely to reduce alert volume.
 
 ## Explicit Smoke and Ingestion Verification
 

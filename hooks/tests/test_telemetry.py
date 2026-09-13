@@ -166,7 +166,7 @@ dirty = {
     "exception": {"values": [{"type": "ValueError", "value": "SECRET",
         "stacktrace": {"frames": [{"filename": "/SECRET", "vars": {"secret": "SECRET"}}]}}]},
     "tags": {"component": "mimo_audit", "category": "audit_unavailable",
-             "agent": "SECRET", "unknown": "SECRET"},
+             "agent": "SECRET", "unknown": "SECRET", "synthetic_test": "true"},
 }
 assert client.capture_event(dirty)
 client.close(timeout=0)
@@ -175,7 +175,7 @@ assert len(transport.envelopes) == 2
 for envelope in transport.envelopes:
     event = envelope.get_event()
     assert set(event) == {"event_id", "level", "message", "tags", "environment", "release", "fingerprint"}, event
-    assert set(event["tags"]) == {"component", "category", "agent"}
+    assert set(event["tags"]) == {"component", "category", "agent", "synthetic_test"}
     assert event["tags"]["agent"] == module.AGENT
     assert event["message"] == module.MESSAGE and event["level"] == "error"
     assert event["environment"] == "test" and event["release"] == "hooks-1"
@@ -183,6 +183,11 @@ for envelope in transport.envelopes:
     assert len(envelope.items) == 1
     assert "SECRET" not in envelope.serialize().decode()
 assert transport.envelopes[1].get_event()["tags"]["category"] == "smoke_test"
+assert transport.envelopes[0].get_event()["tags"]["synthetic_test"] == "false"
+assert transport.envelopes[1].get_event()["tags"]["synthetic_test"] == "true"
+for category in module.CATEGORIES:
+    assert module._before_send({"tags": {"component": "mimo_audit", "category": category,
+        "synthetic_test": "true"}}, {})["tags"]["synthetic_test"] == str(category == "smoke_test").lower()
 assert event_id == transport.envelopes[1].get_event()["event_id"]
 assert transport.envelopes[0].get_event()["fingerprint"] != transport.envelopes[1].get_event()["fingerprint"]
 assert module._before_send({"tags": {"component": "mimo_audit", "category": "SECRET"}}, {}) is None
