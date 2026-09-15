@@ -671,3 +671,21 @@ class ClaudeAuditTransportTests(unittest.TestCase):
         with mock.patch.dict(api.os.environ, {}, clear=False):
             api.os.environ.pop(api.AUDIT_CHILD_ENV, None)
             api.exit_if_audit_child()  # no exit outside a child
+
+
+class BlockChainDamperTests(unittest.TestCase):
+    """Regression: a full state file must not evict the consecutive-blocks counter."""
+
+    def test_damper_counter_survives_truncation_of_full_state_file(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            state.write_text(json.dumps({f"old:turn-{i}": 1 for i in range(50)}))  # already at cap
+            with mock.patch.object(mimo_audit, "STATE_FILE", state):
+                seen = []
+                for i in range(mimo_audit.MAX_CONSECUTIVE_BLOCKS):
+                    mimo_audit.save_iterations("sess", f"turn-{i}", 1)  # what the ISSUES branch does first
+                    seen.append(mimo_audit.increment_consecutive_blocks("sess"))
+        self.assertEqual(seen, [1, 2, 3], "counter must climb; before the fix it was stuck at [1, 1, 1]")
+        self.assertGreaterEqual(seen[-1], mimo_audit.MAX_CONSECUTIVE_BLOCKS)

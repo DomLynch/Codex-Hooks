@@ -309,7 +309,11 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
         # Remove legacy session-wide counters so old failures cannot poison new turns.
         data.pop(session_id, None)
         if len(data) > 50:
-            data = dict(list(data.items())[-50:])
+            # Truncate per-turn keys only. Damper counters are inserted early and would
+            # otherwise be the first thing evicted, silently disabling the block-chain damper.
+            dampers = {k: v for k, v in data.items() if k.startswith(CONSECUTIVE_BLOCK_PREFIX)}
+            turns = {k: v for k, v in data.items() if not k.startswith(CONSECUTIVE_BLOCK_PREFIX)}
+            data = {**dampers, **dict(list(turns.items())[-50:])}
         return data
 
     update_json_locked(STATE_FILE, updater)
