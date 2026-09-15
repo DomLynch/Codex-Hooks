@@ -89,7 +89,14 @@ def codex_binary() -> str:
 
 
 def claude_binary() -> str:
-    candidates = (os.environ.get("CLAUDE_AUDIT_BIN"), shutil.which("claude"))
+    # GUI-launched hooks don't inherit the shell PATH; list the usual absolute paths.
+    candidates = (
+        os.environ.get("CLAUDE_AUDIT_BIN"),
+        shutil.which("claude"),
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+        str(Path.home() / ".local" / "bin" / "claude"),
+    )
     for candidate in candidates:
         if candidate and Path(candidate).is_file():
             return candidate
@@ -120,7 +127,7 @@ def call_claude_cli(
         claude_binary(), "-p",
         "--model", CLAUDE_AUDIT_MODEL,
         "--effort", CLAUDE_AUDIT_EFFORT,
-        "--disallowedTools", "Bash Edit Write MultiEdit NotebookEdit",
+        "--disallowedTools", "Bash Edit Write NotebookEdit",
     ]
     with tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
         try:

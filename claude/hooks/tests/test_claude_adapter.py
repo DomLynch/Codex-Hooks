@@ -644,7 +644,7 @@ class ClaudeAuditTransportTests(unittest.TestCase):
         self.assertEqual(captured["env"].get(api.AUDIT_CHILD_ENV), "1")
         self.assertIn("--effort", captured["command"])
         self.assertIn("--disallowedTools", captured["command"])
-        self.assertIn("Bash Edit Write MultiEdit NotebookEdit", captured["command"])
+        self.assertIn("Bash Edit Write NotebookEdit", captured["command"])
 
     def test_claude_cli_injects_setup_token_from_hook_env(self) -> None:
         import lib.api as api
