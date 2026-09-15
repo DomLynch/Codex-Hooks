@@ -646,6 +646,21 @@ class ClaudeAuditTransportTests(unittest.TestCase):
         self.assertIn("--disallowedTools", captured["command"])
         self.assertIn("Bash Edit Write MultiEdit NotebookEdit", captured["command"])
 
+    def test_claude_cli_injects_setup_token_from_hook_env(self) -> None:
+        import lib.api as api
+
+        captured: dict = {}
+
+        def fake_run(command, **kwargs):
+            captured["env"] = kwargs["env"]
+            return mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
+
+        with mock.patch.object(api, "claude_binary", return_value="/fake/claude"), \
+             mock.patch.object(api, "hook_env", side_effect=lambda k, d="": "tok-123" if k == "CLAUDE_CODE_OAUTH_TOKEN" else d), \
+             mock.patch.object(api.subprocess, "run", side_effect=fake_run):
+            api.call_claude_cli("audit this")
+        self.assertEqual(captured["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "tok-123")
+
     def test_hooks_exit_immediately_inside_an_audit_child(self) -> None:
         import lib.api as api
 

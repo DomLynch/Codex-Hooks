@@ -112,6 +112,10 @@ def call_claude_cli(
     instruction = f"{system}\n\n{prompt}" if system else prompt
     started = time.monotonic()
     env = {**os.environ, AUDIT_CHILD_ENV: "1"}
+    # `claude setup-token` prints a long-lived token; it lives in hook_env, not the keychain.
+    token = hook_env("CLAUDE_CODE_OAUTH_TOKEN")
+    if token:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = token
     command = [
         claude_binary(), "-p",
         "--model", CLAUDE_AUDIT_MODEL,
