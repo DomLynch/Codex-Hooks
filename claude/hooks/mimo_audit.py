@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
 """
-Claude Code Stop hook: independent audit with GPT-5.6-Terra via Codex CLI.
+Claude Code Stop hook: independent audit via Claude CLI (default) or Codex CLI.
 
 When Claude Code thinks it's done, this script feeds the recent transcript to a
 fresh ephemeral Codex session. If the reviewer finds issues,
@@ -32,7 +32,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
-from lib.api import call_mimo  # noqa: E402
+from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
@@ -42,7 +42,6 @@ from lib.claude_adapter import normalize_payload, latest_task_slice_claude  # no
 
 # --- Tunables --------------------------------------------------------------
 MAX_ITERATIONS = 3
-AUDITOR_NAME = "GPT-5.6-Terra"
 MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to the reviewer
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
 AUDIT_TIMEOUT_S = 70
@@ -553,6 +552,7 @@ def repair_verdict_format(response: str) -> str:
 
 # --- Main ------------------------------------------------------------------
 def main() -> None:
+    exit_if_audit_child()
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}

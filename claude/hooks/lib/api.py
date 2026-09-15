@@ -10,6 +10,7 @@ import time
 import urllib.request
 from pathlib import Path
 
+from .autonomy import hook_env
 from .log import log
 
 
@@ -18,6 +19,19 @@ CODEX_SECRETS_DIR = Path.home() / ".codex" / "secrets"  # Fallback for shared au
 CODEX_AUDIT_MODEL = os.environ.get("CODEX_AUDIT_MODEL", "gpt-5.6-terra")
 CODEX_AUDIT_EFFORT = os.environ.get("CODEX_AUDIT_EFFORT", "high")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
+CLAUDE_AUDIT_MODEL = os.environ.get("CLAUDE_AUDIT_MODEL", "claude-sonnet-5")
+CLAUDE_AUDIT_EFFORT = os.environ.get("CLAUDE_AUDIT_EFFORT", "high")
+# "claude" = Claude CLI on the user's subscription; "codex" = GPT via Codex CLI.
+AUDIT_TRANSPORT = hook_env("CLAUDE_AUDIT_TRANSPORT", "claude").strip().lower()
+# Set on the audit child's environment so hooks inside it exit immediately (no recursion).
+AUDIT_CHILD_ENV = "CLAUDE_HOOK_AUDIT_CHILD"
+AUDITOR_NAME = f"Claude {CLAUDE_AUDIT_MODEL}" if AUDIT_TRANSPORT == "claude" else CODEX_AUDIT_MODEL
+
+
+def exit_if_audit_child() -> None:
+    """Hooks call this first: a Claude audit child must never run hooks, or it recurses."""
+    if os.environ.get(AUDIT_CHILD_ENV):
+        raise SystemExit(0)
 
 
 def anthropic_text(data: dict) -> str:
@@ -74,6 +88,52 @@ def codex_binary() -> str:
     raise RuntimeError("Codex CLI is unavailable; set CODEX_AUDIT_BIN")
 
 
+def claude_binary() -> str:
+    candidates = (os.environ.get("CLAUDE_AUDIT_BIN"), shutil.which("claude"))
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError("Claude CLI is unavailable; set CLAUDE_AUDIT_BIN")
+
+
+def call_claude_cli(
+    prompt: str,
+    max_tokens: int = 1500,
+    timeout: int = 45,
+    lane: str = "shared",
+    system: str = "",
+) -> str:
+    """Audit via the Claude CLI on the user's subscription (no API key).
+
+    The child inherits AUDIT_CHILD_ENV so every hook it would fire exits at once.
+    Mutating tools are disallowed: the auditor only reads the prompt and replies.
+    """
+    del max_tokens
+    instruction = f"{system}\n\n{prompt}" if system else prompt
+    started = time.monotonic()
+    env = {**os.environ, AUDIT_CHILD_ENV: "1"}
+    command = [
+        claude_binary(), "-p",
+        "--model", CLAUDE_AUDIT_MODEL,
+        "--effort", CLAUDE_AUDIT_EFFORT,
+        "--disallowedTools", "Bash Edit Write MultiEdit NotebookEdit",
+    ]
+    with tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
+        try:
+            completed = subprocess.run(
+                command, input=instruction, text=True, capture_output=True,
+                cwd=workdir, env=env, timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(f"Claude audit timed out after {timeout}s") from exc
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip()[-500:]
+        raise RuntimeError(f"Claude audit failed ({completed.returncode}): {detail}")
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+    log("claude_audit", f"CLAUDE_AUDIT lane={lane} model={CLAUDE_AUDIT_MODEL} effort={CLAUDE_AUDIT_EFFORT} elapsed_ms={elapsed_ms}")
+    return completed.stdout.strip()
+
+
 def call_mimo(
     prompt: str,
     max_tokens: int = 1500,
@@ -82,6 +142,8 @@ def call_mimo(
     system: str = "",
     api_key: str = "",
 ) -> str:
+    if AUDIT_TRANSPORT == "claude":
+        return call_claude_cli(prompt, max_tokens=max_tokens, timeout=timeout, lane=lane, system=system)
     del api_key, max_tokens
     instruction = f"{system}\n\n{prompt}" if system else prompt
     started = time.monotonic()

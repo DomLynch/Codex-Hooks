@@ -19,6 +19,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import active_lessons
+from lib.api import exit_if_audit_child
 from lib.log import log
 
 
@@ -150,6 +151,7 @@ def emit_context(context: str) -> None:
 
 
 def main() -> None:
+    exit_if_audit_child()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         prompt = str(payload.get("prompt") or "")

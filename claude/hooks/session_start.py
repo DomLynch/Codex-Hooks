@@ -10,6 +10,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import remember_repo
+from lib.api import exit_if_audit_child
 from lib.log import log
 from lib.git import is_git_repo
 from lib.quality import mine_backlog
@@ -131,6 +132,7 @@ def filter_backlog(items: list[dict]) -> list[dict]:
 
 
 def main() -> None:
+    exit_if_audit_child()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         session_id = payload.get("session_id") or "unknown"

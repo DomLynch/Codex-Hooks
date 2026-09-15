@@ -11,7 +11,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.api import call_mimo
+from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child
 from lib.autonomy import record_lesson, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
@@ -48,6 +48,10 @@ Check only the current task slice. Block only for concrete problems:
 - The latest edits already show a concrete correctness, security, or scope regression
 - Repeated command or test failures are being ignored instead of diagnosed
 - V4/MCP/project guidance is being ignored on non-trivial code work: no three-query Semble discovery, skipped Codegraph structural/impact analysis, or no stated reason
+
+This slice may omit earlier tool calls. Missing Semble/Codegraph receipts alone
+are not evidence of skipped discovery; flag only explicit, current noncompliance.
+Do not repeat an acknowledged past process mistake that cannot be redone.
 
 This is an in-progress checkpoint. Do NOT block merely because implementation,
 tests, commit, or final verification are unfinished; the Stop audit checks completion.
@@ -189,8 +193,8 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     if verdict == "ISSUES":
         record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized)
         block(
-            "[GPT-5.6-Terra checkpoint audit]\n\n"
-            "A fresh GPT-5.6-Terra session reviewed this in-progress task checkpoint and found concrete issues. "
+            f"[{AUDITOR_NAME} checkpoint audit]\n\n"
+            f"A fresh {AUDITOR_NAME} session reviewed this in-progress task checkpoint and found concrete issues. "
             "Fix these before continuing:\n\n"
             f"{normalized[:5000]}"
         )
@@ -226,6 +230,7 @@ def maybe_checkpoint(session_id: str, cwd: Path) -> None:
 
 
 def main() -> None:
+    exit_if_audit_child()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         tool_name = payload.get("tool_name") or ""

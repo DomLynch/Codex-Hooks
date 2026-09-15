@@ -420,7 +420,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("GPT-5.6-Terra audit unavailable", data["reason"])
+        self.assertIn(f"{api.AUDITOR_NAME} audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_claude_mimo_chat_turn_without_deliverable_claim_skips_api(self) -> None:
@@ -473,6 +473,7 @@ class ClaudeAdapterTests(unittest.TestCase):
     def test_call_mimo_uses_chatgpt_codex_cli(self) -> None:
         completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
         with (
+            mock.patch.object(api, "AUDIT_TRANSPORT", "codex"),
             mock.patch.object(api, "codex_binary", return_value="/app/codex"),
             mock.patch.object(api.subprocess, "run", return_value=completed) as run,
             mock.patch.object(api, "log") as audit_log,
@@ -603,3 +604,55 @@ class ClaudeAdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClaudeAuditTransportTests(unittest.TestCase):
+    """Claude-side audit runs on the Claude CLI by default and can never recurse."""
+
+    def test_call_mimo_routes_to_claude_cli_when_transport_is_claude(self) -> None:
+        import lib.api as api
+
+        with mock.patch.object(api, "AUDIT_TRANSPORT", "claude"), \
+             mock.patch.object(api, "call_claude_cli", return_value="VERDICT: PASS") as cli, \
+             mock.patch.object(api, "codex_binary", side_effect=AssertionError("codex must not be called")):
+            self.assertEqual(api.call_mimo("audit this", lane="stop"), "VERDICT: PASS")
+        cli.assert_called_once()
+        self.assertEqual(cli.call_args.kwargs["lane"], "stop")
+
+    def test_call_mimo_keeps_codex_path_when_transport_is_codex(self) -> None:
+        import lib.api as api
+
+        with mock.patch.object(api, "AUDIT_TRANSPORT", "codex"), \
+             mock.patch.object(api, "call_claude_cli", side_effect=AssertionError("claude must not be called")), \
+             mock.patch.object(api, "codex_binary", side_effect=RuntimeError("stop here")):
+            with self.assertRaisesRegex(RuntimeError, "stop here"):
+                api.call_mimo("audit this")
+
+    def test_claude_cli_child_sets_guard_env_and_disallows_mutating_tools(self) -> None:
+        import lib.api as api
+
+        captured: dict = {}
+
+        def fake_run(command, **kwargs):
+            captured["command"] = command
+            captured["env"] = kwargs["env"]
+            return mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
+
+        with mock.patch.object(api, "claude_binary", return_value="/fake/claude"), \
+             mock.patch.object(api.subprocess, "run", side_effect=fake_run):
+            self.assertEqual(api.call_claude_cli("audit this"), "VERDICT: PASS")
+        self.assertEqual(captured["env"].get(api.AUDIT_CHILD_ENV), "1")
+        self.assertIn("--effort", captured["command"])
+        self.assertIn("--disallowedTools", captured["command"])
+        self.assertIn("Bash Edit Write MultiEdit NotebookEdit", captured["command"])
+
+    def test_hooks_exit_immediately_inside_an_audit_child(self) -> None:
+        import lib.api as api
+
+        with mock.patch.dict(api.os.environ, {api.AUDIT_CHILD_ENV: "1"}):
+            with self.assertRaises(SystemExit) as ctx:
+                api.exit_if_audit_child()
+        self.assertEqual(ctx.exception.code, 0)
+        with mock.patch.dict(api.os.environ, {}, clear=False):
+            api.os.environ.pop(api.AUDIT_CHILD_ENV, None)
+            api.exit_if_audit_child()  # no exit outside a child

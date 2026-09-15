@@ -13,7 +13,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.api import call_claude, call_mimo
+from lib.api import AUDITOR_NAME, call_claude, call_mimo, exit_if_audit_child
 from lib.autonomy import pop_next_task, remember_repo
 from lib.git import (
     commit,
@@ -367,7 +367,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
         return "", "", "", "branch_failed"
 
     summary = transcript.splitlines()[0][:80] if transcript.strip() else "Claude Code task"
-    auditors = ["GPT-5.6-Terra"]
+    auditors = [AUDITOR_NAME]
     if CLAUDE_AUDIT_ENABLED:
         auditors.append("Claude")
     message = f"[task {task_n}] {summary}\n\nAudited-by: {', '.join(auditors)}\nSession: {session_id}"
@@ -479,6 +479,7 @@ STATUS: COMPLETE
 
 
 def main() -> None:
+    exit_if_audit_child()
     try:
         payload = normalize_payload(json.loads(sys.stdin.read() or "{}"))
         session_id = payload.get("session_id") or "unknown"
@@ -505,7 +506,7 @@ def main() -> None:
         if not audit_with_claude(session_id, transcript, session_spec):
             return
         if not wait_for_mimo_pass(session_id, turn_id):
-            log(COMPONENT, "side effects skipped: GPT-5.6-Terra did not pass current turn")
+            log(COMPONENT, f"side effects skipped: {AUDITOR_NAME} did not pass current turn")
             return
         branch, sha, pr_url, auto_pr_status = commit_push_pr(session_id, cwd, transcript)
         if auto_pr_status in {"push_failed", "pr_failed"}:
