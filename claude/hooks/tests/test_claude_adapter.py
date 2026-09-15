@@ -444,7 +444,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         ask_mimo.assert_not_called()
         self.assertEqual(verdict["claude-chat-turn"]["verdict"], "SKIP_CHAT_TURN")
 
-    def test_claude_mimo_block_chain_damper_allows_and_records_lesson(self) -> None:
+    def test_claude_mimo_block_chain_damper_allows_without_recording_lesson(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             state_path = tmp_path / "iterations.json"
@@ -468,7 +468,8 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertNotIn("consecutive_blocks:claude-damper", state)
         self.assertEqual(verdict["claude-damper"]["verdict"], "DAMPER_ALLOW")
-        record_lesson.assert_called()
+        # Round 3 of a chain is re-litigation, not review: it must not feed Active Lessons.
+        record_lesson.assert_not_called()
 
     def test_call_mimo_uses_chatgpt_codex_cli(self) -> None:
         completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
@@ -689,3 +690,28 @@ class BlockChainDamperTests(unittest.TestCase):
                     seen.append(mimo_audit.increment_consecutive_blocks("sess"))
         self.assertEqual(seen, [1, 2, 3], "counter must climb; before the fix it was stuck at [1, 1, 1]")
         self.assertGreaterEqual(seen[-1], mimo_audit.MAX_CONSECUTIVE_BLOCKS)
+
+
+    def test_lessons_recorded_only_on_first_block_of_a_chain(self) -> None:
+        """Rounds 2+ of a block chain must not feed Active Lessons."""
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "state.json"
+            calls: list[str] = []
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", state),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "record_lesson", side_effect=lambda k, v: calls.append(v)),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "block_stop", side_effect=SystemExit(0)),
+                mock.patch.object(mimo_audit, "allow_stop", side_effect=SystemExit(0)),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. finding"),
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+            ):
+                for turn in range(3):
+                    payload = {"session_id": "chain", "turn_id": f"t{turn}", "transcript_path": "", "last_assistant_message": ""}
+                    with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                        with self.assertRaises(SystemExit):
+                            mimo_audit.main()
+        self.assertEqual(len(calls), 1, f"expected 1 lesson from a 3-block chain, got {len(calls)}")

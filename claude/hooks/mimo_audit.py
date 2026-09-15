@@ -260,6 +260,19 @@ Evidence and current-request discipline (takes precedence over generic checklist
   invented publication/deployment success, and NEW completion claims with neither
   direct nor identified prior evidence. A PASS from another reviewer is not proof.
 
+Re-review discipline (this slice may follow a prior block from you):
+- Block only for findings that would change the code, the tests, or what ships.
+  The quality of how evidence was *described* is not a blocking finding when the
+  underlying fact is established by shown output in the slice.
+- If a prior finding has been answered with visible output, accept it and PASS.
+  Do not raise the bar on the same finding, and do not reopen it under new wording.
+- Threat models outside the code under review (clock spoofing, DNS/CA compromise,
+  network interception, tampered trace output, filesystem integrity) are out of
+  scope unless the task itself is security work. Do not introduce them.
+- A residual assumption the agent has named and that cannot be closed from inside
+  the machine is a valid disposition. Restating it is not a new finding.
+- Prefer one PASS with Warnings over a second ISSUES on the same turn.
+
 Current task transcript:
 ---
 {transcript}
@@ -636,8 +649,11 @@ def main() -> None:
     if verdict_text.startswith("VERDICT: ISSUES"):
         save_iterations(session_id, turn_id, iterations + 1)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
-        record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         consecutive_blocks = increment_consecutive_blocks(session_id)
+        if consecutive_blocks == 1:
+            # Only the first block in a chain is a review of the work. Later rounds
+            # re-litigate a rebuttal and would pollute Active Lessons for every future turn.
+            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)
