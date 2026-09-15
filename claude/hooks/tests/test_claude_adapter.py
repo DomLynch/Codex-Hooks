@@ -715,3 +715,22 @@ class BlockChainDamperTests(unittest.TestCase):
                         with self.assertRaises(SystemExit):
                             mimo_audit.main()
         self.assertEqual(len(calls), 1, f"expected 1 lesson from a 3-block chain, got {len(calls)}")
+
+
+class ActiveLessonsCapTests(unittest.TestCase):
+    def test_storage_and_read_caps_agree_at_eight(self) -> None:
+        import lib.autonomy as autonomy
+
+        self.assertEqual(autonomy.MAX_ACTIVE_LESSONS, 8)
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "state.json"),
+                mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "active.md"),
+                mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "all.jsonl"),
+            ):
+                for i in range(12):
+                    autonomy.record_lesson("test", f"lesson number {i}")
+                shown = autonomy.active_lessons()
+        self.assertEqual(len(shown), 8, "read cap must match storage cap")
+        self.assertEqual(shown[0], "lesson number 11", "newest first")
+        self.assertNotIn("lesson number 3", shown, "oldest four evicted")

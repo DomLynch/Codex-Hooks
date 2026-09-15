@@ -22,7 +22,7 @@ STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
 MAX_QUEUE = 80
-MAX_ACTIVE_LESSONS = 5
+MAX_ACTIVE_LESSONS = 8  # shared across all Claude sessions; ~60 tokens each per turn
 DEFAULT_LESSON_TTL_DAYS = 14
 SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
 RISKY_TASK_RE = re.compile(
@@ -275,7 +275,7 @@ def _fresh_lesson_entries(entries: list[dict[str, Any]], now: float | None = Non
     return fresh[:MAX_ACTIVE_LESSONS]
 
 
-def active_lessons(limit: int = 5) -> list[str]:
+def active_lessons(limit: int = MAX_ACTIVE_LESSONS) -> list[str]:
     state = load_json_locked(LESSONS_STATE, {})
     if isinstance(state, dict) and isinstance(state.get("lessons"), list):
         return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))][:limit]
