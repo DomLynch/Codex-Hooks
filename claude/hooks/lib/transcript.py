@@ -126,6 +126,94 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
     return excerpt
 
 
+EDIT_TOOL_RE = re.compile(r"^(Edit|Write|MultiEdit|NotebookEdit):", re.IGNORECASE)
+_FILE_PATH_ARG_RE = re.compile(r'"file_path":\s*"([^"]+)"')
+_CONFLICT_OPEN_RE = re.compile(r"^<{7} \S", re.MULTILINE)
+_CONFLICT_CLOSE_RE = re.compile(r"^>{7} \S", re.MULTILINE)
+# Paths in prose: absolute, relative-with-slash, or bare image/pdf names (the observed failure class).
+_PATH_MENTION_RE = re.compile(
+    r"(?<![\w/])((?:/|\./|~/)?(?:[\w.\-]+/)+[\w.\-]+\.[A-Za-z0-9]{1,6}|[\w.\-]+\.(?:png|jpe?g|gif|webp|svg|pdf))(?![\w/])"
+)
+
+
+def edited_paths(entries: list[tuple[str, str]]) -> list[str]:
+    """file_path args from Edit/Write-style TOOL CALLs this turn, in order, deduped."""
+    seen: list[str] = []
+    for role, body in entries:
+        if role == "TOOL CALL" and EDIT_TOOL_RE.match(body.split(":", 1)[0] + ":"):
+            for path in _FILE_PATH_ARG_RE.findall(body):
+                if path not in seen:
+                    seen.append(path)
+    return seen
+
+
+def conflict_marker_files(paths: list[str]) -> list[str]:
+    """Files among `paths` that still contain git conflict markers."""
+    hits = []
+    for raw in paths:
+        f = Path(raw).expanduser()
+        try:
+            if f.is_file() and f.stat().st_size < 5_000_000:
+                text = f.read_text(errors="replace")
+                if _CONFLICT_OPEN_RE.search(text) and _CONFLICT_CLOSE_RE.search(text):
+                    hits.append(raw)
+        except OSError:
+            continue
+    return hits
+
+
+def unopened_mentioned_files(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
+    """Paths the final message cites that exist on disk but never appeared in ANY tool call or
+    tool output this turn. Appearing in grep/ls output counts as 'seen' (reporting a location is
+    not a claim to have read it); only paths that exist solely in the prose are flagged."""
+    tool_text = "\n".join(body for role, body in entries if role.startswith("TOOL"))
+    base = Path(cwd or ".").expanduser()
+    hits: list[str] = []
+    for token in _PATH_MENTION_RE.findall(final_message or ""):
+        name = Path(token).name
+        if token in tool_text or name in tool_text:
+            continue
+        candidate = Path(token).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / token
+        if not candidate.is_file() and "/" not in token:
+            # bare image name: resolve via git index when cwd is a repo
+            try:
+                import subprocess
+                out = subprocess.run(["git", "-C", str(base), "ls-files", "--", f"*/{token}", token],
+                                     capture_output=True, text=True, timeout=5).stdout.split()
+                candidate = (base / out[0]) if out else candidate
+            except Exception:
+                pass
+        if candidate.is_file() and token not in hits:
+            hits.append(token)
+    return hits
+
+
+def deterministic_findings(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
+    """All mechanical pre-model gates. Each item is a complete, actionable finding."""
+    findings: list[str] = []
+    missed = unacknowledged_check_failure(entries, final_message)
+    if missed:
+        findings.append(
+            "A test/check run in this turn failed and your final message does not mention it. "
+            "Either fix it and show the rerun, or state the failure and why it is expected:\n" + missed
+        )
+    conflicts = conflict_marker_files(edited_paths(entries))
+    if conflicts:
+        findings.append(
+            "Files you edited this turn still contain git conflict markers (<<<<<<< / >>>>>>>). "
+            "Resolve them and show the clean file: " + ", ".join(conflicts)
+        )
+    unopened = unopened_mentioned_files(entries, final_message, cwd)
+    if unopened:
+        findings.append(
+            "Your final message refers to files that exist but were never opened or produced by any "
+            "tool call this turn. Read them and ground the claim, or drop the reference: " + ", ".join(unopened)
+        )
+    return findings
+
+
 def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     text = sanitize("\n\n".join(_render_entry(role, body) for role, body in entries))
     if len(text) <= max_chars:

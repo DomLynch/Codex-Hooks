@@ -36,7 +36,7 @@ from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import compact_task_entries, unacknowledged_check_failure  # noqa: E402
+from lib.transcript import compact_task_entries, deterministic_findings  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
 
@@ -608,17 +608,13 @@ def main() -> None:
     if not has_tool_activity(transcript):
         transcript = latest_task_slice_claude(transcript_path, transcript, MAX_TRANSCRIPT_CHARS, include_previous=True)
 
-    # Deterministic pre-gate: a check runner failed this turn and the summary is silent.
-    # This was ~25% of all reviewer findings; catching it here costs no model call.
-    missed = unacknowledged_check_failure(latest_task_entries_claude(transcript_path), last_msg)
-    if missed:
-        log(f"DETERMINISTIC_GATE: unacknowledged check failure ({len(missed)} chars)")
-        verdict_text = (
-            "VERDICT: ISSUES\n"
-            "1. A test/check run in this turn failed and your final message does not mention it. "
-            "Either fix it and show the rerun, or state the failure and why it is expected:\n"
-            f"{missed}"
-        )
+    # Deterministic pre-gates (no model call): unacknowledged check failure, leftover conflict
+    # markers in edited files, files cited in prose but never touched by any tool this turn.
+    # Together these were ~45% of reviewer findings in the first 12h of Sonnet audits.
+    mechanical = deterministic_findings(latest_task_entries_claude(transcript_path), last_msg, payload.get("cwd") or "")
+    if mechanical:
+        log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
+        verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(mechanical, 1))
     else:
         try:
             verdict_text = ask_mimo_with_retry(transcript)

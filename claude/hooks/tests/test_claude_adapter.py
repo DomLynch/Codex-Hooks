@@ -796,3 +796,135 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertIn("does not mention it", out["reason"])
         self.assertIn("AssertionError", out["reason"])
         model.assert_not_called()
+
+
+class ConflictMarkerGateTests(unittest.TestCase):
+    CONFLICT = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature\nb\n"
+
+    def _edit_call(self, path: str) -> tuple[str, str]:
+        return ("TOOL CALL", f'Edit: [t1] {{"file_path": "{path}", "old_string": "x", "new_string": "y"}}')
+
+    def test_fires_on_edited_file_with_markers(self) -> None:
+        from lib.transcript import conflict_marker_files, edited_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "spec.md"
+            f.write_text(self.CONFLICT)
+            hits = conflict_marker_files(edited_paths([self._edit_call(str(f))]))
+        self.assertEqual(hits, [str(f)])
+
+    def test_silent_when_resolved(self) -> None:
+        from lib.transcript import conflict_marker_files, edited_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "spec.md"
+            f.write_text("a\nours\nb\n")
+            self.assertEqual(conflict_marker_files(edited_paths([self._edit_call(str(f))])), [])
+
+    def test_silent_on_markdown_rule_and_inline_chevrons(self) -> None:
+        from lib.transcript import conflict_marker_files
+
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "doc.md"
+            f.write_text("Title\n=======\nbody with <<<<<<< inline text\n")
+            self.assertEqual(conflict_marker_files([str(f)]), [], "=== underline and mid-line chevrons are not conflicts")
+
+    def test_ignores_conflicted_files_not_edited_this_turn(self) -> None:
+        from lib.transcript import conflict_marker_files, edited_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            theirs = Path(tmp) / "theirs.md"
+            theirs.write_text(self.CONFLICT)
+            mine = Path(tmp) / "mine.py"
+            mine.write_text("ok\n")
+            self.assertEqual(conflict_marker_files(edited_paths([self._edit_call(str(mine))])), [],
+                             "another agent's conflict in the same tree must not block this session")
+
+
+class UnopenedFileGateTests(unittest.TestCase):
+    def test_fires_on_image_cited_but_never_touched(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "chin-v30.png").write_bytes(b"\x89PNG")
+            entries = [("USER", "look at the renders"), ("TOOL CALL", "Bash: [t1] ls"), ("TOOL OUTPUT", "[t1] Bash: ls\n\nother.txt")]
+            self.assertEqual(gate(entries, "chin-v30.png shows the jaw is fixed.", tmp), ["chin-v30.png"])
+
+    def test_silent_when_read_this_turn(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "chin-v30.png").write_bytes(b"\x89PNG")
+            entries = [("TOOL CALL", f'Read: [t1] {{"file_path": "{tmp}/chin-v30.png"}}'), ("TOOL OUTPUT", "[t1] Read\n[image]")]
+            self.assertEqual(gate(entries, "chin-v30.png shows the jaw is fixed.", tmp), [])
+
+    def test_silent_when_path_came_from_grep_output(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "src").mkdir()
+            (Path(tmp) / "src" / "cfg.py").write_text("X=1")
+            entries = [("TOOL OUTPUT", "[t1] Bash: grep -rn X\n\nsrc/cfg.py:1:X=1")]
+            self.assertEqual(gate(entries, "The setting lives in src/cfg.py.", tmp), [],
+                             "reporting a location found by grep is not a claim to have read it")
+
+    def test_silent_when_file_does_not_exist(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(gate([], "see docs/nothing.md and ghost.png", tmp), [])
+
+    def test_bare_code_filenames_are_not_extracted(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "api.py").write_text("x")
+            self.assertEqual(gate([], "The handler is in api.py.", tmp), [],
+                             "bare .py names are too common in prose to imply 'I read it'")
+
+    def test_fires_on_relative_code_path_never_touched(self) -> None:
+        from lib.transcript import unopened_mentioned_files as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "src").mkdir()
+            (Path(tmp) / "src" / "core.py").write_text("x")
+            entries = [("TOOL OUTPUT", "[t1] Bash: ls\n\nREADME")]
+            self.assertEqual(gate(entries, "I verified src/core.py handles it.", tmp), ["src/core.py"])
+
+
+class DeterministicFindingsTests(unittest.TestCase):
+    def test_multiple_gates_combine_and_main_numbers_them(self) -> None:
+        import mimo_audit
+        from lib.transcript import deterministic_findings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conflicted = Path(tmp) / "spec.md"
+            conflicted.write_text("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n")
+            (Path(tmp) / "shot.png").write_bytes(b"\x89PNG")
+            red = "[c1] Bash: python -m pytest\n\nFAILED t.py::t - AssertionError\n1 failed"
+            entries = [
+                ("TOOL CALL", f'Edit: [t1] {{"file_path": "{conflicted}", "old_string": "a", "new_string": "b"}}'),
+                ("TOOL OUTPUT", red),
+            ]
+            msg = "Done. shot.png confirms the layout."
+            self.assertEqual(len(deterministic_findings(entries, msg, tmp)), 3)
+
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=entries),
+            ):
+                payload = {"session_id": "d", "turn_id": "t", "transcript_path": "/nope", "last_assistant_message": msg, "cwd": tmp}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["decision"], "block")
+        for marker in ("1. A test/check run", "2. Files you edited", "3. Your final message refers"):
+            self.assertIn(marker, out["reason"])
+        model.assert_not_called()
