@@ -36,7 +36,7 @@ from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, pass_warnings, sensitive_paths, sensitive_section  # noqa: E402
+from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
@@ -212,6 +212,8 @@ Auditor constraints - demands must be executable:
   agent makes a NEW claim with no source.
 - Tool output (stdout/stderr blocks, grep results, test runs) included in the
   slice IS verification. Do not flag verified-by-shown-output items.
+- If a WORKING TREE DIFF section is present it is the ground truth for what
+  changed. Findings about the code must cite it; do not infer code from prose.
 - Tool-call arguments in this slice are MECHANICALLY TRUNCATED by the slice
   compactor (marked "...[slice-elided by compactor" or ending abruptly
   mid-text). This is a rendering artifact, NOT evidence the edit was
@@ -685,6 +687,11 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
+        diff = turn_diff(payload.get("cwd") or "", edited_paths(entries))
+        if diff:
+            log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
+            transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "
+                          f"review the code itself, not only the agent's description of it):\n{diff}")
         try:
             verdict_text = ask_mimo_with_retry(transcript)
             if not verdict_text:

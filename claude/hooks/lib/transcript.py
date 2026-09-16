@@ -245,6 +245,50 @@ def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverabl
     return not deliverable_re.search(final_message or "")
 
 
+DIFF_CAP = 2500
+
+
+def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP) -> str:
+    """`git diff HEAD` restricted to the files this turn edited, plus the head of any
+    new untracked ones. Scoped so another agent's changes in a shared worktree are not
+    attributed to this turn. Empty string when not a repo / nothing to show."""
+    if not cwd or not paths:
+        return ""
+    import subprocess
+
+    base = Path(cwd).expanduser()
+    if not (base / ".git").exists() and subprocess.run(["git", "-C", str(base), "rev-parse", "--git-dir"],
+                                                       capture_output=True, timeout=5).returncode:
+        return ""
+    rel = []
+    for raw in paths:
+        f = Path(raw).expanduser()
+        try:
+            rel.append(str(f.resolve().relative_to(base.resolve())) if f.is_absolute() else raw)
+        except ValueError:
+            continue  # outside the repo
+    if not rel:
+        return ""
+    parts = []
+    try:
+        d = subprocess.run(["git", "-C", str(base), "diff", "HEAD", "--", *rel], capture_output=True, text=True, timeout=10)
+        if d.returncode and "unknown revision" in (d.stderr or ""):   # fresh repo, no HEAD yet
+            d = subprocess.run(["git", "-C", str(base), "diff", "--", *rel], capture_output=True, text=True, timeout=10)
+        if d.stdout.strip():
+            parts.append(d.stdout.strip())
+        u = subprocess.run(["git", "-C", str(base), "ls-files", "--others", "--exclude-standard", "--", *rel],
+                           capture_output=True, text=True, timeout=5).stdout.split()
+        for name in u[:5]:
+            try:
+                body = (base / name).read_text(errors="replace")
+                parts.append(f"--- NEW FILE {name} ---\n{body[:800]}")
+            except OSError:
+                continue
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
+
+
 def deterministic_findings(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
     """All mechanical pre-model gates. Each item is a complete, actionable finding."""
     findings: list[str] = []

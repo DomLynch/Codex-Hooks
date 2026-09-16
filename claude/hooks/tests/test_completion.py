@@ -127,7 +127,10 @@ class CompletionTests(unittest.TestCase):
         self.assertIn("real ownership/access blocker", mimo_audit.AUDIT_PROMPT)
 
     def test_audit_outage_reports_metadata_and_still_blocks(self):
-        with mock.patch.object(mimo_audit, "report_failure") as report, \
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "state.json"), \
+                mock.patch.object(mimo_audit, "log"), \
+                mock.patch.object(mimo_audit, "report_failure") as report, \
                 mock.patch.object(mimo_audit, "save_iterations"), \
                 mock.patch.object(mimo_audit, "save_verdict") as verdict, \
                 mock.patch.object(mimo_audit, "block_stop") as block:

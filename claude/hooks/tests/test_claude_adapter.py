@@ -1272,3 +1272,92 @@ class DocOnlyTriageTests(unittest.TestCase):
             self.assertEqual(model.called, expect_model)
             self.assertEqual(out.get("decision") == "block", expect_block)
             self.assertEqual(verdict, "ISSUES" if expect_block else "SKIP_DOC_ONLY")
+
+
+class TurnDiffTests(unittest.TestCase):
+    def _repo(self, tmp):
+        import subprocess
+        subprocess.run(["git", "-C", tmp, "init", "-q"], check=True)
+        subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+
+    def test_diff_is_scoped_to_edited_paths_only(self) -> None:
+        import subprocess
+        from lib.transcript import turn_diff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            (Path(tmp) / "mine.py").write_text("a = 1\n")
+            (Path(tmp) / "theirs.py").write_text("b = 1\n")
+            subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+            subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "base"], check=True)
+            (Path(tmp) / "mine.py").write_text("a = 2\n")
+            (Path(tmp) / "theirs.py").write_text("b = 2\n")   # another agent's change, same worktree
+            out = turn_diff(tmp, [f"{tmp}/mine.py"])
+        self.assertIn("-a = 1", out)
+        self.assertIn("+a = 2", out)
+        self.assertNotIn("theirs.py", out, "other agents' changes must not be attributed to this turn")
+
+    def test_new_untracked_file_is_shown(self) -> None:
+        from lib.transcript import turn_diff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            (Path(tmp) / "fresh.py").write_text("print('hi')\n")
+            out = turn_diff(tmp, [f"{tmp}/fresh.py"])
+        self.assertIn("NEW FILE fresh.py", out)
+        self.assertIn("print('hi')", out)
+
+    def test_empty_when_not_a_repo_or_no_paths(self) -> None:
+        from lib.transcript import turn_diff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "x.py").write_text("x")
+            self.assertEqual(turn_diff(tmp, [f"{tmp}/x.py"]), "", "not a git repo")
+            self._repo(tmp)
+            self.assertEqual(turn_diff(tmp, []), "", "nothing edited")
+
+    def test_large_diff_is_capped(self) -> None:
+        from lib.transcript import turn_diff, DIFF_CAP
+
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            big = Path(tmp) / "big.py"
+            big.write_text("\n".join(f"line_{i} = {i}" for i in range(2000)))
+            subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+            subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"], check=True)
+            big.write_text("\n".join(f"line_{i} = {i * 2}" for i in range(2000)))   # every line changes
+            out = turn_diff(tmp, [f"{tmp}/big.py"])
+        self.assertLessEqual(len(out), DIFF_CAP)
+        self.assertIn("elided", out)
+
+    def test_main_appends_diff_to_reviewer_input(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._repo(tmp)
+            f = Path(tmp) / "app.py"
+            f.write_text("def f():\n    return 1\n")
+            import subprocess
+            subprocess.run(["git", "-C", tmp, "add", "."], check=True)
+            subprocess.run(["git", "-C", tmp, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"], check=True)
+            f.write_text("def f():\n    return 2\n")
+            entries = [("TOOL CALL", f'Edit: [t] {{"file_path": "{f}", "old_string": "1", "new_string": "2"}}')]
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=entries),
+            ):
+                payload = {"session_id": "G", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp, "last_assistant_message": "Changed f."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+            sent = model.call_args.args[0]
+        self.assertIn("WORKING TREE DIFF", sent)
+        self.assertIn("-    return 1", sent)
+        self.assertIn("+    return 2", sent)
