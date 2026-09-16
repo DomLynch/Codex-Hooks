@@ -190,6 +190,38 @@ def unopened_mentioned_files(entries: list[tuple[str, str]], final_message: str,
     return hits
 
 
+SENSITIVE_PATH_RE = re.compile(
+    r"(auth|login|session|token|secret|credential|passw|crypt|payment|billing|stripe|checkout|"
+    r"admin|permission|rbac|oauth|jwt|api[_-]?key|\bacl\b)",
+    re.IGNORECASE,
+)
+_WARNING_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
+
+
+def sensitive_paths(entries: list[tuple[str, str]]) -> list[str]:
+    """Edited paths this turn that touch auth/secrets/payment/admin surfaces."""
+    return [p for p in edited_paths(entries) if SENSITIVE_PATH_RE.search(p)]
+
+
+def sensitive_section(paths: list[str]) -> str:
+    return (
+        "SENSITIVE PATHS EDITED THIS TURN (auth / secrets / payment / admin):\n"
+        + "\n".join(f"- {p}" for p in paths)
+        + "\nApply a security-review standard to these. Any concern about authentication, "
+        "authorization, secret handling, injection, or data exposure is BLOCKING — return "
+        "VERDICT: ISSUES for it, never PASS with a warning."
+    )
+
+
+def pass_warnings(verdict_text: str) -> list[str]:
+    """Bullet/numbered lines after a PASS verdict — the reviewer's 'optional Warnings'."""
+    if not (verdict_text or "").startswith("VERDICT: PASS"):
+        return []
+    rest = verdict_text.split("\n", 1)[1] if "\n" in verdict_text else ""
+    return [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", line).strip()
+            for line in rest.splitlines() if _WARNING_LINE_RE.match(line)]
+
+
 def deterministic_findings(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
     """All mechanical pre-model gates. Each item is a complete, actionable finding."""
     findings: list[str] = []

@@ -36,7 +36,7 @@ from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import compact_task_entries, deterministic_findings  # noqa: E402
+from lib.transcript import compact_task_entries, deterministic_findings, pass_warnings, sensitive_paths, sensitive_section  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
@@ -660,7 +660,9 @@ def main() -> None:
     # Deterministic pre-gates (no model call): unacknowledged check failure, leftover conflict
     # markers in edited files, files cited in prose but never touched by any tool this turn.
     # Together these were ~45% of reviewer findings in the first 12h of Sonnet audits.
-    mechanical = deterministic_findings(latest_task_entries_claude(transcript_path), last_msg, payload.get("cwd") or "")
+    entries = latest_task_entries_claude(transcript_path)
+    mechanical = deterministic_findings(entries, last_msg, payload.get("cwd") or "")
+    sensitive = sensitive_paths(entries)
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
     pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
@@ -674,6 +676,9 @@ def main() -> None:
         section = ledger.prompt_section(session_id)
         if section:
             transcript = f"{transcript}\n\n{section}"
+        if sensitive:
+            log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
+            transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
         try:
             verdict_text = ask_mimo_with_retry(transcript)
             if not verdict_text:
@@ -687,6 +692,12 @@ def main() -> None:
 
     log(f"{AUDITOR_NAME} verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
+    if sensitive and verdict_text.startswith("VERDICT: PASS"):
+        warnings = pass_warnings(verdict_text)
+        if warnings:
+            # On auth/secrets/payment surfaces a warning is a finding. Upgrade deterministically.
+            log(f"SENSITIVE_UPGRADE: {len(warnings)} warning(s) -> ISSUES on {', '.join(sensitive)}")
+            verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {w}" for i, w in enumerate(warnings, 1))
 
     if verdict_text and not valid_verdict(verdict_text):
         try:

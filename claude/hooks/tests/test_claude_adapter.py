@@ -1137,3 +1137,68 @@ class BoundedAuditErrorTests(unittest.TestCase):
                     mimo_audit.save_iterations("T", f"turn-{i}", 1)
                     seen.append(mimo_audit.increment_audit_errors("T"))
         self.assertEqual(seen, [1, 2, 3], "same eviction bug the damper had must not recur here")
+
+
+class SensitivePathTriageTests(unittest.TestCase):
+    def _edit(self, path):
+        return ("TOOL CALL", f'Edit: [t] {{"file_path": "{path}", "old_string": "a", "new_string": "b"}}')
+
+    def test_detects_sensitive_paths_and_ignores_others(self) -> None:
+        from lib.transcript import sensitive_paths
+
+        entries = [self._edit("src/auth/login.py"), self._edit("README.md"), self._edit("lib/payment/stripe_client.ts"), self._edit("src/ui/button.tsx")]
+        self.assertEqual(sensitive_paths(entries), ["src/auth/login.py", "lib/payment/stripe_client.ts"])
+
+    def test_pass_warnings_extracts_bullets_and_numbers_only(self) -> None:
+        from lib.transcript import pass_warnings
+
+        self.assertEqual(pass_warnings("VERDICT: PASS\nLooks fine overall."), [], "prose is not a warning")
+        self.assertEqual(pass_warnings("VERDICT: PASS\nWarnings:\n- token logged at debug level\n2) no rate limit on /login"),
+                         ["token logged at debug level", "no rate limit on /login"])
+        self.assertEqual(pass_warnings("VERDICT: ISSUES\n1. x"), [], "only PASS verdicts have warnings")
+
+    def _run(self, mimo_audit, tmp, entries, verdict):
+        with (
+            mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+            mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+            mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+            mock.patch.object(mimo_audit, "log") as log,
+            mock.patch.object(mimo_audit, "record_lesson"),
+            mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value=verdict) as model,
+            mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+            mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=entries),
+        ):
+            payload = {"session_id": "S", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp, "last_assistant_message": "Done."}
+            with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                buf = io.StringIO()
+                with redirect_stdout(buf), self.assertRaises(SystemExit):
+                    mimo_audit.main()
+        out = json.loads(buf.getvalue()) if buf.getvalue().strip() else {}
+        return out, model, [c.args[0] for c in log.call_args_list]
+
+    def test_sensitive_edit_upgrades_pass_with_warnings_to_block(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out, model, logs = self._run(mimo_audit, tmp, [self._edit("api/auth.py")],
+                                         "VERDICT: PASS\n- session token compared with == not hmac.compare_digest")
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("[F1] session token compared", out["reason"])
+        self.assertIn("SENSITIVE PATHS EDITED", model.call_args.args[0], "reviewer was told")
+        self.assertTrue(any("SENSITIVE_UPGRADE" in m for m in logs))
+
+    def test_sensitive_edit_clean_pass_still_passes(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out, _, _ = self._run(mimo_audit, tmp, [self._edit("api/auth.py")], "VERDICT: PASS")
+        self.assertEqual(out, {}, "no warnings -> allow")
+
+    def test_non_sensitive_edit_keeps_pass_with_warnings(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out, model, _ = self._run(mimo_audit, tmp, [self._edit("docs/guide.md")],
+                                      "VERDICT: PASS\n- consider a table of contents")
+        self.assertEqual(out, {}, "warnings on ordinary paths stay advisory")
+        self.assertNotIn("SENSITIVE PATHS", model.call_args.args[0])
