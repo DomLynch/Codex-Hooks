@@ -92,8 +92,8 @@ def extract_last_assistant_message(transcript_path: str) -> str:
     return ""
 
 
-def latest_task_slice_claude(transcript_path: str, last_assistant_message: str = "", max_chars: int = 4000,
-                             include_previous: bool = False) -> str:
+def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:
+    """Current-turn (role, body) entries from a Claude transcript, before compaction."""
     """Build the 'current task' slice from a Claude transcript.
 
     Strategy: walk back to the last `user` entry and include everything from there.
@@ -101,7 +101,7 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
     """
     entries = read_claude_transcript_lines(transcript_path)
     if not entries:
-        return last_assistant_message or ""
+        return []
 
     # Tool results also use type=user; only a real prompt starts a new task.
     last_user_idx = -1
@@ -167,6 +167,12 @@ def latest_task_slice_claude(transcript_path: str, last_assistant_message: str =
                     if result:
                         out.append(result)
 
+    return out
+
+
+def latest_task_slice_claude(transcript_path: str, last_assistant_message: str = "", max_chars: int = 4000,
+                             include_previous: bool = False) -> str:
+    out = latest_task_entries_claude(transcript_path, include_previous)
     return compact_latest_task(out, max_chars, include_previous) if out else last_assistant_message[-max_chars:]
 
 

@@ -734,3 +734,65 @@ class ActiveLessonsCapTests(unittest.TestCase):
         self.assertEqual(len(shown), 8, "read cap must match storage cap")
         self.assertEqual(shown[0], "lesson number 11", "newest first")
         self.assertNotIn("lesson number 3", shown, "oldest four evicted")
+
+
+class UnacknowledgedFailureGateTests(unittest.TestCase):
+    """Deterministic pre-gate: failed check runner + silent summary → block without a model call."""
+
+    RED = "[c1] Bash: python -m pytest tests/\n\nFAILED tests/test_x.py::test_y - AssertionError: 1 != 2\n1 failed, 3 passed"
+    GREEN = "[c2] Bash: python -m pytest tests/\n\n4 passed in 0.3s"
+
+    def test_fires_when_last_test_run_failed_and_summary_is_silent(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        entries = [("USER", "fix it"), ("TOOL OUTPUT", self.RED), ("ASSISTANT", "Done. Implemented the fix and pushed.")]
+        out = gate(entries, "Done. Implemented the fix and pushed.")
+        self.assertIn("AssertionError", out)
+
+    def test_silent_when_summary_acknowledges_the_failure(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        entries = [("TOOL OUTPUT", self.RED)]
+        self.assertEqual(gate(entries, "test_y is still failing; it needs the fixture from PR 12."), "")
+        self.assertEqual(gate(entries, "One regression remains, documented below."), "")
+
+    def test_silent_when_a_later_rerun_is_green(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        entries = [("TOOL OUTPUT", self.RED), ("TOOL CALL", "Edit: fix"), ("TOOL OUTPUT", self.GREEN)]
+        self.assertEqual(gate(entries, "All green now."), "")
+
+    def test_ignores_error_strings_from_non_test_tools(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        grep = "[c3] Bash: grep -rn ERROR src/\n\nsrc/log.py:12: log.error('ERROR: boom')\nsrc/x.py:5: raise Error('fail')"
+        self.assertEqual(gate([("TOOL OUTPUT", grep)], "Found the two log sites."), "")
+
+    def test_silent_when_no_test_runner_ran(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        self.assertEqual(gate([("TOOL OUTPUT", "[c4] Bash: ls\n\na.py b.py")], "Listed files."), "")
+
+    def test_main_blocks_via_gate_without_calling_the_model(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("TOOL OUTPUT", self.RED)]),
+            ):
+                payload = {"session_id": "g", "turn_id": "t1", "transcript_path": "/nope", "last_assistant_message": "Done, shipped."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("does not mention it", out["reason"])
+        self.assertIn("AssertionError", out["reason"])
+        model.assert_not_called()

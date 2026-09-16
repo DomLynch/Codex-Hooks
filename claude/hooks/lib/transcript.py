@@ -95,6 +95,37 @@ def _failure_excerpt(text: str, limit: int) -> str:
     return _bounded_compact("\n".join(lines), limit) if lines else ""
 
 
+TEST_RUNNER_RE = re.compile(
+    r"\b(pytest|unittest|npm (run )?(test|quality|check|lint)|node --test|vitest|jest|"
+    r"cargo test|go test|make (test|check)|ruff check|mypy|tsc\b|\.quality-gate)",
+    re.IGNORECASE,
+)
+FAILURE_ACK_RE = re.compile(
+    r"\b(fail(s|ed|ing|ure)?|error|broken|red|not passing|unresolved|regression|AssertionError|"
+    r"still (fails|failing|broken))\b",
+    re.IGNORECASE,
+)
+
+
+def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:
+    """Deterministic gate for the most common audit finding: a test/check runner failed
+    this turn and the final message says nothing about it.
+
+    Only the LAST test-runner output counts (a later green rerun supersedes an earlier
+    red one). Returns the failure excerpt to quote back, or "" when nothing to flag.
+    """
+    last = ""
+    for role, body in entries:
+        if role == "TOOL OUTPUT" and TEST_RUNNER_RE.search(body.split("\n", 1)[0]):
+            last = body
+    if not last:
+        return ""
+    excerpt = _failure_excerpt(last, 300)
+    if not excerpt or FAILURE_ACK_RE.search(final_message or ""):
+        return ""
+    return excerpt
+
+
 def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     text = sanitize("\n\n".join(_render_entry(role, body) for role, body in entries))
     if len(text) <= max_chars:
