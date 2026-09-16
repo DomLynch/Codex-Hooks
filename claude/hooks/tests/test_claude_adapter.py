@@ -1202,3 +1202,73 @@ class SensitivePathTriageTests(unittest.TestCase):
                                       "VERDICT: PASS\n- consider a table of contents")
         self.assertEqual(out, {}, "warnings on ordinary paths stay advisory")
         self.assertNotIn("SENSITIVE PATHS", model.call_args.args[0])
+
+
+class DocOnlyTriageTests(unittest.TestCase):
+    def _edit(self, path):
+        return ("TOOL CALL", f'Edit: [t] {{"file_path": "{path}", "old_string": "a", "new_string": "b"}}')
+
+    def _bash(self, cmd):
+        return ("TOOL CALL", f"Bash: [b] {cmd}")
+
+    def test_doc_only_with_readonly_bash_and_no_claim(self) -> None:
+        import mimo_audit
+        from lib.transcript import doc_only_turn
+
+        entries = [self._edit("README.md"), self._edit("docs/guide.rst"), self._bash("git status"), self._bash("ls docs")]
+        self.assertTrue(doc_only_turn(entries, "Updated the install docs.", mimo_audit.DELIVERABLE_RE))
+
+    def test_disqualified_by_code_edit(self) -> None:
+        import mimo_audit
+        from lib.transcript import doc_only_turn
+
+        self.assertFalse(doc_only_turn([self._edit("README.md"), self._edit("src/x.py")], "Updated docs.", mimo_audit.DELIVERABLE_RE))
+
+    def test_disqualified_by_mutating_bash(self) -> None:
+        import mimo_audit
+        from lib.transcript import doc_only_turn
+
+        for cmd in ("sed -i 's/a/b/' src/x.py", "git push origin main", "python3 build.py", "echo x > out.txt", "npm run build"):
+            self.assertFalse(doc_only_turn([self._edit("README.md"), self._bash(cmd)], "Updated docs.", mimo_audit.DELIVERABLE_RE), cmd)
+
+    def test_disqualified_by_deliverable_claim(self) -> None:
+        import mimo_audit
+        from lib.transcript import doc_only_turn
+
+        self.assertFalse(doc_only_turn([self._edit("README.md")], "Updated docs and pushed to main.", mimo_audit.DELIVERABLE_RE))
+
+    def test_disqualified_when_nothing_edited(self) -> None:
+        import mimo_audit
+        from lib.transcript import doc_only_turn
+
+        self.assertFalse(doc_only_turn([self._bash("ls")], "Listed files.", mimo_audit.DELIVERABLE_RE))
+
+    def test_main_skips_model_on_doc_only_but_gates_still_run_first(self) -> None:
+        import mimo_audit
+
+        red = "[c1] Bash: python -m pytest\n\nFAILED t.py::t - AssertionError\n1 failed"
+        for entries, expect_model, expect_block in (
+            ([self._edit("README.md")], False, False),                       # pure doc turn -> skip, allow
+            ([self._edit("README.md"), ("TOOL OUTPUT", red)], False, True),  # doc turn but red test unmentioned -> gate blocks first
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                with (
+                    mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                    mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                    mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+                    mock.patch.object(mimo_audit, "log"),
+                    mock.patch.object(mimo_audit, "record_lesson"),
+                    mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                    mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                    mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=entries),
+                ):
+                    payload = {"session_id": "D", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp, "last_assistant_message": "Updated the docs."}
+                    with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                        buf = io.StringIO()
+                        with redirect_stdout(buf), self.assertRaises(SystemExit):
+                            mimo_audit.main()
+                    out = json.loads(buf.getvalue()) if buf.getvalue().strip() else {}
+                    verdict = json.loads((Path(tmp) / "v.json").read_text())["D"]["verdict"]
+            self.assertEqual(model.called, expect_model)
+            self.assertEqual(out.get("decision") == "block", expect_block)
+            self.assertEqual(verdict, "ISSUES" if expect_block else "SKIP_DOC_ONLY")

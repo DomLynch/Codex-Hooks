@@ -36,7 +36,7 @@ from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import compact_task_entries, deterministic_findings, pass_warnings, sensitive_paths, sensitive_section  # noqa: E402
+from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, pass_warnings, sensitive_paths, sensitive_section  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
@@ -672,6 +672,12 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
+    elif doc_only_turn(entries, last_msg, DELIVERABLE_RE):
+        # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
+        save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
+        reset_consecutive_blocks(session_id)
+        allow_stop("doc-only turn - audit skipped")
+        return
     else:
         section = ledger.prompt_section(session_id)
         if section:

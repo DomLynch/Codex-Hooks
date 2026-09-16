@@ -222,6 +222,29 @@ def pass_warnings(verdict_text: str) -> list[str]:
             for line in rest.splitlines() if _WARNING_LINE_RE.match(line)]
 
 
+DOC_EXT_RE = re.compile(r"\.(md|mdx|markdown|txt|rst|adoc|asciidoc)$", re.IGNORECASE)
+_MUTATING_BASH_RE = re.compile(
+    r"(\bsed\s+-i|\btee\b|(?<![<>])>(?!>)|>>|\bmv\b|\bcp\b|\brm\b|\bgit\s+(commit|push|add|checkout|reset|rebase|merge)\b|"
+    r"\bnpm\b|\bpnpm\b|\byarn\b|\bpip\b|\bpoetry\b|\bmake\b|\bcargo\b|\bgo\s+(build|run|install)\b|\bpython3?\s+\S+\.py)",
+    re.IGNORECASE,
+)
+
+
+def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverable_re: re.Pattern) -> bool:
+    """True when the turn only edited documentation and made no shipping claim.
+
+    Conservative: any Edit/Write on a non-doc file, any Bash call that looks like it
+    mutates the tree or runs code, or any push/deploy/done claim disqualifies. A wrong
+    answer here only costs one ordinary audit, so bias toward False."""
+    edited = edited_paths(entries)
+    if not edited or not all(DOC_EXT_RE.search(p) for p in edited):
+        return False
+    for role, body in entries:
+        if role == "TOOL CALL" and body.startswith("Bash:") and _MUTATING_BASH_RE.search(body):
+            return False
+    return not deliverable_re.search(final_message or "")
+
+
 def deterministic_findings(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
     """All mechanical pre-model gates. Each item is a complete, actionable finding."""
     findings: list[str] = []
