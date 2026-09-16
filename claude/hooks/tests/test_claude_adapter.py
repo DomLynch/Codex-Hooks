@@ -350,6 +350,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             }
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES"),
@@ -410,6 +411,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             }
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=TimeoutError("read timeout")),
@@ -432,6 +434,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             }
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
@@ -455,6 +458,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             }
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", state_path),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", state_path.parent / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson") as record_lesson,
@@ -701,6 +705,7 @@ class BlockChainDamperTests(unittest.TestCase):
             calls: list[str] = []
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", state),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", state.parent / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "record_lesson", side_effect=lambda k, v, *a: calls.append(v)),
                 mock.patch.object(mimo_audit, "log"),
@@ -779,6 +784,7 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
@@ -911,6 +917,7 @@ class DeterministicFindingsTests(unittest.TestCase):
 
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
@@ -925,7 +932,7 @@ class DeterministicFindingsTests(unittest.TestCase):
                         mimo_audit.main()
         out = json.loads(buf.getvalue())
         self.assertEqual(out["decision"], "block")
-        for marker in ("1. A test/check run", "2. Files you edited", "3. Your final message refers"):
+        for marker in ("1. [F1] A test/check run", "2. [F2] Files you edited", "3. [F3] Your final message refers", "[F1] fixed:"):
             self.assertIn(marker, out["reason"])
         model.assert_not_called()
 
@@ -942,3 +949,121 @@ class FixtureLessonGuardTests(unittest.TestCase):
             autonomy.record_lesson("mimo_stop", "real finding", "abc123-real")
             shown = autonomy.active_lessons()
         self.assertEqual(shown, ["real finding"])
+
+
+class FindingLedgerTests(unittest.TestCase):
+    """Findings get stable IDs; the agent must answer each; rejections can't be re-argued forever."""
+
+    def _iso(self, tmp):
+        from lib import ledger
+        return mock.patch.object(ledger, "LEDGER_PATH", Path(tmp) / "ledger.json")
+
+    def test_ids_are_assigned_and_persist_across_rounds(self) -> None:
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            text, esc = ledger.register_findings("s", "VERDICT: ISSUES\n1. tests red\n2. no receipt")
+            self.assertEqual(text.splitlines()[1:], ["1. [F1] tests red", "2. [F2] no receipt"])
+            self.assertEqual(esc, [])
+            text2, _ = ledger.register_findings("s", "VERDICT: ISSUES\n1. new thing")
+            self.assertEqual(text2.splitlines()[1], "1. [F3] new thing", "numbering continues across rounds")
+
+    def test_decisions_are_parsed_and_unanswered_are_returned(self) -> None:
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("s", "VERDICT: ISSUES\n1. a\n2. b\n3. c")
+            un = ledger.apply_decisions("s", "Done.\n[F1] fixed: reran, 5 passed\n[f3] REJECTED: negative test\nmore prose")
+            self.assertEqual(un, ["F2"])
+            st = {f["id"]: f["status"] for f in ledger._state("s")["findings"]}
+            self.assertEqual(st, {"F1": "fixed", "F2": "open", "F3": "rejected"})
+
+    def test_reviewer_reuses_id_when_reraising(self) -> None:
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("s", "VERDICT: ISSUES\n1. cache never invalidated")
+            ledger.apply_decisions("s", "[F1] fixed: added invalidate()")
+            text, esc = ledger.register_findings("s", "VERDICT: ISSUES\n1. [F1] invalidate() is never called")
+            self.assertEqual(text.splitlines()[1], "1. [F1] invalidate() is never called")
+            self.assertEqual(esc, [])
+            self.assertEqual(ledger._state("s")["next_id"], 2, "no new ID minted for a re-raise")
+
+    def test_rejected_finding_is_dropped_after_max_reopens(self) -> None:
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("s", "VERDICT: ISSUES\n1. pin the cert")
+            ledger.apply_decisions("s", "[F1] rejected: out of scope")
+            t1, e1 = ledger.register_findings("s", "VERDICT: ISSUES\n1. [F1] still should pin")   # reopen #1 — allowed
+            self.assertIn("[F1]", t1)
+            self.assertEqual(e1, [])
+            ledger.apply_decisions("s", "[F1] rejected: still out of scope")
+            t2, e2 = ledger.register_findings("s", "VERDICT: ISSUES\n1. [F1] pin it")            # reopen #2 — escalated
+            self.assertEqual(e2, ["F1"])
+            self.assertNotIn("[F1]", t2, "escalated finding must not appear in the block")
+            self.assertEqual(ledger._state("s")["findings"][0]["status"], "escalated")
+
+    def test_prompt_section_and_clear(self) -> None:
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            self.assertEqual(ledger.prompt_section("s"), "")
+            ledger.register_findings("s", "VERDICT: ISSUES\n1. a")
+            ledger.apply_decisions("s", "[F1] fixed: yes")
+            sec = ledger.prompt_section("s")
+            self.assertIn("[F1] fixed — yes :: a", sec)
+            self.assertIn("from F2", sec)
+            ledger.clear("s")
+            self.assertEqual(ledger.prompt_section("s"), "")
+
+    def test_main_blocks_on_unanswered_without_calling_model(self) -> None:
+        import mimo_audit
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("L", "VERDICT: ISSUES\n1. tests red\n2. no receipt")
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),
+            ):
+                payload = {"session_id": "L", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp,
+                           "last_assistant_message": "[F1] fixed: reran, green. Done."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("[F2] no receipt", out["reason"])
+        self.assertNotIn("[F1]", out["reason"].split("Findings carry IDs")[0], "answered F1 must not re-block")
+        model.assert_not_called()
+
+    def test_main_pass_clears_ledger(self) -> None:
+        import mimo_audit
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("P", "VERDICT: ISSUES\n1. a")
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),
+            ):
+                payload = {"session_id": "P", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp,
+                           "last_assistant_message": "[F1] fixed: done"}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+            model.assert_called_once()
+            self.assertIn("PRIOR FINDINGS", model.call_args.args[0], "reviewer sees the ledger")
+            self.assertEqual(ledger.open_findings("P"), [])
+            self.assertEqual(ledger._state("P")["findings"], [], "PASS clears the session ledger")

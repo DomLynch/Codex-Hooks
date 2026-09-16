@@ -45,6 +45,7 @@ class ReviewEvidenceTests(unittest.TestCase):
                 payload = {"session_id": "short", "last_assistant_message": message}
                 with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()), \
                      mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"), \
+                     mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"), \
                      mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"), \
                      mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"), \
                      mock.patch.object(mimo_audit, "record_lesson"), \

@@ -39,6 +39,7 @@ class CompletionTests(unittest.TestCase):
                                 ("VERDICT_FILE", root / "verdict.json"),
                                 ("LOG_FILE", root / "audit.log")):
                 stack.enter_context(mock.patch.object(mimo_audit, name, value))
+            stack.enter_context(mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"))
             stack.enter_context(mock.patch.object(mimo_audit, "record_lesson"))
             if exhausted == "iterations":
                 stack.enter_context(mock.patch.object(mimo_audit, "load_iterations", return_value=3))

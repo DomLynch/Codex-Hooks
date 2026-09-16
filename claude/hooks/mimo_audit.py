@@ -37,6 +37,7 @@ from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import compact_task_entries, deterministic_findings  # noqa: E402
+from lib import ledger  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
 
@@ -612,10 +613,19 @@ def main() -> None:
     # markers in edited files, files cited in prose but never touched by any tool this turn.
     # Together these were ~45% of reviewer findings in the first 12h of Sonnet audits.
     mechanical = deterministic_findings(latest_task_entries_claude(transcript_path), last_msg, payload.get("cwd") or "")
+    # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
+    unanswered = ledger.apply_decisions(session_id, last_msg)
+    pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
+    if pre:
+        log(f"LEDGER_UNANSWERED: {', '.join(unanswered)} — model call skipped")
     if mechanical:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
-        verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(mechanical, 1))
+    if pre or mechanical:
+        verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
     else:
+        section = ledger.prompt_section(session_id)
+        if section:
+            transcript = f"{transcript}\n\n{section}"
         try:
             verdict_text = ask_mimo_with_retry(transcript)
             if not verdict_text:
@@ -651,10 +661,19 @@ def main() -> None:
     if verdict_text.startswith("VERDICT: PASS"):
         save_verdict(session_id, turn_id, "PASS", verdict_text)
         reset_consecutive_blocks(session_id)
+        ledger.clear(session_id)
         allow_stop("audit passed")
         return
 
     if verdict_text.startswith("VERDICT: ISSUES"):
+        verdict_text, escalated = ledger.register_findings(session_id, verdict_text)
+        if escalated:
+            log(f"LEDGER_ESCALATED: {', '.join(escalated)} re-raised past MAX_REOPENS; dropped from block")
+        if not any(ledger.NUMBERED_RE.match(line) for line in verdict_text.splitlines()):
+            save_verdict(session_id, turn_id, "ESCALATED_ALLOW", verdict_text)
+            reset_consecutive_blocks(session_id)
+            allow_stop(f"all findings escalated ({', '.join(escalated)}); released unresolved", unresolved=True)
+            return
         save_iterations(session_id, turn_id, iterations + 1)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
         consecutive_blocks = increment_consecutive_blocks(session_id)
@@ -666,6 +685,7 @@ def main() -> None:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)
             reset_consecutive_blocks(session_id)
+            ledger.clear(session_id)  # the damper is an escalation; do not re-block on these next Stop
             allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns", unresolved=True)
             return
         feedback = (
@@ -674,6 +694,7 @@ def main() -> None:
             f"A fresh {AUDITOR_NAME} session reviewed your work and found issues. "
             f"Fix these before stopping:\n\n"
             f"{verdict_text}\n\n"
+            f"{ledger.DECISION_INSTRUCTIONS}\n\n"
             f"After addressing each item, run any relevant checks and continue."
         )
         block_stop(feedback)
