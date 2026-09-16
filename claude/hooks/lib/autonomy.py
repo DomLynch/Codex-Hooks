@@ -219,10 +219,13 @@ def recent_repos(limit: int = 5) -> list[Path]:
     ][:limit]
 
 
-def record_lesson(source: str, text: str) -> None:
+FIXTURE_SESSION_RE = re.compile(r"^(e2e|test|fixture|probe)-", re.IGNORECASE)
+
+
+def record_lesson(source: str, text: str, session_id: str = "") -> None:
     clean = " ".join((text or "").split())[:240]
-    if not clean:
-        return
+    if not clean or FIXTURE_SESSION_RE.match(session_id or ""):
+        return  # synthetic test sessions must not teach real sessions about temp files
     now = time.time()
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:

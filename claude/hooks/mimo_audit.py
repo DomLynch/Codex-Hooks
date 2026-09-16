@@ -661,7 +661,7 @@ def main() -> None:
         if consecutive_blocks == 1:
             # Only the first block in a chain is a review of the work. Later rounds
             # re-litigate a rebuttal and would pollute Active Lessons for every future turn.
-            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
+            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text, session_id)
         if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)

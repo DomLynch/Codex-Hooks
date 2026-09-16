@@ -702,7 +702,7 @@ class BlockChainDamperTests(unittest.TestCase):
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", state),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
-                mock.patch.object(mimo_audit, "record_lesson", side_effect=lambda k, v: calls.append(v)),
+                mock.patch.object(mimo_audit, "record_lesson", side_effect=lambda k, v, *a: calls.append(v)),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "block_stop", side_effect=SystemExit(0)),
                 mock.patch.object(mimo_audit, "allow_stop", side_effect=SystemExit(0)),
@@ -928,3 +928,17 @@ class DeterministicFindingsTests(unittest.TestCase):
         for marker in ("1. A test/check run", "2. Files you edited", "3. Your final message refers"):
             self.assertIn(marker, out["reason"])
         model.assert_not_called()
+
+
+class FixtureLessonGuardTests(unittest.TestCase):
+    def test_fixture_sessions_never_record_lessons(self) -> None:
+        import lib.autonomy as autonomy
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
+             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
+             mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"):
+            autonomy.record_lesson("mimo_stop", "temp file has markers", "e2e-conf")
+            autonomy.record_lesson("mimo_stop", "real finding", "abc123-real")
+            shown = autonomy.active_lessons()
+        self.assertEqual(shown, ["real finding"])
