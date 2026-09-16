@@ -58,6 +58,10 @@ DELIVERABLE_RE = re.compile(
     re.IGNORECASE,
 )
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
+AUDIT_ERROR_PREFIX = "audit_errors:"
+MAX_CONSECUTIVE_AUDIT_ERRORS = 3   # reviewer down this many Stops in a row -> escalate + release
+PRESERVED_PREFIXES = (CONSECUTIVE_BLOCK_PREFIX, AUDIT_ERROR_PREFIX)  # never evicted by save_iterations()
+ESCALATION_DIR = Path.home() / ".claude" / "state" / "escalations"
 PENDING_WORK_RE = re.compile(
     r"\b(shall I|should I|may I|want me to|would you like me to|can I proceed|"
     r"I can (do|fix|apply|implement|deploy|continue)|still needs? to|"
@@ -325,8 +329,8 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
         if len(data) > 50:
             # Truncate per-turn keys only. Damper counters are inserted early and would
             # otherwise be the first thing evicted, silently disabling the block-chain damper.
-            dampers = {k: v for k, v in data.items() if k.startswith(CONSECUTIVE_BLOCK_PREFIX)}
-            turns = {k: v for k, v in data.items() if not k.startswith(CONSECUTIVE_BLOCK_PREFIX)}
+            dampers = {k: v for k, v in data.items() if k.startswith(PRESERVED_PREFIXES)}
+            turns = {k: v for k, v in data.items() if not k.startswith(PRESERVED_PREFIXES)}
             data = {**dampers, **dict(list(turns.items())[-50:])}
         return data
 
@@ -353,6 +357,43 @@ def increment_consecutive_blocks(session_id: str) -> int:
         return data
 
     return int(update_json_locked(STATE_FILE, updater).get(key, 0))
+
+
+def audit_error_key(session_id: str) -> str:
+    return f"{AUDIT_ERROR_PREFIX}{session_id or 'unknown'}"
+
+
+def reset_audit_errors(session_id: str) -> None:
+    def updater(data: dict) -> dict:
+        data.pop(audit_error_key(session_id), None)
+        return data
+
+    update_json_locked(STATE_FILE, updater)
+
+
+def increment_audit_errors(session_id: str) -> int:
+    key = audit_error_key(session_id)
+
+    def updater(data: dict) -> dict:
+        data[key] = int(data.get(key, 0)) + 1
+        return data
+
+    return int(update_json_locked(STATE_FILE, updater).get(key, 0))
+
+
+def write_escalation(session_id: str, cwd: str, message: str, attempts: int) -> Path:
+    """Human-readable record of an unresolved release. Lives in state, path is logged."""
+    ESCALATION_DIR.mkdir(parents=True, exist_ok=True)
+    path = ESCALATION_DIR / f"{session_id or 'unknown'}-{time.strftime('%Y%m%d-%H%M%S')}.md"
+    path.write_text(
+        f"# Audit escalation\n\n"
+        f"- session: `{session_id}`\n- cwd: `{cwd}`\n- when: {time.strftime('%Y-%m-%d %H:%M:%S %z')}\n"
+        f"- reviewer: {AUDITOR_NAME}\n- consecutive failed audits: {attempts}\n\n"
+        f"## Last error\n\n```\n{message[:2000]}\n```\n\n"
+        f"The turn was released **unresolved** so the session is not bricked while the reviewer is down. "
+        f"Nothing in this turn was reviewed. Re-run the audit or review the work manually.\n"
+    )
+    return path
 
 
 def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "") -> None:
@@ -474,19 +515,26 @@ def block_stop(reason: str) -> None:
     sys.exit(0)
 
 
-def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str) -> None:
+def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str, cwd: str = "") -> None:
+    """Reviewer could not run. Block, but only MAX_CONSECUTIVE_AUDIT_ERRORS Stops in a row:
+    the counter is per session (per-turn iterations reset every Stop and never bound anything).
+    On the cap, write an escalation record and release the turn as unresolved."""
     report_failure("mimo_audit", "audit_unavailable")
-    next_iteration = iterations + 1
-    save_iterations(session_id, turn_id, next_iteration)
+    save_iterations(session_id, turn_id, iterations + 1)
     save_verdict(session_id, turn_id, "ERROR", message)
-    if next_iteration >= MAX_ITERATIONS:
-        allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})", unresolved=True)
+    errors = increment_audit_errors(session_id)
+    if errors >= MAX_CONSECUTIVE_AUDIT_ERRORS:
+        path = write_escalation(session_id, cwd, message, errors)
+        reset_audit_errors(session_id)
+        log(f"AUDIT_ERROR_ESCALATED: session={session_id} errors={errors} file={path}")
+        allow_stop(f"reviewer unavailable {errors}x in a row; escalation written to {path}", unresolved=True)
         return
     block_stop(
-        f"[{AUDITOR_NAME} audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
+        f"[{AUDITOR_NAME} audit unavailable — attempt {errors}/{MAX_CONSECUTIVE_AUDIT_ERRORS}]\n\n"
         f"{message}\n\n"
-        f"{AUDITOR_NAME} could not complete the audit after {AUDIT_MAX_ATTEMPTS} attempts. Keep working/retry instead of silently "
-        "stopping; side effects remain gated until the reviewer returns PASS."
+        f"{AUDITOR_NAME} could not complete the audit. Keep working/retry; after "
+        f"{MAX_CONSECUTIVE_AUDIT_ERRORS} consecutive failures the turn is released unresolved and an "
+        f"escalation record is written."
     )
 
 
@@ -633,8 +681,9 @@ def main() -> None:
                 log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
                 verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
         except Exception as e:
-            block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}")
+            block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", payload.get("cwd") or "")
             return
+        reset_audit_errors(session_id)  # reviewer answered; the outage streak is over
 
     log(f"{AUDITOR_NAME} verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)

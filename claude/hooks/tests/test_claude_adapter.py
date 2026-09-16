@@ -1067,3 +1067,73 @@ class FindingLedgerTests(unittest.TestCase):
             self.assertIn("PRIOR FINDINGS", model.call_args.args[0], "reviewer sees the ledger")
             self.assertEqual(ledger.open_findings("P"), [])
             self.assertEqual(ledger._state("P")["findings"], [], "PASS clears the session ledger")
+
+
+class BoundedAuditErrorTests(unittest.TestCase):
+    """Reviewer outage blocks a bounded number of Stops per session, then escalates and releases."""
+
+    def _run(self, mimo_audit, tmp, sid, model):
+        with (
+            mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+            mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+            mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+            mock.patch.object(mimo_audit, "ESCALATION_DIR", Path(tmp) / "esc"),
+            mock.patch.object(mimo_audit, "log"),
+            mock.patch.object(mimo_audit, "record_lesson"),
+            mock.patch.object(mimo_audit, "report_failure"),
+            mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=model),
+            mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+            mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),
+        ):
+            payload = {"session_id": sid, "turn_id": f"t{time.time_ns()}", "transcript_path": "/nope", "cwd": tmp, "last_assistant_message": "Done."}
+            with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                buf = io.StringIO()
+                with redirect_stdout(buf), self.assertRaises(SystemExit):
+                    mimo_audit.main()
+        return json.loads(buf.getvalue()) if buf.getvalue().strip() else {}
+
+    def test_errors_block_then_escalate_and_release_on_third(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            boom = RuntimeError("401 OAuth expired")
+            out1 = self._run(mimo_audit, tmp, "E", boom)
+            self.assertEqual(out1["decision"], "block")
+            self.assertIn("attempt 1/3", out1["reason"])
+            out2 = self._run(mimo_audit, tmp, "E", boom)
+            self.assertIn("attempt 2/3", out2["reason"])
+            self.assertFalse((Path(tmp) / "esc").exists(), "no escalation before the cap")
+            out3 = self._run(mimo_audit, tmp, "E", boom)
+            self.assertEqual(out3, {}, "third failure releases the turn (allow = empty stdout)")
+            files = list((Path(tmp) / "esc").glob("E-*.md"))
+            self.assertEqual(len(files), 1)
+            body = files[0].read_text()
+            self.assertIn("401 OAuth expired", body)
+            self.assertIn("consecutive failed audits: 3", body)
+            self.assertIn("released **unresolved**", body)
+            self.assertNotIn("audit_errors:E", json.loads((Path(tmp) / "s.json").read_text()), "counter reset after escalation")
+
+    def test_successful_verdict_resets_error_streak(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._run(mimo_audit, tmp, "R", RuntimeError("down"))
+            self._run(mimo_audit, tmp, "R", RuntimeError("down"))
+            self.assertEqual(json.loads((Path(tmp) / "s.json").read_text())["audit_errors:R"], 2)
+            self._run(mimo_audit, tmp, "R", lambda *a, **k: "VERDICT: PASS")
+            self.assertNotIn("audit_errors:R", json.loads((Path(tmp) / "s.json").read_text()), "a real verdict ends the streak")
+            out = self._run(mimo_audit, tmp, "R", RuntimeError("down"))
+            self.assertIn("attempt 1/3", out["reason"], "streak restarts from 1, not 3")
+
+    def test_error_counter_survives_state_file_truncation(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "s.json"
+            state.write_text(json.dumps({f"old:turn-{i}": 1 for i in range(50)}))
+            with mock.patch.object(mimo_audit, "STATE_FILE", state):
+                seen = []
+                for i in range(3):
+                    mimo_audit.save_iterations("T", f"turn-{i}", 1)
+                    seen.append(mimo_audit.increment_audit_errors("T"))
+        self.assertEqual(seen, [1, 2, 3], "same eviction bug the damper had must not recur here")
