@@ -856,11 +856,11 @@ class AllHookBehaviorTests(unittest.TestCase):
                 mock.patch.object(autonomy, "SECRETS_ENV", Path(tmp) / "missing_env"),
                 mock.patch.object(autonomy.time, "time", return_value=now),
             ):
-                for idx in range(7):
+                for idx in range(9):
                     autonomy.record_lesson("test", f"Lesson {idx}")
                 self.assertEqual(
-                    autonomy.active_lessons(limit=10),
-                    ["Lesson 6", "Lesson 5", "Lesson 4", "Lesson 3", "Lesson 2"],
+                    autonomy.active_lessons(),
+                    [f"Lesson {idx}" for idx in range(8, 0, -1)],
                 )
                 lessons_state.write_text(json.dumps({
                     "updated_at": now,
