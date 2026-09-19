@@ -202,7 +202,7 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     update_audit_state(session_id, audited=True, verdict=verdict, preview=normalized)
     log(COMPONENT, f"mimo checkpoint verdict={verdict} transcript={len(transcript)}")
     if verdict == "ISSUES":
-        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized)
+        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized, cwd)
         block(
             "[GPT-5.6-Terra checkpoint audit]\n\n"
             "A fresh GPT-5.6-Terra session reviewed this in-progress task checkpoint and found concrete issues. "

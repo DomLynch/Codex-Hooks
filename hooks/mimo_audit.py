@@ -591,6 +591,7 @@ def main() -> None:
     entries = latest_task_entries(transcript_path)
     paths = edited_paths(entries)
     sensitive = sensitive_paths(paths)
+    review_cwd = resolve_git_cwd(payload.get("cwd") or ".", files=[Path(p) for p in paths], transcript=transcript)
     mechanical = deterministic_findings(entries, last_msg, payload.get("cwd") or ".")
     unanswered = ledger.apply_decisions(session_id, last_msg)
     pending = [f"[{finding['id']}] {finding['text']}" for finding in ledger.open_findings(session_id)
@@ -616,7 +617,6 @@ def main() -> None:
         if sensitive:
             transcript = ("SENSITIVE FILES EDITED: " + ", ".join(sensitive) +
                           "\nAny security concern is blocking; return ISSUES, not PASS with a warning.\n\n" + transcript)
-        review_cwd = resolve_git_cwd(payload.get("cwd") or ".", files=[Path(p) for p in paths], transcript=transcript)
         diff = turn_diff(str(review_cwd), paths)
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(paths)} edited path(s)")
@@ -681,7 +681,7 @@ def main() -> None:
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
         consecutive_blocks = increment_consecutive_blocks(session_id)
         if consecutive_blocks == 1:
-            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
+            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text, review_cwd)
         if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)

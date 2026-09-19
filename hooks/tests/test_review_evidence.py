@@ -166,6 +166,19 @@ class ReviewEvidenceTests(unittest.TestCase):
         self.assertLessEqual(len(text), 4000)
         self.assertIn("omitted tool outputs", text)
 
+    def test_middle_success_receipts_survive_many_poll_outputs(self):
+        entries = [("USER", "Verify CI and installed hooks")]
+        entries += [("TOOL OUTPUT", "first check: started")]
+        entries += [("TOOL OUTPUT", 'gh run view 123\n{"conclusion":"success","headSha":"abc123"}')]
+        entries += [("TOOL OUTPUT", "unittest discover\nRan 150 tests in 2.0s\nOK")]
+        entries += [("TOOL OUTPUT", f"poll-{i}\n" + "progress " * 250) for i in range(8)]
+        entries += [("TOOL OUTPUT", "parity: no differences"), ("ASSISTANT", "CI and tests passed")]
+        text = compact_task_entries(entries, 4000)
+        self.assertIn('"headSha":"abc123"', text)
+        self.assertIn("Ran 150 tests", text)
+        self.assertIn("parity: no differences", text)
+        self.assertLessEqual(len(text), 4000)
+
     def test_receipts_remain_data_and_latest_failure_is_retained(self):
         entries = [("USER", "Check tests")]
         entries += [("TOOL OUTPUT", "old run: PASS"), ("ASSISTANT", "progress " * 2000)]

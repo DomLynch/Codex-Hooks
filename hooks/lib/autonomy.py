@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from lib.json_state import load_json_locked, update_json_locked
+from lib.git import git_root, safe_run
 
 
 STATE_DIR = Path.home() / ".codex" / "state"
@@ -219,23 +220,39 @@ def recent_repos(limit: int = 5) -> list[Path]:
     ][:limit]
 
 
-def record_lesson(source: str, text: str) -> None:
+def lesson_project(cwd: Path | None) -> str:
+    root = git_root(cwd) if cwd else None
+    if not root:
+        return ""
+    rc, common_dir, _ = safe_run(["git", "rev-parse", "--git-common-dir"], cwd=root, timeout=3)
+    return str((root / common_dir.strip()).resolve()) if rc == 0 and common_dir.strip() else ""
+
+
+def record_lesson(source: str, text: str, cwd: Path | None = None) -> None:
     clean = " ".join((text or "").split())[:240]
     if not clean:
         return
     now = time.time()
+    project = lesson_project(cwd)
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:
-        f.write(json.dumps({"ts": now, "source": source, "lesson": clean}) + "\n")
+        f.write(json.dumps({"ts": now, "source": source, "lesson": clean, "project": project}) + "\n")
 
     def updater(state: dict) -> dict:
         entries = _fresh_lesson_entries(_lesson_entries(state), now)
-        entries = [item for item in entries if item["lesson"] != clean]
-        entries.insert(0, {"lesson": clean, "source": source, "ts": now})
-        state["lessons"] = entries[:MAX_ACTIVE_LESSONS]
+        entries = [item for item in entries if (item["lesson"], item["project"]) != (clean, project)]
+        entries.insert(0, {"lesson": clean, "source": source, "ts": now, "project": project})
+        counts: dict[str, int] = {}
+        retained = []
+        for item in entries:
+            key = item["project"]
+            if counts.get(key, 0) < MAX_ACTIVE_LESSONS:
+                retained.append(item)
+                counts[key] = counts.get(key, 0) + 1
+        state["lessons"] = retained
         state["updated_at"] = now
         LESSONS_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
-        LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in state["lessons"]) + "\n")
+        LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in retained[:MAX_ACTIVE_LESSONS]) + "\n")
         return state
 
     update_json_locked(LESSONS_STATE, updater)
@@ -260,11 +277,12 @@ def _lesson_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "lesson": lesson,
                     "source": str(item.get("source") or "unknown"),
                     "ts": float(item.get("ts") or updated_at or 0),
+                    "project": str(item.get("project") or ""),
                 })
         else:
             lesson = str(item).strip()
             if lesson:
-                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at})
+                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at, "project": ""})
     return entries
 
 
@@ -272,13 +290,19 @@ def _fresh_lesson_entries(entries: list[dict[str, Any]], now: float | None = Non
     current = time.time() if now is None else now
     cutoff = current - lesson_ttl_s()
     fresh = [item for item in entries if float(item.get("ts") or 0) >= cutoff]
-    return fresh[:MAX_ACTIVE_LESSONS]
+    return fresh
 
 
-def active_lessons(limit: int = MAX_ACTIVE_LESSONS) -> list[str]:
+def active_lessons(limit: int = MAX_ACTIVE_LESSONS, cwd: Path | None = None) -> list[str]:
+    project = lesson_project(cwd) if cwd else None
+    if cwd is not None and not project:
+        return []
     state = load_json_locked(LESSONS_STATE, {})
     if isinstance(state, dict) and isinstance(state.get("lessons"), list):
-        return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))][:limit]
+        entries = _fresh_lesson_entries(_lesson_entries(state))
+        return [item["lesson"] for item in entries if project is None or item["project"] == project][:limit]
+    if cwd is not None:
+        return []
     try:
         if time.time() - LESSONS_ACTIVE.stat().st_mtime > lesson_ttl_s():
             return []

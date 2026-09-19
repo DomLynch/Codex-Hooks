@@ -696,6 +696,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         ask_mimo.assert_called_once()
 
     def test_mimo_block_chain_damper_allows_without_repeating_lesson(self) -> None:
+        self.assertEqual(mimo_audit.MAX_CONSECUTIVE_BLOCKS, 3)
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             state_path = tmp_path / "iterations.json"
@@ -886,6 +887,32 @@ class AllHookBehaviorTests(unittest.TestCase):
                     ],
                 }))
                 self.assertEqual(autonomy.active_lessons(limit=10), ["fresh lesson"])
+
+    def test_active_lessons_are_scoped_across_repos_and_worktrees(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            first, second, lane = (base / name for name in ("first", "second", "lane"))
+            first.mkdir()
+            second.mkdir()
+            init_git_repo(first)
+            init_git_repo(second)
+            (first / "README.md").write_text("first\n")
+            git(first, "add", "README.md")
+            git(first, "commit", "-m", "initial")
+            git(first, "worktree", "add", "-b", "lane", str(lane))
+            with (
+                mock.patch.object(autonomy, "LESSONS_STATE", base / "lessons.json"),
+                mock.patch.object(autonomy, "LESSONS_JSONL", base / "lessons.jsonl"),
+                mock.patch.object(autonomy, "LESSONS_ACTIVE", base / "lessons.md"),
+            ):
+                autonomy.record_lesson("test", "first finding", first)
+                autonomy.record_lesson("test", "second finding", second)
+                self.assertEqual(autonomy.active_lessons(cwd=lane), ["first finding"])
+                self.assertEqual(autonomy.active_lessons(cwd=second), ["second finding"])
+                self.assertEqual(autonomy.active_lessons(cwd=base), [])
+                context = user_prompt_submit.context_for("fix hook tests", second)
+                self.assertIn("second finding", context)
+                self.assertNotIn("first finding", context)
 
     def test_autonomy_daemon_installer_has_lifecycle_and_stop_switch(self) -> None:
         script = (HOOKS_DIR.parents[0] / "scripts" / "install_autonomy_daemon.sh").read_text()

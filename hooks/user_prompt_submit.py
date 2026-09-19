@@ -102,7 +102,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             + AUTONOMY_POLICY
         )
 
-    lessons = active_lessons()
+    lessons = active_lessons(cwd=cwd)
     lessons_context = ""
     if lessons:
         lessons_context = (

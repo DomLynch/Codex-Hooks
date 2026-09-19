@@ -113,6 +113,10 @@ _TEST_RUNNER_RE = re.compile(
     r"cargo test|go test|make (test|check|quality)|ruff check|mypy|tsc\b|\.quality-gate", re.IGNORECASE
 )
 _ACK_RE = re.compile(r"\b(fail(?:ed|ing|ure|s)?|error|broken|red|unresolved|regression)\b", re.IGNORECASE)
+_SUCCESS_RECEIPT_RE = re.compile(
+    r"\bRan\s+\d+\s+tests\b|^OK$|All checks passed|parity|no differences|"
+    r'"conclusion"\s*:\s*"success"', re.IGNORECASE
+)
 
 
 def edited_paths(entries: list[tuple[str, str]]) -> list[str]:
@@ -219,6 +223,7 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     text = sanitize("\n\n".join(_render_entry(role, body) for role, body in entries))
     if len(text) <= max_chars:
         return text
+    outputs = [body for role, body in entries if role == "TOOL OUTPUT"]
     failures = [(body, _failure_excerpt(body, 220)) for role, body in entries if role == "TOOL OUTPUT"]
     failures = [(body, excerpt) for body, excerpt in failures if excerpt]
     history = ""
@@ -227,6 +232,17 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
         history += "\n".join(_bounded_compact(body.splitlines()[0], 100) + "\n" + excerpt
                              for body, excerpt in failures[-4:])
         history = _bounded_compact(history, min(900, max_chars // 4))
+    middle = outputs[1:-3] if len(outputs) > 4 else []
+    receipts = []
+    for body in middle:
+        lines = [line.strip() for line in body.splitlines() if _SUCCESS_RECEIPT_RE.search(line.strip())]
+        if lines:
+            receipts.append(_bounded_compact(body.splitlines()[0], 80) + " " + _bounded_compact("; ".join(lines[:3]), 220))
+    if receipts and max_chars >= 2000:
+        history += _bounded_compact(
+            "\n\nVERIFICATION HISTORY (ordered excerpts, not verdicts; check later reruns):\n"
+            + "\n".join(receipts[-6:]), min(700, max_chars // 5)
+        )
     max_chars -= len(history)
     first_role, first_body = entries[0]
     head_budget = max_chars // 4
@@ -237,7 +253,6 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     final = next((_render_entry(role, body) for role, body in reversed(entries) if role == "ASSISTANT"), "")
     recent = "\n\n".join(_render_entry(role, body) for role, body in entries[-3:] if role not in {"TOOL OUTPUT", "ASSISTANT"})
     tail = _bounded_compact("\n\n".join(part for part in (final, recent) if part), max_chars // 2)
-    outputs = [body for role, body in entries if role == "TOOL OUTPUT"]
     # Retain the initial verification as well as the latest results, in order.
     selected = outputs if len(outputs) <= 4 else outputs[:1] + outputs[-3:]
     header = (f"\n\n...[verification receipts preserved: {len(selected)}/{len(outputs)}; "
