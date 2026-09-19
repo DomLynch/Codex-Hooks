@@ -76,14 +76,14 @@ Current task slice:
 
 
 def sync_codegraph(root: Path) -> None:
-    if not (root / ".codegraph" / "codegraph.db").exists():
-        return
+    indexed = (root / ".codegraph" / "codegraph.db").exists()
     try:
-        result = subprocess.run(["codegraph", "sync", "-q"], cwd=root, capture_output=True, text=True, timeout=10)
+        command = ["codegraph", "sync", "-q"] if indexed else ["codegraph", "init"]
+        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10 if indexed else 20)
         if result.returncode:
-            log(COMPONENT, f"codegraph sync failed cwd={root}: {result.stderr[-200:]}")
+            log(COMPONENT, f"codegraph update failed cwd={root}: {result.stderr[-200:]}")
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log(COMPONENT, f"codegraph sync unavailable cwd={root}: {exc}")
+        log(COMPONENT, f"codegraph update unavailable cwd={root}: {exc}")
 
 
 def block(reason: str) -> None:

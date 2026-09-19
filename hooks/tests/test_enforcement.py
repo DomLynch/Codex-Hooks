@@ -244,13 +244,15 @@ class EnforcementTests(unittest.TestCase):
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
             self.assertEqual({call.args[0] for call in sync.call_args_list}, {file.parent for file in files})
 
-    def test_codegraph_sync_only_uses_existing_index(self):
+    def test_codegraph_initializes_then_syncs_existing_index(self):
         with patch.object(post_tool.subprocess, 'run') as run:
+            run.return_value.returncode = 0
             post_tool.sync_codegraph(self.root)
-            run.assert_not_called()
+            run.assert_called_once_with(['codegraph', 'init'], cwd=self.root,
+                                        capture_output=True, text=True, timeout=20)
+            run.reset_mock()
             (self.root/'.codegraph').mkdir()
             (self.root/'.codegraph/codegraph.db').write_text('')
-            run.return_value.returncode = 0
             post_tool.sync_codegraph(self.root)
             run.assert_called_once_with(['codegraph', 'sync', '-q'], cwd=self.root,
                                         capture_output=True, text=True, timeout=10)
