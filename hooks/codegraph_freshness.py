@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from lib.git import git_root
-
 
 def main() -> None:
     try:
@@ -22,8 +20,10 @@ def main() -> None:
     if not isinstance(tool_input, dict):
         return
     path = Path(tool_input.get("projectPath") or payload.get("cwd") or ".").expanduser().resolve()
-    root = git_root(path)
-    if not root or not (root / ".codegraph" / "codegraph.db").is_file():
+    for root in (path, *path.parents):
+        if (root / ".codegraph" / "codegraph.db").is_file():
+            break
+    else:
         return
     try:
         result = subprocess.run(["codegraph", "sync", "-q"], cwd=root, capture_output=True, text=True, timeout=30)
