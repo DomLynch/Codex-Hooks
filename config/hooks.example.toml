@@ -43,6 +43,15 @@ command = "python3 /Users/domininclynch/.codex/hooks/user_prompt_submit.py"
 timeout = 10
 statusMessage = "AAA task router"
 
+[[hooks.PreToolUse]]
+matcher = "^mcp__codegraph__codegraph_explore$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/codegraph_freshness.py"
+timeout = 35
+statusMessage = "Refreshing CodeGraph"
+
 [[hooks.PostToolUse]]
 
 [[hooks.PostToolUse.hooks]]
