@@ -10,7 +10,7 @@ command = "/Users/domininclynch/.local/bin/serena"
 args = ["start-mcp-server", "--context=codex", "--project-from-cwd", "--enable-web-dashboard", "false", "--open-web-dashboard", "false"]
 
 [features]
-codex_hooks = true
+hooks = true
 
 [[hooks.Stop]]
 
