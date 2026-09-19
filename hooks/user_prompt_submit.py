@@ -48,7 +48,7 @@ AUTONOMY_POLICY = "\n".join(
     ]
 )
 
-SENTRY_POLICY = "- For production incidents, consult the project's Sentry errors when configured and accessible, then reproduce locally. Cite the project/environment/release and event receipt; unavailable Sentry is not a clean bill of health. Never upload secrets, prompts or private user content."
+SENTRY_POLICY = "- For new deployable apps, configure a project-specific Sentry SDK/DSN and verify a remote event before claiming reporting works; MCP access alone does not instrument the app. For production incidents, consult Sentry when configured and accessible, then reproduce locally. Cite the project/environment/release and event receipt; unavailable Sentry is not a clean bill of health. Never upload secrets, prompts or private user content."
 
 WORK_QUALITY_POLICY = "\n".join(
     [

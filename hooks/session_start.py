@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,7 +13,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import remember_repo
 from lib.log import log
-from lib.git import is_git_repo
+from lib.git import git_root, is_git_repo
 from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.transcript import latest_task_slice
@@ -96,12 +98,20 @@ def format_briefing(handoff: dict, mined: list[dict]) -> str:
 def codegraph_notice(cwd: str | None) -> str:
     if not cwd:
         return ""
-    path = Path(cwd).resolve()
-    if not is_git_repo(path):
+    path = git_root(Path(cwd).resolve())
+    if path is None:
         return ""
     if (path / ".codegraph" / "codegraph.db").exists():
         return ""
-    return "# Codegraph\n- No local index found for this repo; run `codegraph init -i` before structural code work."
+    if shutil.which("codegraph"):
+        try:
+            result = subprocess.run(["codegraph", "init"], cwd=path, capture_output=True, text=True, timeout=20)
+            if result.returncode == 0 and (path / ".codegraph" / "codegraph.db").exists():
+                log(COMPONENT, f"codegraph initialized cwd={path}")
+                return ""
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log(COMPONENT, f"codegraph init unavailable cwd={path}: {exc}")
+    return "# Codegraph\n- No local index found for this repo; Codegraph initialization failed or is unavailable. State the fallback."
 
 
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:

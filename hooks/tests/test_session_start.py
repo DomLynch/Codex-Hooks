@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import subprocess
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 HOOKS_DIR = Path(__file__).resolve().parents[1]
@@ -68,10 +69,30 @@ class SessionStartRoutingTests(unittest.TestCase):
             cwd = Path(tmp).resolve()
             self.assertEqual(session_start.codegraph_notice(str(cwd)), "")
             subprocess.run(["git", "init"], cwd=cwd, check=True, capture_output=True)
-            self.assertIn("codegraph init -i", session_start.codegraph_notice(str(cwd)))
+            with patch.object(session_start.shutil, "which", return_value=None):
+                self.assertIn("initialization failed or is unavailable", session_start.codegraph_notice(str(cwd)))
             (cwd / ".codegraph").mkdir()
             (cwd / ".codegraph" / "codegraph.db").write_text("")
             self.assertEqual(session_start.codegraph_notice(str(cwd)), "")
+
+    def test_codegraph_notice_initializes_missing_index_at_git_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            nested = root / "src"
+            nested.mkdir()
+            def initialize(*_args, **_kwargs):
+                (root / ".codegraph").mkdir()
+                (root / ".codegraph" / "codegraph.db").write_text("")
+                return Mock(returncode=0)
+
+            with patch.object(session_start, "git_root", return_value=root), \
+                 patch.object(session_start.shutil, "which", return_value="/usr/bin/codegraph"), \
+                 patch.object(session_start.subprocess, "run", side_effect=initialize) as run, \
+                 patch.object(session_start, "log"):
+                self.assertEqual(session_start.codegraph_notice(str(nested)), "")
+                run.assert_called_once_with(["codegraph", "init"], cwd=root, capture_output=True, text=True, timeout=20)
+                self.assertEqual(session_start.codegraph_notice(str(nested)), "")
+                run.assert_called_once()
 
 
 if __name__ == "__main__":
