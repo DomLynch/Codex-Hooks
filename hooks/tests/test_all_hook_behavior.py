@@ -95,7 +95,23 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("Active Lessons", context)
+        self.assertIn("past examples, not open tasks", context)
+        self.assertIn("never resume an old project's work", context)
         self.assertIn("Run the negative path test.", context)
+
+    def test_simple_prompt_does_not_inject_unrelated_lessons(self) -> None:
+        with (
+            mock.patch.object(user_prompt_submit, "active_lessons", return_value=["Deploy another project's PR."]) as lessons,
+            mock.patch.object(user_prompt_submit, "log"),
+        ):
+            _, out = run_main_with_stdin(
+                user_prompt_submit.main,
+                {"prompt": "thanks", "cwd": "/tmp/project"},
+            )
+
+        context = json.loads(out)["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("another project's PR", context)
+        lessons.assert_not_called()
 
     def test_call_mimo_uses_chatgpt_codex_cli(self) -> None:
         completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")

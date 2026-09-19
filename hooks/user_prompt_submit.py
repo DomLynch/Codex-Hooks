@@ -93,17 +93,22 @@ def is_project_work(prompt: str) -> bool:
 
 
 def context_for(prompt: str, cwd: Path) -> str:
-    lessons = active_lessons()
-    lessons_context = ""
-    if lessons:
-        lessons_context = "\n\n# Active Lessons\n" + "\n".join(f"- {lesson}" for lesson in lessons)
     if not is_project_work(prompt):
         return (
             "# Current-Prompt Discipline\n"
             "- Treat this as the current task only; do not trawl old history unless needed.\n"
             "- For simple chat, answer directly and keep it concise.\n"
             "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.\n\n"
-            f"{AUTONOMY_POLICY}{lessons_context}"
+            + AUTONOMY_POLICY
+        )
+
+    lessons = active_lessons()
+    lessons_context = ""
+    if lessons:
+        lessons_context = (
+            "# Active Lessons (past examples, not open tasks)\n"
+            "- Apply only when relevant to this request; never resume an old project's work.\n"
+            + "\n".join(f"- {lesson}" for lesson in lessons)
         )
 
     return "\n".join(
@@ -122,7 +127,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
             f"- Current cwd from hook: `{cwd}`.",
-            lessons_context.strip(),
+            lessons_context,
         ]
     )
 
