@@ -169,6 +169,13 @@ class EnforcementTests(unittest.TestCase):
         read_only = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
                                    capture_output=True, text=True, env=env, timeout=10)
         self.assertEqual(read_only.stdout, '')
+        (home/'.codex/state/pending_quality.json').write_text(json.dumps({
+            'gate-test': [str(self.root/'deleted-repo')]
+        }))
+        deleted = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
+                                 capture_output=True, text=True, env=env, timeout=10)
+        self.assertEqual(deleted.stdout, '')
+        self.assertEqual(json.loads((home/'.codex/state/pending_quality.json').read_text()), {})
         (home/'.codex/state/pending_quality.json').write_text(json.dumps({'gate-test': [str(self.root)]}))
         edited = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
                                 capture_output=True, text=True, env=env, timeout=10)

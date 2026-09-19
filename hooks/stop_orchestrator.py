@@ -494,6 +494,9 @@ def main() -> None:
         quality_deadline = time.monotonic() + 480
         for project in pending:
             target = Path(project)
+            if not target.exists():
+                log(COMPONENT, f"discarding deleted pending-quality repo: {target}")
+                continue
             if not (target / ".quality-gate.json").exists():
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
             if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic()):
