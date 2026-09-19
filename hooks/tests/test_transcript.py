@@ -10,7 +10,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.transcript import _bounded_compact, latest_task_slice  # noqa: E402
+from lib.transcript import _bounded_compact, deterministic_findings, latest_task_slice  # noqa: E402
 
 
 def message(role: str, text: str) -> str:
@@ -32,6 +32,19 @@ def tool_output(text: str) -> str:
 
 
 class TranscriptSliceTests(unittest.TestCase):
+    def test_file_link_without_content_claim_is_not_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text("{}")
+            findings = deterministic_findings([], f"See [result]({path})", tmp)
+        self.assertEqual(findings, [])
+
+    def test_failed_check_still_requires_disposition(self) -> None:
+        entries = [("TOOL OUTPUT", '[run] pytest -q\n{"exit_code": 1}\nFAILED test_case')]
+        findings = deterministic_findings(entries, "All done.", ".")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("A check failed", findings[0])
+
     def test_bounded_compact_handles_tiny_budget(self) -> None:
         self.assertLessEqual(len(_bounded_compact("x" * 100, 10)), 10)
 

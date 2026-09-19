@@ -102,10 +102,6 @@ def _failure_excerpt(text: str, limit: int) -> str:
 
 _EDIT_PATH_RE = re.compile(r"\*\*\* (?:Add|Update|Delete) File:\s*([^\n\\\"']+)")
 _FILE_ARG_RE = re.compile(r'"(?:file_path|path)"\s*:\s*"([^"]+)"')
-_PATH_MENTION_RE = re.compile(
-    r"(?<![\w/])((?:/|\./|~/)?(?:[\w.\-]+/)+[\w.\-]+\.[A-Za-z0-9]{1,6}|"
-    r"[\w.\-]+\.(?:png|jpe?g|gif|webp|svg|pdf))(?![\w/])"
-)
 _SENSITIVE_PATH_RE = re.compile(
     r"(?:^|/)\.env(?:\.[^/]+)?$|(?:^|/)[^/]+\.(?:pem|key|p12)$|"
     r"(?:^|[/_.-])(?:auth(?:entication|orization)?|login|session|token|secret|credential|"
@@ -160,15 +156,6 @@ def deterministic_findings(entries: list[tuple[str, str]], message: str, cwd: st
                     findings.append(f"Edited file still has git conflict markers: {path}")
         except OSError:
             continue
-    tool_text = "\n".join(body for role, body in entries if role.startswith("TOOL"))
-    for path in _PATH_MENTION_RE.findall(message or ""):
-        if path in tool_text or Path(path).name in tool_text:
-            continue
-        candidate = Path(path).expanduser()
-        if not candidate.is_absolute():
-            candidate = Path(cwd) / candidate
-        if candidate.is_file():
-            findings.append(f"File cited without a visible tool receipt this turn: {path}. Read it or drop the claim.")
     return findings
 
 

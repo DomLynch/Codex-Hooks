@@ -212,6 +212,8 @@ Auditor constraints - demands must be executable:
   If the agent cites a specific command and its output location, treat that as
   referenced evidence, not fabrication. Only flag missing evidence when the
   agent makes a NEW claim with no source.
+- A file path or link alone is navigation, not a claim that its contents were
+  read or verified. Do not demand a fresh read solely because a file is cited.
 - Tool output (stdout/stderr blocks, grep results, test runs) included in the
   slice IS verification. Do not flag verified-by-shown-output items.
 - Tool-call arguments in this slice are MECHANICALLY TRUNCATED by the slice
