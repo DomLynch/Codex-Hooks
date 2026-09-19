@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -72,6 +73,17 @@ Current task slice:
 {transcript}
 ---
 """
+
+
+def sync_codegraph(root: Path) -> None:
+    if not (root / ".codegraph" / "codegraph.db").exists():
+        return
+    try:
+        result = subprocess.run(["codegraph", "sync", "-q"], cwd=root, capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            log(COMPONENT, f"codegraph sync failed cwd={root}: {result.stderr[-200:]}")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(COMPONENT, f"codegraph sync unavailable cwd={root}: {exc}")
 
 
 def block(reason: str) -> None:
@@ -251,6 +263,9 @@ def main() -> None:
             files = changed_files(cwd)
         if not targets and files:
             targets[cwd] = files
+        if is_edit:
+            for root in targets:
+                sync_codegraph(root)
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
         for root, target_files in targets.items():
             result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic())
