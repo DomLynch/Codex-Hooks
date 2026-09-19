@@ -498,7 +498,8 @@ def main() -> None:
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
             if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic()):
                 return
-        if str(cwd) not in pending and is_git_repo(cwd) and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic()):
+        if (str(cwd) not in pending and is_git_repo(cwd) and milestone_detected(transcript)
+                and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic())):
             return
         if pending:
             pending_quality(session_id, clear=True)

@@ -165,6 +165,17 @@ class EnforcementTests(unittest.TestCase):
         env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0', CODEX_HOOK_CLAUDE_AUDIT='0')
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Checked the project.'})
+        self.contract([[sys.executable, '-c', 'raise SystemExit(1)']])
+        read_only = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
+                                   capture_output=True, text=True, env=env, timeout=10)
+        self.assertEqual(read_only.stdout, '')
+        (home/'.codex/state/pending_quality.json').write_text(json.dumps({'gate-test': [str(self.root)]}))
+        edited = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
+                                capture_output=True, text=True, env=env, timeout=10)
+        self.assertIn('Repository Quality Gate', edited.stdout)
+        (home/'.codex/state/pending_quality.json').unlink()
+        payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
+                              'last_assistant_message':'Ready to deploy now.'})
         for code in (1, 0):
             (self.root / '.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']],
