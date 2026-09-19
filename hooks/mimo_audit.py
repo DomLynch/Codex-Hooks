@@ -36,7 +36,12 @@ from lib.api import call_mimo  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import latest_task_slice  # noqa: E402
+from lib.transcript import (  # noqa: E402
+    deterministic_findings, doc_only_turn, edited_paths, latest_task_entries,
+    latest_task_slice, sanitize, sensitive_paths, turn_diff,
+)
+from lib import ledger  # noqa: E402
+from lib.git import resolve_git_cwd  # noqa: E402
 
 
 # --- Tunables --------------------------------------------------------------
@@ -57,6 +62,9 @@ DELIVERABLE_RE = re.compile(
     re.IGNORECASE,
 )
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
+AUDIT_ERROR_PREFIX = "audit_errors:"
+MAX_CONSECUTIVE_AUDIT_ERRORS = 3
+ESCALATION_DIR = Path.home() / ".codex" / "state" / "escalations"
 PENDING_WORK_RE = re.compile(
     r"\b(shall I|should I|may I|want me to|would you like me to|can I proceed|"
     r"I can (do|fix|apply|implement|deploy|continue)|still needs? to|"
@@ -308,7 +316,10 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
         # Remove legacy session-wide counters so old failures cannot poison new turns.
         data.pop(session_id, None)
         if len(data) > 50:
+            preserved = {key: value for key, value in data.items()
+                         if key.startswith((CONSECUTIVE_BLOCK_PREFIX, AUDIT_ERROR_PREFIX))}
             data = dict(list(data.items())[-50:])
+            data.update(preserved)
         return data
 
     update_json_locked(STATE_FILE, updater)
@@ -334,6 +345,36 @@ def increment_consecutive_blocks(session_id: str) -> int:
         return data
 
     return int(update_json_locked(STATE_FILE, updater).get(key, 0))
+
+
+def reset_audit_errors(session_id: str) -> None:
+    def updater(data: dict) -> dict:
+        data.pop(f"{AUDIT_ERROR_PREFIX}{session_id}", None)
+        return data
+
+    update_json_locked(STATE_FILE, updater)
+
+
+def increment_audit_errors(session_id: str) -> int:
+    key = f"{AUDIT_ERROR_PREFIX}{session_id}"
+
+    def updater(data: dict) -> dict:
+        data[key] = int(data.get(key, 0)) + 1
+        return data
+
+    return int(update_json_locked(STATE_FILE, updater).get(key, 0))
+
+
+def write_escalation(session_id: str, cwd: str, message: str, attempts: int) -> Path:
+    ESCALATION_DIR.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "unknown")[:80]
+    path = ESCALATION_DIR / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}.md"
+    path.write_text(
+        f"# Unresolved reviewer outage\n\nSession: {session_id}\nRepo: {cwd}\n"
+        f"Consecutive failures: {attempts}\nError: {sanitize(message)[:1000]}\n\n"
+        "Released without a reviewer PASS. Recheck before claiming completion.\n"
+    )
+    return path
 
 
 def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "") -> None:
@@ -405,16 +446,22 @@ def block_stop(reason: str) -> None:
     sys.exit(0)
 
 
-def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str) -> None:
+def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str, cwd: str = "") -> None:
     report_failure("mimo_audit", "audit_unavailable")
     next_iteration = iterations + 1
     save_iterations(session_id, turn_id, next_iteration)
     save_verdict(session_id, turn_id, "ERROR", message)
+    errors = increment_audit_errors(session_id)
+    if errors >= MAX_CONSECUTIVE_AUDIT_ERRORS:
+        path = write_escalation(session_id, cwd, message, errors)
+        reset_audit_errors(session_id)
+        allow_stop(f"reviewer unavailable {errors}x; unresolved escalation at {path}", unresolved=True)
+        return
     if next_iteration >= MAX_ITERATIONS:
         allow_stop(f"{message}; max audit error iterations reached ({next_iteration}/{MAX_ITERATIONS})", unresolved=True)
         return
     block_stop(
-        f"[{AUDITOR_NAME} audit unavailable — iteration {next_iteration}/{MAX_ITERATIONS}]\n\n"
+        f"[{AUDITOR_NAME} audit unavailable — attempt {errors}/{MAX_CONSECUTIVE_AUDIT_ERRORS}]\n\n"
         f"{message}\n\n"
         f"{AUDITOR_NAME} could not complete the audit after {AUDIT_MAX_ATTEMPTS} attempts. Keep working/retry instead of silently "
         "stopping; side effects remain gated until the reviewer returns PASS."
@@ -501,6 +548,7 @@ def repair_verdict_format(response: str) -> str:
 
 # --- Main ------------------------------------------------------------------
 def main() -> None:
+    ledger.LEDGER_PATH = STATE_FILE.with_name("audit_pending.json")
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}
@@ -524,31 +572,73 @@ def main() -> None:
     log(f"TASK_SLICE: {len(transcript)} chars")
     if len(transcript) < MIN_TRANSCRIPT_CHARS and is_chat_turn(transcript):
         save_verdict(session_id, turn_id, "SKIP_TOO_SHORT", f"transcript too short ({len(transcript)} chars)")
+        reset_audit_errors(session_id)
         reset_consecutive_blocks(session_id)
         allow_stop(f"transcript too short ({len(transcript)} chars)")
         return
 
     if is_chat_turn(transcript):
         save_verdict(session_id, turn_id, "SKIP_CHAT_TURN", "no edit tools, no deliverable claims")
+        reset_audit_errors(session_id)
         reset_consecutive_blocks(session_id)
         allow_stop("chat turn - audit skipped")
         return
 
     if not has_tool_activity(transcript):
         transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS, include_previous=True)
-
-    try:
-        verdict_text = ask_mimo_with_retry(transcript)
-        if not verdict_text:
-            retry_transcript = compact(transcript, 3_000)
-            log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
-            verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
-    except Exception as e:
-        block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}")
+    entries = latest_task_entries(transcript_path)
+    paths = edited_paths(entries)
+    sensitive = sensitive_paths(paths)
+    mechanical = deterministic_findings(entries, last_msg, payload.get("cwd") or ".")
+    unanswered = ledger.apply_decisions(session_id, last_msg)
+    pending = [f"[{finding['id']}] {finding['text']}" for finding in ledger.open_findings(session_id)
+               if finding["id"] in unanswered]
+    if pending:
+        log(f"LEDGER_UNANSWERED: {', '.join(unanswered)}; model call skipped")
+    if mechanical:
+        log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s); model call skipped")
+    if pending or mechanical:
+        verdict_text = "VERDICT: ISSUES\n" + "\n".join(
+            f"{index}. {finding}" for index, finding in enumerate(pending + mechanical, 1)
+        )
+    elif not ledger.prompt_section(session_id) and doc_only_turn(entries, last_msg, DELIVERABLE_RE):
+        save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edit without shipping claim")
+        reset_audit_errors(session_id)
+        reset_consecutive_blocks(session_id)
+        allow_stop("doc-only turn - audit skipped")
         return
+    else:
+        history = ledger.prompt_section(session_id)
+        if history:
+            transcript += "\n\n" + history
+        if sensitive:
+            transcript = ("SENSITIVE FILES EDITED: " + ", ".join(sensitive) +
+                          "\nAny security concern is blocking; return ISSUES, not PASS with a warning.\n\n" + transcript)
+        review_cwd = resolve_git_cwd(payload.get("cwd") or ".", files=[Path(p) for p in paths], transcript=transcript)
+        diff = turn_diff(str(review_cwd), paths)
+        if diff:
+            log(f"TURN_DIFF: {len(diff)} chars for {len(paths)} edited path(s)")
+            transcript += "\n\nWORKING TREE DIFF (current turn's non-sensitive edits):\n" + diff
+        try:
+            verdict_text = ask_mimo_with_retry(transcript)
+            if not verdict_text:
+                retry_transcript = compact(transcript, 3_000)
+                log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
+                verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
+        except Exception as e:
+            block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", str(review_cwd))
+            return
+        reset_audit_errors(session_id)
 
     log(f"{AUDITOR_NAME} verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
+    if sensitive and verdict_text.startswith("VERDICT: PASS"):
+        warnings = [re.sub(r"^\s*(?:[-*]|\d+[.)])\s+", "", line).strip()
+                    for line in verdict_text.splitlines()[1:] if re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line)]
+        if warnings:
+            verdict_text = "VERDICT: ISSUES\n" + "\n".join(
+                f"{index}. {warning}" for index, warning in enumerate(warnings, 1)
+            )
 
     if verdict_text and not valid_verdict(verdict_text):
         try:
@@ -572,18 +662,29 @@ def main() -> None:
     if verdict_text.startswith("VERDICT: PASS"):
         save_verdict(session_id, turn_id, "PASS", verdict_text)
         reset_consecutive_blocks(session_id)
+        ledger.clear(session_id)
         allow_stop("audit passed")
         return
 
     if verdict_text.startswith("VERDICT: ISSUES"):
+        verdict_text, escalated = ledger.register_findings(session_id, verdict_text)
+        if escalated:
+            log(f"LEDGER_ESCALATED: {', '.join(escalated)}")
+        if not any(ledger.NUMBERED_RE.match(line) for line in verdict_text.splitlines()):
+            save_verdict(session_id, turn_id, "ESCALATED_ALLOW", verdict_text)
+            reset_consecutive_blocks(session_id)
+            allow_stop("all findings escalated; unresolved", unresolved=True)
+            return
         save_iterations(session_id, turn_id, iterations + 1)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
-        record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         consecutive_blocks = increment_consecutive_blocks(session_id)
+        if consecutive_blocks == 1:
+            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text)
         if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)
             reset_consecutive_blocks(session_id)
+            ledger.clear(session_id)
             allow_stop(f"block chain damped after {consecutive_blocks} consecutive blocked turns", unresolved=True)
             return
         feedback = (
@@ -591,7 +692,7 @@ def main() -> None:
             f"{iterations + 1}/{MAX_ITERATIONS}]\n\n"
             f"A fresh {AUDITOR_NAME} session reviewed your work and found issues. "
             f"Fix these before stopping:\n\n"
-            f"{verdict_text}\n\n"
+            f"{verdict_text}\n\n{ledger.DECISION_INSTRUCTIONS}\n\n"
             f"After addressing each item, run any relevant checks and continue."
         )
         block_stop(feedback)

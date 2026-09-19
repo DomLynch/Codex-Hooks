@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -69,7 +70,10 @@ def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
         args = str(payload.get("arguments") or payload.get("input") or "")
         calls[call_id] = compact(f"{name}: {args}", 300)
         cap = 8000 if name.lower() in {"apply_patch", "edit", "write", "multi_edit", "multiedit", "apply_diff"} else 800
-        return "TOOL CALL", f"{name}: [{call_id}] {compact(args, cap)}"
+        hints = ""
+        if name.lower() in {"apply_patch", "functions.exec"} and "apply_patch" in args:
+            hints = "".join(f"\n*** Update File: {path}" for path in _EDIT_PATH_RE.findall(args)[:8])
+        return "TOOL CALL", f"{name}: [{call_id}] {compact(args, cap)}{hints}"
     if kind in {"function_call_output", "custom_tool_call_output"}:
         output = payload.get("output") or ""
         text = _tool_output_text(output)
@@ -94,6 +98,134 @@ def _failure_excerpt(text: str, limit: int) -> str:
         r'\bFAILED\b|AssertionError|\bERROR\b|\bError:|exit_code["\s:=]+[1-9]|Process exited with code [1-9]',
         line)]
     return _bounded_compact("\n".join(lines), limit) if lines else ""
+
+
+_EDIT_PATH_RE = re.compile(r"\*\*\* (?:Add|Update|Delete) File:\s*([^\n\\\"']+)")
+_FILE_ARG_RE = re.compile(r'"(?:file_path|path)"\s*:\s*"([^"]+)"')
+_PATH_MENTION_RE = re.compile(
+    r"(?<![\w/])((?:/|\./|~/)?(?:[\w.\-]+/)+[\w.\-]+\.[A-Za-z0-9]{1,6}|"
+    r"[\w.\-]+\.(?:png|jpe?g|gif|webp|svg|pdf))(?![\w/])"
+)
+_SENSITIVE_PATH_RE = re.compile(
+    r"(?:^|/)\.env(?:\.[^/]+)?$|(?:^|/)[^/]+\.(?:pem|key|p12)$|"
+    r"(?:^|[/_.-])(?:auth(?:entication|orization)?|login|session|token|secret|credential|"
+    r"password|payment|billing|stripe|checkout|admin|permission|rbac|oauth|jwt|api[_-]?key)"
+    r"(?:$|[/_.-])", re.IGNORECASE
+)
+_TEST_RUNNER_RE = re.compile(
+    r"pytest|unittest|npm (run )?(test|quality|check|lint)|node --test|vitest|jest|"
+    r"cargo test|go test|make (test|check|quality)|ruff check|mypy|tsc\b|\.quality-gate", re.IGNORECASE
+)
+_ACK_RE = re.compile(r"\b(fail(?:ed|ing|ure|s)?|error|broken|red|unresolved|regression)\b", re.IGNORECASE)
+
+
+def edited_paths(entries: list[tuple[str, str]]) -> list[str]:
+    """Files named by edit tool calls in this turn, including nested apply_patch calls."""
+    paths: list[str] = []
+    for role, body in entries:
+        if role != "TOOL CALL":
+            continue
+        edits = _EDIT_PATH_RE.findall(body)
+        if re.match(r"^(?:Edit|Write|MultiEdit|NotebookEdit):", body, re.IGNORECASE):
+            edits.extend(_FILE_ARG_RE.findall(body))
+        for path in edits:
+            path = path.strip()
+            if path and path not in paths:
+                paths.append(path)
+    return paths
+
+
+def sensitive_paths(paths: list[str]) -> list[str]:
+    return [path for path in paths if _SENSITIVE_PATH_RE.search(path)]
+
+
+def deterministic_findings(entries: list[tuple[str, str]], message: str, cwd: str) -> list[str]:
+    findings = []
+    last_check = ""
+    for role, body in entries:
+        if role == "TOOL OUTPUT" and _TEST_RUNNER_RE.search(body.split("\n", 1)[0]):
+            last_check = body
+    missed = _failure_excerpt(last_check, 300) if last_check else ""
+    if missed and not _ACK_RE.search(message or ""):
+        findings.append("A check failed and the final message omits it. Fix and rerun, "
+                        "or state why it is expected: " + missed)
+    for path in edited_paths(entries):
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(cwd) / candidate
+        try:
+            if candidate.is_file() and candidate.stat().st_size < 5_000_000:
+                body = candidate.read_text(errors="replace")
+                if re.search(r"^<{7} \S", body, re.MULTILINE) and re.search(r"^>{7} \S", body, re.MULTILINE):
+                    findings.append(f"Edited file still has git conflict markers: {path}")
+        except OSError:
+            continue
+    tool_text = "\n".join(body for role, body in entries if role.startswith("TOOL"))
+    for path in _PATH_MENTION_RE.findall(message or ""):
+        if path in tool_text or Path(path).name in tool_text:
+            continue
+        candidate = Path(path).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(cwd) / candidate
+        if candidate.is_file():
+            findings.append(f"File cited without a visible tool receipt this turn: {path}. Read it or drop the claim.")
+    return findings
+
+
+def doc_only_turn(entries: list[tuple[str, str]], message: str, deliverable_re: re.Pattern) -> bool:
+    paths = edited_paths(entries)
+    if not paths or any(Path(path).suffix.lower() not in {".md", ".mdx", ".txt", ".rst", ".adoc"} for path in paths):
+        return False
+    request = "\n".join(body for role, body in entries if role == "USER")
+    if re.search(r"\b(deploy|publish|commit|push|ship|production|live)\b", request, re.IGNORECASE):
+        return False
+    if deliverable_re.search(message or ""):
+        return False
+    for role, body in entries:
+        if role != "TOOL CALL":
+            continue
+        if re.match(r"^(?:apply_patch|Edit|Write|MultiEdit|NotebookEdit):", body, re.IGNORECASE):
+            continue
+        if body.startswith("functions.exec:") and "tools.apply_patch" in body and not re.search(
+            r"tools\.(?!apply_patch\b)", body
+        ):
+            continue
+        return False
+    return True
+
+
+def turn_diff(cwd: str, paths: list[str], cap: int = 2500) -> str:
+    """Bounded diff for files edited in this turn; never include sensitive paths."""
+    base = Path(cwd or ".").resolve()
+    rel = []
+    for path in paths:
+        if _SENSITIVE_PATH_RE.search(path):
+            continue
+        try:
+            relative = (base / path).resolve().relative_to(base)
+        except ValueError:
+            continue
+        rel.append(str(relative))
+    if not rel:
+        return ""
+    try:
+        result = subprocess.run(["git", "-C", str(base), "diff", "HEAD", "--", *rel],
+                                capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            result = subprocess.run(["git", "-C", str(base), "diff", "--", *rel],
+                                    capture_output=True, text=True, timeout=10)
+        untracked = subprocess.run(["git", "-C", str(base), "ls-files", "--others", "--exclude-standard", "--", *rel],
+                                   capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    parts = [result.stdout] if result.returncode == 0 and result.stdout.strip() else []
+    if untracked.returncode == 0:
+        for name in untracked.stdout.splitlines()[:5]:
+            try:
+                parts.append(f"NEW FILE {name}:\n{(base / name).read_text(errors='replace')[:800]}")
+            except OSError:
+                continue
+    return _bounded_compact("\n".join(parts), cap) if parts else ""
 
 
 def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
@@ -155,18 +287,19 @@ def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_
 
 def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS,
                       include_previous: bool = False) -> str:
-    if not transcript_path:
-        return sanitize(fallback)[-max_chars:]
-    path = Path(transcript_path)
-    if not path.exists():
-        return sanitize(fallback)[-max_chars:]
-    try:
-        lines = path.read_text(errors="replace").splitlines()
-    except Exception:
-        return sanitize(fallback)[-max_chars:]
+    entries = latest_task_entries(transcript_path, current_only=False)
+    return compact_latest_task(entries, max_chars, include_previous) if entries else sanitize(fallback)[-max_chars:]
 
+
+def latest_task_entries(transcript_path: str, current_only: bool = True) -> list[tuple[str, str]]:
+    if not transcript_path or not Path(transcript_path).is_file():
+        return []
     entries: list[tuple[str, str]] = []
     calls: dict[str, str] = {}
+    try:
+        lines = Path(transcript_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return []
     for line in lines:
         try:
             obj = json.loads(line)
@@ -193,6 +326,7 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
             if entry:
                 entries.append(entry)
 
-    if not entries:
-        return sanitize(fallback)[-max_chars:]
-    return compact_latest_task(entries, max_chars, include_previous)
+    if current_only:
+        start = next((i for i in range(len(entries) - 1, -1, -1) if entries[i][0] == "USER"), 0)
+        return entries[start:]
+    return entries

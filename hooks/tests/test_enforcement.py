@@ -22,6 +22,48 @@ class EnforcementTests(unittest.TestCase):
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
 
+    def test_checkpoint_preserves_newer_checkout_and_uncommitted_edits(self):
+        from lib import git as git_tools
+
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=self.root, text=True).strip()
+
+        git('init', '-q', '-b', 'main')
+        git('config', 'user.email', 'hooks-test@example.com')
+        git('config', 'user.name', 'Hooks Test')
+        (self.root/'version.txt').write_text('old release\n')
+        git('add', '.')
+        git('commit', '-qm', 'old release')
+        branch = post_tool.current_session_branch('stale-test')
+        git('branch', branch)
+        (self.root/'version.txt').write_text('current release\n')
+        git('commit', '-qam', 'current release')
+        (self.root/'pending.txt').write_text('uncommitted task work\n')
+        before = (git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch))
+        with (
+            patch.object(post_tool, 'checkpoint_state', return_value={'edits_since_last_commit': 5}),
+            patch.object(post_tool, 'update_checkpoint_state') as state,
+            patch.object(post_tool, 'commit', return_value=(False, 'not committed')) as commit,
+            patch.object(post_tool, 'push') as push,
+            patch.object(post_tool, 'log'),
+        ):
+            post_tool.maybe_checkpoint('stale-test', self.root)
+        self.assertEqual(git('branch', '--show-current'), 'main')
+        self.assertEqual((git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch)), before)
+        self.assertEqual((self.root/'version.txt').read_text(), 'current release\n')
+        self.assertEqual((self.root/'pending.txt').read_text(), 'uncommitted task work\n')
+        commit.assert_not_called()
+        push.assert_not_called()
+        state.assert_called_once_with('stale-test', branch_failed=True)
+        self.assertTrue(git_tools.ensure_branch('fresh-checkpoint', self.root))
+        self.assertEqual(git('rev-parse', 'HEAD'), before[0])
+        self.assertTrue(git_tools.ensure_branch('main', self.root))
+        self.assertTrue(git_tools.ensure_branch('main', self.root))
+
+    def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
+        self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
+        self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
+
     def test_contract_success_and_real_failure(self):
         for code in (0, 1):
             self.contract([[sys.executable, '-c', f'raise SystemExit({code})']])
@@ -54,6 +96,31 @@ class EnforcementTests(unittest.TestCase):
     def test_deadline_blocks(self):
         self.contract([[sys.executable, '-c', 'import time; time.sleep(5)']])
         self.assertFalse(quality.run_project_gate(self.root, timeout=0.05)['ok'])
+
+    def test_project_timeout_is_bounded_and_overridable(self):
+        self.contract([[sys.executable, '-c', 'pass']])
+        with patch.object(quality.subprocess, 'Popen') as popen:
+            proc = popen.return_value.__enter__.return_value
+            proc.communicate.return_value = ('', '')
+            proc.returncode = 0
+            self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
+            self.assertGreater(proc.communicate.call_args.kwargs['timeout'], 410)
+            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 420)
+
+            self.root.joinpath('.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': 30,
+            }))
+            self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
+            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 30)
+
+    def test_invalid_project_timeout_fails_closed(self):
+        for value in (0, 421, True, 1.5, '420'):
+            self.root.joinpath('.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': value,
+            }))
+            with patch.object(quality.subprocess, 'Popen') as popen:
+                self.assertFalse(quality.run_project_gate(self.root)['ok'])
+                popen.assert_not_called()
 
     def test_missing_tools_are_not_success(self):
         file = self.root/'valid.py'

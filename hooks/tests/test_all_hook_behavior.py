@@ -679,7 +679,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(out, "")
         ask_mimo.assert_called_once()
 
-    def test_mimo_block_chain_damper_allows_and_records_lesson(self) -> None:
+    def test_mimo_block_chain_damper_allows_without_repeating_lesson(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             state_path = tmp_path / "iterations.json"
@@ -704,7 +704,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(out, "")
         self.assertNotIn("consecutive_blocks:mimo-damper", state)
         self.assertEqual(verdict["mimo-damper"]["verdict"], "DAMPER_ALLOW")
-        record_lesson.assert_called()
+        record_lesson.assert_not_called()
 
     def test_mimo_iterations_are_keyed_by_turn(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

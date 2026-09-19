@@ -197,7 +197,7 @@ def milestone_detected(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
-def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 120) -> bool:
+def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420) -> bool:
     if (cwd / ".quality-gate.json").exists():
         result = run_project_gate(cwd, timeout=timeout)
         log(COMPONENT, f"repository quality gate ok={result['ok']}")
@@ -491,7 +491,7 @@ def main() -> None:
 
         log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")
         pending = pending_quality(session_id)
-        quality_deadline = time.monotonic() + 120
+        quality_deadline = time.monotonic() + 480
         for project in pending:
             target = Path(project)
             if not (target / ".quality-gate.json").exists():

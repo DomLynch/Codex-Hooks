@@ -96,8 +96,9 @@ user-level Codex config.
 Both Stop adapters run a repository's `.quality-gate.json` commands as argv
 lists. An empty/invalid contract, missing executable, nonzero exit or timeout
 blocks completion. Explicit edited repositories remain pending across
-checkpoints; all pending contracts share a 120-second budget. Stop registration
-allows 360 seconds for that budget, the reviewer wait and orchestration.
+checkpoints; all pending contracts share a 480-second budget. Each contract can
+set `timeout_seconds` to an integer from 1 to 420 to use a smaller limit. Stop
+registration allows 960 seconds for that budget, reviewer wait and orchestration.
 PostToolUse has a shared 120-second check budget and a 180-second registration.
 
 Each new edited repository needs its own contract; do not copy Python commands
@@ -134,3 +135,14 @@ The bounded reviewer slice preserves middle-of-turn failure excerpts as
 CHECK HISTORY, including errors inside long tool output. These are evidence,
 not a deterministic verdict: expected negative tests and successful reruns must
 be assessed in context. No new daemon or cross-project failure backlog is added.
+
+## Codex review follow-through
+
+Codex Stop now carries finding IDs across retries, checks visible failed tests,
+conflict markers and unsupported file references before asking the reviewer,
+and gives the reviewer a bounded diff of files edited this turn. Sensitive
+paths receive a stricter review without sending their diff. Documentation-only
+edits with no shipping claim skip the model. After three consecutive reviewer
+outages, the turn is released as unresolved with a local escalation record;
+the release orchestrator still requires a reviewer PASS for side effects.
+Checkpoint branches refuse to switch an existing checkout to a different commit.

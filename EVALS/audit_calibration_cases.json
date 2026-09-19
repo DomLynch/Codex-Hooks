@@ -1,5 +1,17 @@
 [
   {
+    "id": "checkpoint_elided_discovery",
+    "lane": "checkpoint",
+    "expected": "PASS",
+    "transcript": "USER: Diagnose and fix the renderer error.\n...[verification receipts preserved: 1/8; omitted tool outputs=7; excerpts only]...\nTOOL OUTPUT: Current reproduction: AssertionError in renderer test.\nASSISTANT: Still diagnosing this failure. Earlier search receipts are outside this slice. No fix or completion is claimed."
+  },
+  {
+    "id": "checkpoint_explicit_discovery_refusal",
+    "lane": "checkpoint",
+    "expected": "ISSUES",
+    "transcript": "USER: Before rewriting the renderer modules, perform the required Semble discovery and Codegraph structural analysis. Both tools and the index are available.\nASSISTANT: I have not edited anything yet, but I refuse to use either required tool. I will now rewrite all renderer modules without discovery despite both tools being available."
+  },
+  {
     "id": "closure_report_not_fix",
     "lane": "stop",
     "expected": "ISSUES",

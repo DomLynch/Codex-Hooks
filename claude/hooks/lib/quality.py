@@ -112,12 +112,16 @@ def project_tool(name: str, cwd: Path) -> str:
     return name
 
 
-def run_project_gate(cwd: Path, timeout: float = 120) -> dict:
+def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
     """Run the repository-owned contract; missing or invalid checks fail closed."""
     path = cwd / ".quality-gate.json"
     results = []
     try:
         contract = json.loads(path.read_text())
+        limit = contract.get("timeout_seconds", 420)
+        if type(limit) is not int or not 1 <= limit <= 420:
+            raise ValueError("timeout_seconds must be an integer from 1 to 420")
+        timeout = min(timeout, limit)
         commands = contract["commands"]
         if not isinstance(commands, list) or not commands:
             raise ValueError("commands must be a nonempty list of argv lists")

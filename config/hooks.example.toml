@@ -23,7 +23,7 @@ statusMessage = "GPT-5.6-Terra audit"
 [[hooks.Stop.hooks]]
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/stop_orchestrator.py"
-timeout = 360
+timeout = 960
 statusMessage = "Stop orchestrator"
 
 [[hooks.SessionStart]]

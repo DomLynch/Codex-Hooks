@@ -131,8 +131,12 @@ def ensure_branch(branch: str, cwd: str | Path) -> bool:
         return False
     if current_branch(cwd) == branch:
         return True
-    rc, _, _ = safe_run(["git", "rev-parse", "--verify", branch], cwd=cwd)
+    rc, target, _ = safe_run(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=cwd)
     if rc == 0:
+        # Automatic checkpoints must never replace the checkout with another revision.
+        head_rc, head, _ = safe_run(["git", "rev-parse", "--verify", "HEAD"], cwd=cwd)
+        if head_rc != 0 or head.strip() != target.strip():
+            return False
         rc, _, _ = safe_run(["git", "checkout", branch], cwd=cwd)
         return rc == 0
     rc, _, _ = safe_run(["git", "checkout", "-b", branch], cwd=cwd)

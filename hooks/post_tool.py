@@ -48,6 +48,10 @@ Check only the current task slice. Block only for concrete problems:
 - Repeated command or test failures are being ignored instead of diagnosed
 - V4/MCP/project guidance is being ignored on non-trivial code work: no three-query Semble discovery, skipped Codegraph structural/impact analysis, or no stated reason
 
+This slice may omit earlier tool calls. Missing Semble/Codegraph receipts alone
+are not evidence of skipped discovery; flag only explicit, current noncompliance.
+Do not repeat an acknowledged past process mistake that cannot be redone.
+
 This is an in-progress checkpoint. Do NOT block merely because implementation,
 tests, commit, or final verification are unfinished; the Stop audit checks completion.
 An acknowledged failure under active diagnosis is not an ignored failure. Do not
