@@ -76,7 +76,7 @@ class TelemetryTests(unittest.TestCase):
         })
         self.assertEqual(kwargs["env"], {"PATH": os.defpath})
         self.assertEqual(kwargs["cwd"], "/")
-        self.assertLessEqual(kwargs["timeout"], 2)
+        self.assertLessEqual(kwargs["timeout"], 8)
         self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
         self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
         with mock.patch.dict(os.environ, {"HOOK_SENTRY_DSN": ""}), \
@@ -108,7 +108,7 @@ class TelemetryTests(unittest.TestCase):
                 mock.patch.object(telemetry, "print", side_effect=OSError("closed stderr"), create=True):
             telemetry.report_failure("mimo_audit", "audit_unavailable")
 
-    def test_real_worker_timeout_returns_within_two_seconds(self):
+    def test_real_worker_timeout_returns_within_budget(self):
         worker = Path(self.directory.name) / "sleep.py"
         worker.write_text("import time\ntime.sleep(30)\n")
         stderr = io.StringIO()
@@ -118,7 +118,7 @@ class TelemetryTests(unittest.TestCase):
             start = time.monotonic()
             telemetry.report_failure("mimo_audit", "audit_unavailable")
             elapsed = time.monotonic() - start
-        self.assertLess(elapsed, 2)
+        self.assertLess(elapsed, telemetry.WORKER_TIMEOUT + 1)
         self.assertIn("report unavailable", stderr.getvalue())
 
     def test_worker_invalid_input_fails_closed_without_sdk(self):

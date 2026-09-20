@@ -19,7 +19,9 @@ COMPONENTS = frozenset({
 CATEGORIES = frozenset({"audit_unavailable", "hook_exception", "smoke_test"})
 CONFIG_PATH = Path.home() / ".config/agent-hooks/sentry.json"
 WORKER_PYTHON = Path.home() / ".local/share/agent-hooks/venv/bin/python"
-WORKER_TIMEOUT = 1.8
+# `import sentry_sdk` alone costs ~1.3s in the worker venv; a full send measured 3.0-4.5s with
+# spikes past 5s. The original 1.8s only ever succeeded on a warm cache. Only failure paths pay this.
+WORKER_TIMEOUT = 8.0
 MESSAGE = "Agent hook operational failure"
 LABEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
