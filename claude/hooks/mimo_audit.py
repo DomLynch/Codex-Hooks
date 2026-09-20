@@ -38,6 +38,7 @@ from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
+from lib.git import resolve_git_cwd  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
 
 
@@ -663,7 +664,10 @@ def main() -> None:
     # markers in edited files, files cited in prose but never touched by any tool this turn.
     # Together these were ~45% of reviewer findings in the first 12h of Sonnet audits.
     entries = latest_task_entries_claude(transcript_path)
-    mechanical = deterministic_findings(entries, last_msg, payload.get("cwd") or "")
+    # The session cwd is often a non-git parent workspace; resolve to the repo the edits live in,
+    # otherwise turn_diff/unopened-file resolution silently no-op (found: 12 edit turns, 0 diffs fed).
+    repo_cwd = str(resolve_git_cwd(payload.get("cwd") or ".", [Path(p) for p in edited_paths(entries)], transcript))
+    mechanical = deterministic_findings(entries, last_msg, repo_cwd)
     sensitive = sensitive_paths(entries)
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
@@ -687,7 +691,7 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
-        diff = turn_diff(payload.get("cwd") or "", edited_paths(entries))
+        diff = turn_diff(repo_cwd, edited_paths(entries))
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "
@@ -699,7 +703,7 @@ def main() -> None:
                 log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
                 verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
         except Exception as e:
-            block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", payload.get("cwd") or "")
+            block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", repo_cwd)
             return
         reset_audit_errors(session_id)  # reviewer answered; the outage streak is over
 

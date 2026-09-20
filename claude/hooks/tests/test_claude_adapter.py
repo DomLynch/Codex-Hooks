@@ -1361,3 +1361,39 @@ class TurnDiffTests(unittest.TestCase):
         self.assertIn("WORKING TREE DIFF", sent)
         self.assertIn("-    return 1", sent)
         self.assertIn("+    return 2", sent)
+
+
+class RepoCwdResolutionTests(unittest.TestCase):
+    """Regression: session cwd is a non-git parent; the diff must still reach the reviewer."""
+
+    def test_diff_fed_when_session_cwd_is_parent_workspace(self) -> None:
+        import subprocess
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as parent:
+            repo = Path(parent) / "proj"
+            repo.mkdir()
+            subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+            f = repo / "app.py"
+            f.write_text("x = 1\n")
+            subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"], check=True)
+            f.write_text("x = 2\n")
+            entries = [("TOOL CALL", f'Edit: [t] {{"file_path": "{f}", "old_string": "1", "new_string": "2"}}')]
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(parent) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(parent) / "v.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(parent) / "l.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=entries),
+            ):
+                # cwd is the PARENT (not a git repo) — exactly what Claude Code passes in practice
+                payload = {"session_id": "C", "turn_id": "t", "transcript_path": "/nope", "cwd": parent, "last_assistant_message": "Changed x."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+            sent = model.call_args.args[0]
+        self.assertIn("WORKING TREE DIFF", sent)
+        self.assertIn("+x = 2", sent)
