@@ -1399,6 +1399,38 @@ class RepoCwdResolutionTests(unittest.TestCase):
         self.assertIn("+x = 2", sent)
 
 
+class ReceiptExcerptTests(unittest.TestCase):
+    """Long tool outputs keep their verification lines, not just head and tail."""
+
+    def _entry(self, text: str) -> str:
+        from lib.transcript import tool_entry
+
+        calls: dict[str, str] = {}
+        tool_entry({"type": "function_call", "call_id": "c1", "name": "Bash", "arguments": "cd x && ./checks.sh"}, calls)
+        return tool_entry({"type": "function_call_output", "call_id": "c1", "output": text}, calls)[1]
+
+    def test_receipt_lines_in_the_elided_middle_are_kept(self) -> None:
+        middle = "integrity.researka.org: HTTP 200\n37 passed in 0.5s\nresearka-v2: active\nVPS HEAD d05c03d\n"
+        body = self._entry("head\n" * 120 + middle + "tail\n" * 120)
+        self.assertIn("[kept from elided output]", body)
+        for line in ("integrity.researka.org: HTTP 200", "37 passed in 0.5s", "researka-v2: active", "VPS HEAD d05c03d"):
+            self.assertIn(line, body, line)
+        self.assertNotIn("kept from elided", self._entry("head\n" * 120 + "plain log line\n" + "tail\n" * 120), "no receipt lines -> no block")
+
+    def test_lines_already_visible_are_not_duplicated_and_short_outputs_untouched(self) -> None:
+        body = self._entry("HTTP 200\n" + "x\n" * 600)
+        self.assertEqual(body.count("HTTP 200"), 1, "line in the visible head is not repeated")
+        self.assertNotIn("kept from elided", self._entry("HTTP 200\nshort"))
+
+    def test_kept_receipt_satisfies_the_live_claim_gate(self) -> None:
+        from lib.transcript import tool_entry, unreceipted_live_claim
+
+        calls: dict[str, str] = {}
+        call = tool_entry({"type": "function_call", "call_id": "c1", "name": "Bash", "arguments": "curl -sw 'HTTP %{http_code}' https://frankendom.com/"}, calls)
+        out = tool_entry({"type": "function_call_output", "call_id": "c1", "output": "noise\n" * 200 + "HTTP 200\n" + "noise\n" * 200}, calls)
+        self.assertEqual(unreceipted_live_claim([call, out], "frankendom.com returns 200."), "", "receipt survives compaction -> silent, not indeterminate")
+
+
 class UnreceiptedLiveClaimTests(unittest.TestCase):
     """Deterministic gate for the largest cross-agent finding class: an HTTP 2xx claimed for a named
     host with no tool output this turn showing it. Narrow by design (replay: 0.2% of real turns)."""

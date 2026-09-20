@@ -73,8 +73,10 @@ def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
         output = payload.get("output") or ""
         text = _tool_output_text(output)
         command = _bounded_compact(calls.get(call_id, "command outside slice"), 120)
+        body = compact(text, 1000)
         failure = _failure_excerpt(text, 350) if len(text) > 1000 else ""
-        return "TOOL OUTPUT", f"[{call_id}] {command}\n{failure}\n{compact(text, 1000)}"
+        receipt = _receipt_excerpt(text, body, 300) if len(text) > 1000 else ""
+        return "TOOL OUTPUT", f"[{call_id}] {command}\n{failure}\n{receipt}\n{body}"
     return None
 
 
@@ -93,6 +95,32 @@ def _failure_excerpt(text: str, limit: int) -> str:
         r'\bFAILED\b|AssertionError|\bERROR\b|\bError:|exit_code["\s:=]+[1-9]|Process exited with code [1-9]',
         line)]
     return _bounded_compact("\n".join(lines), limit) if lines else ""
+
+
+# Lines that carry a verification result. Head/tail compaction of a long multi-section output
+# drops the middle, which is where `curl -w "HTTP %{http_code}"`, `N passed` and `git rev-parse`
+# lines land in a `cd && echo === && ...` chain. In replay, ~17% of true receipts were lost this
+# way and the reviewer blocked a correct claim. Keep them, the same way failure lines are kept.
+_RECEIPT_LINE_RE = re.compile(
+    r"HTTP/\d(?:\.\d)?\s+\d{3}\b|\bHTTP\s+\d{3}\b|http_code\W{0,3}\d{3}|\bstatus(?: code)?\W{0,3}[1-5]\d\d\b"
+    r"|\b\d+ passed\b|\b\d+ (?:tests? )?(?:passing|ok)\b|All checks passed|\bTests?:\s+\d+|\bPASS(?:ED)?\b"
+    r"|Active:\s*\w+|active \(running\)|:\s*(?:active|inactive|failed)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SHA_LINE_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+_SHA_CONTEXT_RE = re.compile(r"\b(?:commit|HEAD|sha|origin|main|master|release|version|tip|deployed|live|VPS|GitHub|Mac|parity|synced)\b", re.IGNORECASE)
+
+
+def _receipt_excerpt(text: str, kept: str, limit: int) -> str:
+    """Receipt lines from the part of `text` that `kept` (the compacted body) no longer shows."""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped in kept:
+            continue
+        if _RECEIPT_LINE_RE.search(line) or (_SHA_LINE_RE.search(line) and _SHA_CONTEXT_RE.search(line)):
+            lines.append(stripped)
+    return "[kept from elided output]\n" + _bounded_compact("\n".join(lines), limit) if lines else ""
 
 
 TEST_RUNNER_RE = re.compile(
