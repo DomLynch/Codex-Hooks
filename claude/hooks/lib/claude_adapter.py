@@ -158,6 +158,18 @@ def entries_from_lines(slice_entries: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def latest_turn_started_at(transcript_path: str) -> str:
+    """ISO timestamp of the latest turn's first entry (the user message that started it), or ""."""
+    try:
+        lines = read_claude_transcript_lines(transcript_path)
+    except Exception:
+        return ""
+    for entry in reversed(lines):
+        if is_turn_start(entry):
+            return str(entry.get("timestamp") or "")
+    return ""
+
+
 def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:
     """Current-turn (role, body) entries from a Claude transcript, before compaction."""
     """Build the 'current task' slice from a Claude transcript.

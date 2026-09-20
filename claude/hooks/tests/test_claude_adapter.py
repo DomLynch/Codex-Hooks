@@ -1363,6 +1363,36 @@ class TurnDiffTests(unittest.TestCase):
         self.assertIn("+    return 2", sent)
 
 
+class TurnDiffSinceTests(unittest.TestCase):
+    """Edits the agent committed during the turn still reach the reviewer."""
+
+    def test_diff_covers_commits_made_after_the_turn_started(self) -> None:
+        import subprocess
+        import time
+        from lib.transcript import turn_diff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def git(*a):
+                subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo, check=True, capture_output=True)
+
+            git("init", "-q", "-b", "main")
+            (repo / "app.py").write_text("v1\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            time.sleep(1.1)
+            started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            time.sleep(1.1)
+            (repo / "app.py").write_text("v2\n")
+            git("commit", "-qam", "turn edit")  # committed inside the turn
+            self.assertEqual(turn_diff(str(repo), ["app.py"]), "", "plain HEAD diff sees nothing once committed")
+            since = turn_diff(str(repo), ["app.py"], since=started)
+            self.assertIn("-v1", since)
+            self.assertIn("+v2", since)
+            self.assertEqual(turn_diff(str(repo), ["app.py"], since="not-a-date"), "", "unresolvable timestamp falls back to the plain HEAD diff")
+
+
 class RepoCwdResolutionTests(unittest.TestCase):
     """Regression: session cwd is a non-git parent; the diff must still reach the reviewer."""
 

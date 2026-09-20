@@ -39,17 +39,19 @@ from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd  # noqa: E402
-from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude  # noqa: E402
+from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at  # noqa: E402
 
 
 # --- Tunables --------------------------------------------------------------
 MAX_ITERATIONS = 3
 MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to the reviewer
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
-AUDIT_TIMEOUT_S = 70
+# p95 review is ~52s; 70s timed out 24 of 632 reviews in one day. Two attempts must fit the
+# Stop hook's timeout (settings: 240s).
+AUDIT_TIMEOUT_S = 100
 AUDIT_MAX_ATTEMPTS = 2
 AUDIT_RETRY_DELAY_S = 2
-AUDIT_HOOK_TIMEOUT_S = 180
+AUDIT_HOOK_TIMEOUT_S = 240
 AUDIT_RETRY_BUDGET_S = AUDIT_TIMEOUT_S * AUDIT_MAX_ATTEMPTS + AUDIT_RETRY_DELAY_S * (AUDIT_MAX_ATTEMPTS - 1)
 NETWORK_RETRY_ERRORS = (TimeoutError, ConnectionResetError)
 TOOL_ACTIVITY_MARKERS = ("TOOL CALL", "TOOL OUTPUT", "function_call", "tool_use", "tool_result")
@@ -691,7 +693,7 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
-        diff = turn_diff(repo_cwd, edited_paths(entries))
+        diff = turn_diff(repo_cwd, edited_paths(entries), since=latest_turn_started_at(transcript_path))
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "

@@ -46,7 +46,7 @@ MILESTONE_INTENT_PATTERNS = (
     re.compile(r"\baaa\s+milestone\s+(?:release|ship|merge|deploy)\b", re.IGNORECASE),
 )
 DEFAULT_BASE_BRANCH = "main"
-MIMO_WAIT_TIMEOUT_S = 155
+MIMO_WAIT_TIMEOUT_S = 215  # > mimo_audit.AUDIT_RETRY_BUDGET_S (202s); 215 + 480s gate budget < the 960s hook timeout
 AUTO_PR_SIDE_EFFECT_ATTEMPTS = 3
 AUTO_PR_RETRY_DELAY_S = 2
 

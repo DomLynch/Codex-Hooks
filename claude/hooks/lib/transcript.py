@@ -276,10 +276,14 @@ def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverabl
 DIFF_CAP = 2500
 
 
-def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP) -> str:
-    """`git diff HEAD` restricted to the files this turn edited, plus the head of any
-    new untracked ones. Scoped so another agent's changes in a shared worktree are not
-    attributed to this turn. Empty string when not a repo / nothing to show."""
+def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP, since: str = "") -> str:
+    """Diff of the files this turn edited, plus the head of any new untracked ones.
+
+    Diffs against HEAD as it was at `since` (the turn's start, via the reflog) so edits
+    the agent already committed during the turn still reach the reviewer; lanes with a
+    checkpoint hook or a PR flow commit before they stop, which left `git diff HEAD` empty.
+    Falls back to HEAD when there is no reflog entry. Scoped to `paths` so another agent's
+    changes in a shared worktree are not attributed to this turn. "" when not a repo."""
     if not cwd or not paths:
         return ""
     import subprocess
@@ -299,7 +303,13 @@ def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP) -> str:
         return ""
     parts = []
     try:
-        d = subprocess.run(["git", "-C", str(base), "diff", "HEAD", "--", *rel], capture_output=True, text=True, timeout=10)
+        ref = "HEAD"
+        if since:
+            probe = subprocess.run(["git", "-C", str(base), "rev-parse", "--verify", "-q", f"HEAD@{{{since}}}"],
+                                   capture_output=True, text=True, timeout=5)
+            if probe.returncode == 0 and probe.stdout.strip():
+                ref = f"HEAD@{{{since}}}"
+        d = subprocess.run(["git", "-C", str(base), "diff", ref, "--", *rel], capture_output=True, text=True, timeout=10)
         if d.returncode and "unknown revision" in (d.stderr or ""):   # fresh repo, no HEAD yet
             d = subprocess.run(["git", "-C", str(base), "diff", "--", *rel], capture_output=True, text=True, timeout=10)
         if d.stdout.strip():

@@ -42,7 +42,7 @@
           {
             "type": "command",
             "command": "python3 /Users/domininclynch/.claude/hooks/mimo_audit.py",
-            "timeout": 180
+            "timeout": 240
           },
           {
             "type": "command",
