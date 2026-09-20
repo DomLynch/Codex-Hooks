@@ -289,6 +289,79 @@ def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP) -> str:
     return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
 
 
+# Narrow by design: an explicit HTTP status claim about a named host is the only live/deploy
+# claim shape a regex can separate from narrative. Broad "is live / shipped / deployed" matching
+# fired on 89% of real turns in replay (commit links, "live API", "shipped 30%", quoted SHAs).
+_HTTP_CLAIM_RE = re.compile(
+    r"(?:\b(?:HTTP/?(?:1\.1|2)?\s*|returns?\s+(?:a\s+)?|responds?\s+(?:with\s+)?|status\s+(?:code\s+)?|got\s+(?:a\s+)?)|→\s*|=\s*)(2\d\d)\b(?:\s*OK)?",
+    re.IGNORECASE,
+)
+_HTTP_CLAIM_NEG_RE = re.compile(
+    r"\b(?:not|isn't|no|never|failed|instead of|expected|expecting|should|want|until|before)\b(?:[^.\n]|\.(?=\w)){0,40}\b2\d\d\b"
+    r"|\b2\d\d\b(?:[^.\n]|\.(?=\w)){0,25}\b(?:not|isn't|expected|but got|instead|yet)\b",
+    re.IGNORECASE,
+)
+# Lowercase only: hostnames in prose are lowercase; "OSF.IO/Q4DJS" inside a DOI is not a claim about
+# osf.io. No `.app`: `agent.app` / `src.app` are Python modules far more often than hosts.
+_HOST_RE = re.compile(r"\b((?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|ai|co\.uk|ae))\b")
+_HOST_IGNORE = {"github.com", "example.com", "localhost.com"}
+# A 2xx written under a heading like "Acceptance criteria" / "Deploy + verify:", or as the expected
+# result of a backticked command (`curl X` → 200), is a plan or a checklist, not a report.
+_PLAN_CONTEXT_RE = re.compile(r"acceptance criteria|verify:|to verify|checklist|next steps?\b|\bto-?do\b|\brun:", re.IGNORECASE)
+_EXPECTED_RESULT_RE = re.compile(r"`[^`\n]*\b(?:curl|wget|http|fetch)\b[^`\n]*`\s*(?:→|->|=>|:|=)\s*$")
+_HTTP_OK_RE = re.compile(r"\bHTTP/\S+\s+2\d\d\b|(?<![\d.])2\d\d(?![\d.])", re.MULTILINE)
+_HTTP_FAIL_RE = re.compile(r"curl: \(\d+\)|Connection refused|Could not resolve|Failed to connect|timed out", re.IGNORECASE)
+_CALL_ID_RE = re.compile(r"\[(toolu_[A-Za-z0-9]+|call_[A-Za-z0-9]+|[a-z]\w{0,12})\]")
+_ELIDED_MARKER = "slice-elided by compactor"
+
+
+def unreceipted_live_claim(entries: list[tuple[str, str]], final_message: str) -> str:
+    """Final message asserts an HTTP 2xx from a named host, and no TOOL OUTPUT this turn shows a
+    successful response naming that host. Returns the hosts lacking a receipt, or "".
+
+    Fires only on positive evidence of absence. A paired call that names the host but whose output
+    was elided by the compactor is indeterminate and stays silent (left to the model)."""
+    msg = final_message or ""
+    if _HTTP_CLAIM_NEG_RE.search(msg):
+        return ""
+    # Only hosts named within ~100 chars of a 2xx claim are being claimed about. A long
+    # message can mention many hosts; demanding receipts for all of them fired on real
+    # audit turns that had curled exactly the host they reported.
+    hosts: set[str] = set()
+    for m in _HTTP_CLAIM_RE.finditer(msg):
+        line_start = msg.rfind("\n", 0, m.start()) + 1
+        if _PLAN_CONTEXT_RE.search(msg[max(0, m.start() - 200): m.start()]) or _EXPECTED_RESULT_RE.search(msg[line_start: m.start()]):
+            continue
+        window = msg[max(0, m.start() - 100): m.end() + 100]
+        hosts |= {h.group(1) for h in _HOST_RE.finditer(window)}
+    hosts -= _HOST_IGNORE
+    if not hosts:
+        return ""
+    # Pair calls with outputs by call_id. The host is matched against the CALL too (800-char cap,
+    # URL near the front) because the output embeds only a 300-char copy of the command and a
+    # `cd x && echo "..." && curl URL` prefix pushes the URL into the elided middle. Success is
+    # still judged from the OUTPUT, so a failed call never counts as a receipt.
+    calls = {m.group(1): body for role, body in entries if role == "TOOL CALL"
+             for m in [_CALL_ID_RE.search(body)] if m}
+    candidates: list[tuple[str, bool, bool, bool]] = []  # (text, ok, failed, elided)
+    for role, body in entries:
+        if role != "TOOL OUTPUT":
+            continue
+        m = _CALL_ID_RE.search(body)
+        text = ((calls.get(m.group(1), "") if m else "") + "\n" + body).lower()
+        out = body.partition("\n")[2]
+        candidates.append((text, bool(_HTTP_OK_RE.search(out)), bool(_HTTP_FAIL_RE.search(out)), _ELIDED_MARKER in out))
+    missing = []
+    for host in sorted(hosts):
+        mine = [c for c in candidates if host in c[0]]
+        if any(ok and not failed for _, ok, failed, _e in mine):
+            continue
+        if any(elided or (ok and failed) for _, ok, failed, elided in mine):
+            continue  # can't tell from what survived compaction; leave it to the reviewer
+        missing.append(host)
+    return ", ".join(missing)
+
+
 def deterministic_findings(entries: list[tuple[str, str]], final_message: str, cwd: str) -> list[str]:
     """All mechanical pre-model gates. Each item is a complete, actionable finding."""
     findings: list[str] = []
@@ -303,6 +376,12 @@ def deterministic_findings(entries: list[tuple[str, str]], final_message: str, c
         findings.append(
             "Files you edited this turn still contain git conflict markers (<<<<<<< / >>>>>>>). "
             "Resolve them and show the clean file: " + ", ".join(conflicts)
+        )
+    live = unreceipted_live_claim(entries, final_message)
+    if live:
+        findings.append(
+            "Your final message reports an HTTP 2xx from a host, but no tool output this turn shows a successful "
+            "response from it. Run the request and include the output, or drop the status claim. Unreceipted: " + live
         )
     unopened = unopened_mentioned_files(entries, final_message, cwd)
     if unopened:

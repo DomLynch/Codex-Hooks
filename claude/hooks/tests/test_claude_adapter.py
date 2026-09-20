@@ -1397,3 +1397,115 @@ class RepoCwdResolutionTests(unittest.TestCase):
             sent = model.call_args.args[0]
         self.assertIn("WORKING TREE DIFF", sent)
         self.assertIn("+x = 2", sent)
+
+
+class UnreceiptedLiveClaimTests(unittest.TestCase):
+    """Deterministic gate for the largest cross-agent finding class: an HTTP 2xx claimed for a named
+    host with no tool output this turn showing it. Narrow by design (replay: 0.2% of real turns)."""
+
+    OK = "[c] Bash: curl -s -o /dev/null -w '%{http_code}' https://frankendom.com/release.json\n\n200"
+    OK_HEADERS = "[c] Bash: curl -sI https://frankendom.com/\n\nHTTP/2 200\ncontent-type: text/html"
+    REFUSED = "[c] Bash: curl -s https://frankendom.com/release.json\n\ncurl: (7) Failed to connect to frankendom.com port 443: Connection refused"
+    NOTFOUND = "[c] Bash: curl -s -o /dev/null -w '%{http_code}' https://frankendom.com/x\n\n404"
+
+    def test_fires_on_http_claim_with_no_output_for_the_host(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        self.assertEqual(gate([("TOOL OUTPUT", "[c] Bash: git log -1\n\nabc1234 fix")], "Fixed and live: frankendom.com returns 200."), "frankendom.com")
+        self.assertEqual(gate([], "https://api.researka.org/health → 200 OK, all good."), "api.researka.org")
+
+    def test_silent_when_a_2xx_receipt_names_the_host(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        self.assertEqual(gate([("TOOL OUTPUT", self.OK)], "Live on frankendom.com — HTTP 200."), "")
+        self.assertEqual(gate([("TOOL OUTPUT", self.OK_HEADERS)], "frankendom.com responds with 200."), "")
+
+    def test_fires_when_the_only_output_for_the_host_is_a_failure(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        self.assertEqual(gate([("TOOL OUTPUT", self.REFUSED)], "frankendom.com returns 200 now."), "frankendom.com")
+        self.assertEqual(gate([("TOOL OUTPUT", self.NOTFOUND)], "frankendom.com is up, status 200."), "frankendom.com")
+
+    def test_host_in_the_paired_call_counts_when_output_elides_it(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        # Real shape: `cd repo && echo "..." && curl URL` pushes the URL past the output's 300-char
+        # command copy; the CALL still names the host and the OUTPUT proves the 200.
+        entries = [("TOOL CALL", "Bash: [toolu_1] cd x && echo 'check' && curl -s -o /dev/null -w '%{http_code}' https://frankendom.com/"),
+                   ("TOOL OUTPUT", "[toolu_1] Bash: cd x && echo 'check' && curl ...[slice-elided by compactor]...\n\n200")]
+        self.assertEqual(gate(entries, "frankendom.com returns 200."), "")
+        # But a failed call is not a receipt even though the CALL names the host.
+        entries = [("TOOL CALL", "Bash: [toolu_1] curl -s https://frankendom.com"),
+                   ("TOOL OUTPUT", "[toolu_1] Bash: curl -s https://frankendom.com\n\ncurl: (7) Failed to connect")]
+        self.assertEqual(gate(entries, "frankendom.com returns 200."), "frankendom.com")
+
+    def test_silent_on_negated_or_expected_status(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        for msg in ("frankendom.com should return 200 once DNS propagates.", "Expected 200 from frankendom.com but got 502.",
+                    "frankendom.com is not returning 200 yet.", "Until frankendom.com returns 200, hold the release."):
+            self.assertEqual(gate([], msg), "", msg)
+
+    def test_silent_when_claim_has_no_named_host_or_no_status(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        self.assertEqual(gate([], "It's live now, returns 200."), "", "no host -> leave to the model")
+        self.assertEqual(gate([], "Deployed to frankendom.com."), "", "no status claim -> leave to the model")
+        self.assertEqual(gate([], "Shipped the fix at 63c57e2."), "")
+
+    def test_only_hosts_near_the_claim_are_demanded(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        far = "See the design notes at docs.researka.org for background. " + "x " * 120 + "Verified: frankendom.com returns 200."
+        self.assertEqual(gate([("TOOL OUTPUT", self.OK)], far), "")
+        self.assertEqual(gate([("TOOL OUTPUT", self.OK)], "frankendom.com and api.researka.org both return 200."), "api.researka.org")
+
+    def test_silent_on_plans_checklists_and_expected_results(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        # Real replay false positives: a brief for another agent, acceptance criteria, a verify step.
+        for msg in ("**Deploy + verify:**\n- `npm run build` passes\n- `curl https://researka.org` → 200",
+                    "## Acceptance criteria\n- `evidence.researka.org/health` returns 200",
+                    "```\nsystemctl restart api\n# verify: curl https://researka.org/api/publications → 200\n```",
+                    "Next steps: confirm frankendom.com returns 200 after DNS."):
+            self.assertEqual(gate([], msg), "", msg)
+
+    def test_silent_when_the_only_receipt_was_elided_by_the_compactor(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        # The call curled the host; the multi-section output lost the status line to the 1000-char
+        # compaction. Unknown is not missing: leave it to the reviewer rather than block a true claim.
+        entries = [("TOOL CALL", "Bash: [toolu_1] echo '=== 10. verify ===' && curl -s -o /dev/null -w 'HTTP %{http_code}' https://frankendom.com/health"),
+                   ("TOOL OUTPUT", "[toolu_1] Bash: echo ...\n\n=== 8. module ===\n...[slice-elided by compactor]...\nlog.warning('x')")]
+        self.assertEqual(gate(entries, "frankendom.com/health: HTTP 200"), "")
+
+    def test_host_matching_is_lowercase_and_excludes_app_modules(self) -> None:
+        from lib.transcript import unreceipted_live_claim as gate
+
+        self.assertEqual(gate([], "Paper live: HTTP 200, DOI 10.17605/OSF.IO/Q4DJS."), "", "DOI is not a host claim")
+        self.assertEqual(gate([], "`agent.app dashboard --port 8791` | live status page (the HTTP 200 endpoint)"), "", "python module, not a host")
+
+    def test_main_blocks_via_gate_without_model(self) -> None:
+        import mimo_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("TOOL OUTPUT", self.REFUSED)]),
+            ):
+                payload = {"session_id": "LV", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp,
+                           "last_assistant_message": "Deployed — frankendom.com returns 200."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    buf = io.StringIO()
+                    with redirect_stdout(buf), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+        out = json.loads(buf.getvalue())
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("Unreceipted: frankendom.com", out["reason"])
+        model.assert_not_called()

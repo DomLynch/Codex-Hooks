@@ -92,33 +92,21 @@ def extract_last_assistant_message(transcript_path: str) -> str:
     return ""
 
 
-def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:
-    """Current-turn (role, body) entries from a Claude transcript, before compaction."""
-    """Build the 'current task' slice from a Claude transcript.
+def is_turn_start(entry: dict) -> bool:
+    """A real user prompt (not a tool_result carrier, not bare hook feedback) starts a turn."""
+    content = (entry.get("message") or {}).get("content")
+    tool_result_only = isinstance(content, list) and content and all(
+        isinstance(item, dict) and item.get("type") == "tool_result" for item in content
+    )
+    text = _content_text(content)
+    hook_feedback = text.lstrip().startswith("<hook_prompt") and not strip_hook_prompts(text)
+    return entry.get("type") == "user" and not tool_result_only and not hook_feedback
 
-    Strategy: walk back to the last `user` entry and include everything from there.
-    Falls back to last_assistant_message if transcript is unreadable.
-    """
-    entries = read_claude_transcript_lines(transcript_path)
-    if not entries:
-        return []
 
-    # Tool results also use type=user; only a real prompt starts a new task.
-    last_user_idx = -1
-    for idx in range(len(entries) - 1, -1, -1):
-        entry = entries[idx]
-        content = (entry.get("message") or {}).get("content")
-        tool_result_only = isinstance(content, list) and content and all(
-            isinstance(item, dict) and item.get("type") == "tool_result" for item in content
-        )
-        hook_feedback = _content_text(content).lstrip().startswith("<hook_prompt") and not strip_hook_prompts(_content_text(content))
-        if entry.get("type") == "user" and not tool_result_only and not hook_feedback:
-            last_user_idx = idx
-            break
-    slice_entries = entries[last_user_idx:] if last_user_idx >= 0 else entries[-30:]
-    if include_previous:
-        slice_entries = entries
-
+def entries_from_lines(slice_entries: list[dict]) -> list[tuple[str, str]]:
+    """(role, body) entries for an arbitrary run of transcript lines — the single place
+    Claude's JSONL shape is interpreted. latest_task_entries_claude() and the corpus
+    replay harness both go through here so they can never disagree."""
     out: list[tuple[str, str]] = []
     calls: dict[str, str] = {}
     for entry in slice_entries:
@@ -168,6 +156,36 @@ def latest_task_entries_claude(transcript_path: str, include_previous: bool = Fa
                         out.append(result)
 
     return out
+
+
+def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:
+    """Current-turn (role, body) entries from a Claude transcript, before compaction."""
+    """Build the 'current task' slice from a Claude transcript.
+
+    Strategy: walk back to the last `user` entry and include everything from there.
+    Falls back to last_assistant_message if transcript is unreadable.
+    """
+    entries = read_claude_transcript_lines(transcript_path)
+    if not entries:
+        return []
+
+    # Tool results also use type=user; only a real prompt starts a new task.
+    last_user_idx = -1
+    for idx in range(len(entries) - 1, -1, -1):
+        entry = entries[idx]
+        content = (entry.get("message") or {}).get("content")
+        tool_result_only = isinstance(content, list) and content and all(
+            isinstance(item, dict) and item.get("type") == "tool_result" for item in content
+        )
+        hook_feedback = _content_text(content).lstrip().startswith("<hook_prompt") and not strip_hook_prompts(_content_text(content))
+        if entry.get("type") == "user" and not tool_result_only and not hook_feedback:
+            last_user_idx = idx
+            break
+    slice_entries = entries[last_user_idx:] if last_user_idx >= 0 else entries[-30:]
+    if include_previous:
+        slice_entries = entries
+
+    return entries_from_lines(slice_entries)
 
 
 def latest_task_slice_claude(transcript_path: str, last_assistant_message: str = "", max_chars: int = 4000,
