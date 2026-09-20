@@ -51,6 +51,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__codegraph__codegraph_explore",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/domininclynch/.claude/hooks/codegraph_freshness.py",
+            "timeout": 45
+          }
+        ]
+      }
     ]
   }
 }
