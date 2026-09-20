@@ -23,7 +23,7 @@ COMPONENT = "session_start"
 
 SESSION_BASELINE = """# V4/MCP Session Baseline
 - Project/code/repo work: use knowledge MCP `get_playbook()` when available; read local `AGENTS.md` and `PROJECT_STATE.md` when present.
-- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, Context7 (resolve-library-id then query-docs, pinned to the installed version from package.json/pyproject) for library and framework API facts before any web search; web only for non-library facts.
+- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
 - Mandatory before non-trivial edits: use Semble and Codegraph together, not as alternatives; run three materially different Semble searches, then Codegraph MCP for structural context/impact. If skipping either, state why.
 - If Codegraph is unavailable, retry once; only then degrade to Semble + `rg` and state the fallback in the receipt.
 - Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.
