@@ -31,7 +31,7 @@ from lib.git import (
 )
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
-from lib.quality import pending_quality, run_project_gate, run_quality_checks
+from lib.quality import ci_covered_commit, pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude
 
@@ -199,6 +199,12 @@ def milestone_detected(text: str) -> bool:
 
 def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420) -> bool:
     if (cwd / ".quality-gate.json").exists():
+        covered = ci_covered_commit(cwd)
+        if covered:
+            # Nothing local to verify: clean tree at a commit CI already checks (default branch or
+            # an open PR). Running the contract here would only duplicate CI and load the machine.
+            log(COMPONENT, f"repository quality gate skipped: clean tree at CI-covered {covered}")
+            return True
         result = run_project_gate(cwd, timeout=timeout)
         log(COMPONENT, f"repository quality gate ok={result['ok']}")
         if not result["ok"]:

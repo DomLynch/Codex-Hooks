@@ -172,6 +172,37 @@ def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError
     )
 
 
+def _open_pr_count(cwd: Path, branch: str, timeout: int = 8) -> int:
+    rc, out, _ = safe_run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq", "length"],
+                          cwd=cwd, timeout=timeout)
+    return int(out.strip()) if rc == 0 and out.strip().isdigit() else 0
+
+
+def ci_covered_commit(cwd: Path) -> str:
+    """Short SHA when there is nothing local for the Stop gate to verify: the working tree is clean
+    (no modified or untracked files) and HEAD is already checked by CI — it is on the remote default
+    branch, or on a pushed branch with an open pull request. Requires a CI workflow in the repo.
+    "" in every other case, including any git/gh failure, so the gate runs."""
+    if not (cwd / ".github" / "workflows").is_dir():
+        return ""
+    rc, status, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
+    if rc or status.strip():
+        return ""
+    rc, head, _ = safe_run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
+    if rc or not head.strip():
+        return ""
+    rc, default, _ = safe_run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], cwd=cwd)
+    if rc == 0 and default.strip() and safe_run(["git", "merge-base", "--is-ancestor", "HEAD", default.strip()], cwd=cwd)[0] == 0:
+        return head.strip()
+    rc, branch, _ = safe_run(["git", "branch", "--show-current"], cwd=cwd)
+    branch = branch.strip()
+    if rc or not branch:
+        return ""
+    if safe_run(["git", "merge-base", "--is-ancestor", "HEAD", f"origin/{branch}"], cwd=cwd)[0] != 0:
+        return ""
+    return head.strip() if _open_pr_count(cwd, branch) > 0 else ""
+
+
 def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
     """Run the repository-owned contract; missing or invalid checks fail closed."""
     path = cwd / ".quality-gate.json"

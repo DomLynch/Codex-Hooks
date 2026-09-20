@@ -131,6 +131,60 @@ class EnforcementTests(unittest.TestCase):
             self.assertTrue(quality.run_project_gate(repo)['ok'])
         self.assertEqual(marker.read_text(), 'xxxxx')
 
+    def _repo_with_origin(self, workflow=True):
+        """Local repo with a bare origin whose default branch is main; returns the repo path."""
+        origin = self.root / 'origin.git'
+        repo = self.root / 'repo'
+        subprocess.run(['git', 'init', '-q', '--bare', '-b', 'main', origin], check=True)
+        subprocess.run(['git', 'clone', '-q', origin, repo], check=True, capture_output=True)
+
+        def g(*a):
+            subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', *a], cwd=repo, check=True, capture_output=True)
+
+        if workflow:
+            (repo / '.github' / 'workflows').mkdir(parents=True)
+            (repo / '.github' / 'workflows' / 'ci.yml').write_text('on: push\n')
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [[sys.executable, '-c', 'pass']]}))
+        (repo / 'a.txt').write_text('1\n')
+        g('add', '.')
+        g('commit', '-qm', 'init')
+        g('push', '-q', '-u', 'origin', 'main')
+        g('remote', 'set-head', 'origin', 'main')
+        return repo, g
+
+    def test_gate_is_skipped_only_for_a_clean_tree_that_ci_already_covers(self):
+        repo, g = self._repo_with_origin()
+        self.assertTrue(quality.ci_covered_commit(repo), 'clean, on the remote default branch -> covered')
+        (repo / 'a.txt').write_text('2\n')
+        self.assertEqual(quality.ci_covered_commit(repo), '', 'modified file -> gate runs')
+        g('checkout', '-q', '-b', 'lane/x')
+        g('commit', '-qam', 'lane edit')
+        self.assertEqual(quality.ci_covered_commit(repo), '', 'unpushed lane commit -> gate runs')
+        g('push', '-q', '-u', 'origin', 'lane/x')
+        with patch.object(quality, '_open_pr_count', return_value=0):
+            self.assertEqual(quality.ci_covered_commit(repo), '', 'pushed but no PR -> CI never runs -> gate runs')
+        with patch.object(quality, '_open_pr_count', return_value=1):
+            self.assertTrue(quality.ci_covered_commit(repo), 'pushed with an open PR -> covered')
+        (repo / 'new.txt').write_text('untracked\n')
+        with patch.object(quality, '_open_pr_count', return_value=1):
+            self.assertEqual(quality.ci_covered_commit(repo), '', 'untracked file -> gate runs')
+
+    def test_gate_skip_needs_a_ci_workflow_and_orchestrator_honours_it(self):
+        repo, g = self._repo_with_origin(workflow=False)
+        self.assertEqual(quality.ci_covered_commit(repo), '', 'no CI in the repo -> nothing else verifies it -> gate runs')
+        (repo / '.github' / 'workflows').mkdir(parents=True)
+        (repo / '.github' / 'workflows' / 'ci.yml').write_text('on: push\n')
+        g('add', '.')
+        g('commit', '-qm', 'ci')
+        g('push', '-q', 'origin', 'main')
+        with patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'):
+            self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
+            run_gate.assert_not_called()
+        (repo / 'a.txt').write_text('dirty\n')
+        with patch.object(stop_orchestrator, 'run_project_gate', return_value={'ok': True, 'results': []}) as run_gate, patch.object(stop_orchestrator, 'log'):
+            self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
+            run_gate.assert_called_once()
+
     def test_failures_are_never_cached(self):
         repo = self.root / 'repo'
         repo.mkdir()
