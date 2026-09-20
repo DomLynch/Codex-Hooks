@@ -125,7 +125,7 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- Scope to current task; do not trawl history unless needed.",
             "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
             "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
-            "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
+            "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, Context7 (resolve-library-id then query-docs, pinned to the installed version from package.json/pyproject) for library and framework API facts before any web search; web only for non-library facts.",
             "- Mandatory before non-trivial edits: use Semble and Codegraph together, not as alternatives; run three materially different Semble searches, then Codegraph MCP for structural context/impact. If skipping either, state why.",
             "- Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.",
             "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
