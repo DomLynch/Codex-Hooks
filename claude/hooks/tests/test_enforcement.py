@@ -18,6 +18,9 @@ class EnforcementTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        cache = patch.object(quality, 'GATE_CACHE_PATH', self.root / 'gate-cache.json')
+        cache.start()
+        self.addCleanup(cache.stop)
 
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
@@ -93,9 +96,51 @@ class EnforcementTests(unittest.TestCase):
             self.contract(commands)
             self.assertFalse(quality.run_project_gate(self.root)['ok'])
 
-    def test_deadline_blocks(self):
+    def test_deadline_blocks_and_says_it_is_a_time_limit(self):
         self.contract([[sys.executable, '-c', 'import time; time.sleep(5)']])
-        self.assertFalse(quality.run_project_gate(self.root, timeout=0.05)['ok'])
+        result = quality.run_project_gate(self.root, timeout=0.05)
+        self.assertFalse(result['ok'])
+        self.assertIn('not a failing check', result['results'][-1]['output'])
+        self.assertIn('time.sleep(5)', result['results'][-1]['output'])
+
+    def test_pass_on_identical_tree_is_remembered_until_the_tree_changes(self):
+        repo = self.root / 'repo'
+        repo.mkdir()
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=repo, check=True)
+        (repo / 'a.txt').write_text('one\n')
+        subprocess.run(['git', 'add', '.'], cwd=repo, check=True)
+        subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], cwd=repo, check=True)
+        marker = self.root / 'runs'
+        cmd = [sys.executable, '-c', f'open({str(marker)!r}, "a").write("x")']
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [cmd]}))
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        second = quality.run_project_gate(repo)
+        self.assertTrue(second['ok'])
+        self.assertIn('cached pass', second['results'][0]['output'])
+        self.assertEqual(marker.read_text(), 'x', 'identical tree: gate not re-run')
+        (repo / 'a.txt').write_text('two\n')  # unstaged edit -> new key
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        self.assertEqual(marker.read_text(), 'xx')
+        (repo / 'new.txt').write_text('untracked\n')  # untracked file -> new key
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        self.assertEqual(marker.read_text(), 'xxx')
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [cmd + ['--changed']]}))  # contract -> new key
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        self.assertEqual(marker.read_text(), 'xxxx')
+        with patch.object(quality, 'GATE_CACHE_TTL_S', 0):  # expired entry is not trusted
+            self.assertTrue(quality.run_project_gate(repo)['ok'])
+        self.assertEqual(marker.read_text(), 'xxxxx')
+
+    def test_failures_are_never_cached(self):
+        repo = self.root / 'repo'
+        repo.mkdir()
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=repo, check=True)
+        subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init', '--allow-empty'], cwd=repo, check=True)
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [[sys.executable, '-c', 'raise SystemExit(1)']]}))
+        self.assertFalse(quality.run_project_gate(repo)['ok'])
+        self.assertFalse(quality.run_project_gate(repo)['ok'])
+        cache = self.root / 'gate-cache.json'
+        self.assertEqual(json.loads(cache.read_text() or '{}') if cache.exists() else {}, {})
 
     def test_project_timeout_is_bounded_and_overridable(self):
         self.contract([[sys.executable, '-c', 'pass']])

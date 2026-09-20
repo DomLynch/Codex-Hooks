@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import configparser
 import os
@@ -112,6 +113,65 @@ def project_tool(name: str, cwd: Path) -> str:
     return name
 
 
+# A pass is a receipt for the exact inputs it checked. Re-running the same commands on an identical
+# tree at every Stop wastes the budget and, for a slow CI, makes the gate unwinnable.
+GATE_CACHE_PATH = Path.home() / ".claude" / "state" / "quality_gate_cache.json"
+GATE_CACHE_TTL_S = 6 * 3600
+GATE_CACHE_MAX = 200
+
+
+def _tree_key(cwd: Path, commands: list) -> str | None:
+    """Identity of what a gate run checks: HEAD, staged/unstaged diffs, untracked files, commands."""
+    rc, head, _ = safe_run(["git", "rev-parse", "HEAD"], cwd=cwd)
+    if rc != 0:
+        return None
+    parts = [str(cwd), head.strip(), json.dumps(commands)]
+    for args in (["git", "status", "--porcelain", "--untracked-files=all"], ["git", "diff"], ["git", "diff", "--cached"]):
+        rc, out, _ = safe_run(args, cwd=cwd)
+        if rc != 0:
+            return None
+        parts.append(out)
+    for line in parts[3].splitlines():  # untracked content is invisible to diff: pin size + mtime
+        if line.startswith("?? "):
+            try:
+                st = (cwd / line[3:]).stat()
+                parts.append(f"{line[3:]} {st.st_size} {st.st_mtime_ns}")
+            except OSError:
+                parts.append(line)
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def _cached_pass(key: str | None) -> str:
+    if not key:
+        return ""
+    entry = load_json_locked(GATE_CACHE_PATH, {}).get(key)
+    if isinstance(entry, dict) and time.time() - float(entry.get("at", 0)) < GATE_CACHE_TTL_S:
+        return str(entry.get("at_iso", ""))
+    return ""
+
+
+def _remember_pass(key: str | None, cwd: Path) -> None:
+    if not key:
+        return
+
+    def updater(data: dict) -> dict:
+        data[key] = {"at": time.time(), "at_iso": time.strftime("%Y-%m-%dT%H:%M:%S"), "repo": str(cwd)}
+        if len(data) > GATE_CACHE_MAX:
+            data = dict(sorted(data.items(), key=lambda kv: kv[1].get("at", 0))[-GATE_CACHE_MAX:])
+        return data
+
+    update_json_locked(GATE_CACHE_PATH, updater)
+
+
+def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError:
+    return TimeoutError(
+        f"repository quality deadline exceeded: `{' '.join(command)}` was still running after {elapsed:.0f}s of the "
+        f"{budget:.0f}s Stop budget. This is the hook's time limit, not a failing check. Keep `commands` and "
+        "`completion_commands` fast (unit tests, lint); run long CI in the release workflow instead, or set "
+        "`timeout_seconds` (max 420). A pass on an unchanged tree is remembered for 6h."
+    )
+
+
 def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
     """Run the repository-owned contract; missing or invalid checks fail closed."""
     path = cwd / ".quality-gate.json"
@@ -129,13 +189,18 @@ def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
         if not isinstance(completion, list):
             raise ValueError("completion_commands must be a list of argv lists")
         commands = commands + completion
-        started = time.monotonic()
         for command in commands:
             if not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command):
                 raise ValueError("each command must be a nonempty argv list")
+        key = _tree_key(cwd, commands)
+        cached = _cached_pass(key)
+        if cached:
+            return {"ok": True, "results": [_result(path, "quality contract", True, f"cached pass at {cached} on an identical tree")]}
+        started = time.monotonic()
+        for command in commands:
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
-                raise TimeoutError("repository quality deadline exceeded")
+                raise _deadline(command, time.monotonic() - started, timeout)
             # Kill the whole check process group on timeout, including npm/make children.
             with subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, start_new_session=True) as proc:
@@ -145,11 +210,13 @@ def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
                     import signal
                     os.killpg(proc.pid, signal.SIGKILL)
                     proc.communicate()
-                    raise TimeoutError("repository quality deadline exceeded") from None
+                    raise _deadline(command, time.monotonic() - started, timeout) from None
                 rc = proc.returncode
             results.append(_result(path, " ".join(command), rc == 0, out + err))
             if rc != 0:
                 break
+        if results and all(item["ok"] for item in results):
+            _remember_pass(key, cwd)
     except Exception as exc:
         results.append(_result(path, "quality contract", False, str(exc)))
     return {"ok": bool(results) and all(item["ok"] for item in results), "results": results}
