@@ -12,7 +12,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child
-from lib.autonomy import record_lesson, remember_repo
+from lib.autonomy import hook_env, record_lesson, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
@@ -37,6 +37,9 @@ MIMO_AUDIT_TIME_THRESHOLD_S = 1800
 MIMO_AUDIT_MIN_TRANSCRIPT_CHARS = 400
 MIMO_AUDIT_MAX_TRANSCRIPT_CHARS = 3000
 MIMO_AUDIT_TIMEOUT_S = 30
+# Checkpoints switch the checkout to claude/<session>/main, commit and push: the
+# same side effect class as auto-PR, so the same switch governs both.
+CHECKPOINTS_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "1") != "0"
 
 MIMO_CHECKPOINT_PROMPT = """Audit Claude Code's in-progress task checkpoint.
 Your first line must be exactly one of:
@@ -203,6 +206,8 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
 
 
 def maybe_checkpoint(session_id: str, cwd: Path) -> None:
+    if not CHECKPOINTS_ENABLED:
+        return
     if not is_git_repo(cwd):
         log(COMPONENT, "checkpoint skipped: not a git repo")
         return

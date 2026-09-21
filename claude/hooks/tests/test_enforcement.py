@@ -63,6 +63,25 @@ class EnforcementTests(unittest.TestCase):
         self.assertTrue(git_tools.ensure_branch('main', self.root))
         self.assertTrue(git_tools.ensure_branch('main', self.root))
 
+    def test_checkpoint_disabled_by_auto_pr_switch_never_touches_the_checkout(self):
+        # Lane worktrees sit on their own branches; with CODEX_HOOK_AUTO_PR=0 the
+        # checkpoint must not create claude/<session>/main, commit or push there.
+        subprocess.check_output(['git', 'init', '-q', '-b', 'lane/feature'], cwd=self.root)
+        (self.root/'work.txt').write_text('in progress\n')
+        with (
+            patch.object(post_tool, 'CHECKPOINTS_ENABLED', False),
+            patch.object(post_tool, 'checkpoint_state', return_value={'edits_since_last_commit': 50}),
+            patch.object(post_tool, 'ensure_branch') as ensure,
+            patch.object(post_tool, 'commit') as commit,
+            patch.object(post_tool, 'push') as push,
+            patch.object(post_tool, 'log'),
+        ):
+            post_tool.maybe_checkpoint('lane-test', self.root)
+        ensure.assert_not_called()
+        commit.assert_not_called()
+        push.assert_not_called()
+        self.assertEqual(subprocess.check_output(['git', 'branch', '--show-current'], cwd=self.root, text=True).strip(), 'lane/feature')
+
     def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
         self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
