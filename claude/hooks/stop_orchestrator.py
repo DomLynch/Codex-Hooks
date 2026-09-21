@@ -33,7 +33,8 @@ from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import ci_covered_commit, pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
-from lib.claude_adapter import normalize_payload, latest_task_slice_claude
+from lib.transcript import edited_paths
+from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
 
 
 COMPONENT = "stop_orchestrator"
@@ -492,7 +493,8 @@ def main() -> None:
         turn_id = payload.get("turn_id") or ""
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice_claude(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
-        cwd = resolve_git_cwd(cwd, transcript=transcript)
+        edited = [Path(p) for p in edited_paths(latest_task_entries_claude(payload.get("transcript_path") or ""))]
+        cwd = resolve_git_cwd(cwd, edited, transcript=transcript)
         remember_repo(cwd)
         session_spec = read_session_spec(session_id)
 

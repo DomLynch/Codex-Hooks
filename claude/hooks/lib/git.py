@@ -80,6 +80,14 @@ def _absolute_paths_from_text(text: str) -> list[Path]:
     return paths
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_git_cwd(
     cwd: str | Path,
     files: list[Path] | tuple[Path, ...] | None = None,
@@ -93,15 +101,24 @@ def resolve_git_cwd(
     """
     base = Path(cwd).resolve()
     root = git_root(base)
-    if root:
-        return root
 
     candidates: list[Path] = []
     for file in files or []:
         probe = file.parent if file.suffix else file
-        root = git_root(probe)
-        if root and root not in candidates:
-            candidates.append(root)
+        file_root = git_root(probe)
+        if file_root and file_root not in candidates:
+            candidates.append(file_root)
+    if root:
+        # A session launched from one repo (the desktop app's project folder)
+        # can spend the whole turn editing a worktree of another. The edited
+        # files decide, but only when they all sit in one other repo and none
+        # of them is in the launch repo: side effects, diffs and the quality
+        # gate must run where the change actually is.
+        if candidates == [root] or not candidates:
+            return root
+        if len(candidates) == 1 and not any(_is_relative_to(f.resolve(), root) for f in files or []):
+            return candidates[0]
+        return root
     for workdir in _workdirs_from_text(transcript):
         root = git_root(workdir)
         if root and root not in candidates:

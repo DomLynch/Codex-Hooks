@@ -1479,6 +1479,33 @@ class TurnDiffSinceTests(unittest.TestCase):
 class RepoCwdResolutionTests(unittest.TestCase):
     """Regression: session cwd is a non-git parent; the diff must still reach the reviewer."""
 
+    @staticmethod
+    def _repo(path: Path) -> Path:
+        import subprocess
+        path.mkdir()
+        subprocess.run(["git", "-C", str(path), "init", "-q"], check=True)
+        (path / "a.txt").write_text("a\n")
+        subprocess.run(["git", "-C", str(path), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "b"], check=True)
+        return path.resolve()
+
+    def test_edited_files_in_another_repo_win_over_launch_repo(self) -> None:
+        # Lanes launched from the desktop app's project folder (a git repo) edit
+        # a worktree of a different repo all turn; side effects belong there.
+        from lib.git import resolve_git_cwd
+
+        with tempfile.TemporaryDirectory() as parent:
+            launch = self._repo(Path(parent) / "launch")
+            other = self._repo(Path(parent) / "other")
+            edited = [other / "src" / "x.ts", other / "y.ts"]
+            self.assertEqual(resolve_git_cwd(launch, edited), other)
+            # Any edit inside the launch repo keeps it authoritative.
+            self.assertEqual(resolve_git_cwd(launch, edited + [launch / "z.py"]), launch)
+            # Two foreign repos: ambiguous, keep the launch repo.
+            third = self._repo(Path(parent) / "third")
+            self.assertEqual(resolve_git_cwd(launch, [other / "x.ts", third / "y.ts"]), launch)
+            self.assertEqual(resolve_git_cwd(launch, []), launch)
+
     def test_diff_fed_when_session_cwd_is_parent_workspace(self) -> None:
         import subprocess
         import mimo_audit
