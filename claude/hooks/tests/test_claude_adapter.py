@@ -175,6 +175,12 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("unable to audit", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
         self.assertIn("pasted evidence", mimo_audit.AUDIT_PROMPT)
+
+    def test_prompt_explains_elided_tool_output_marker(self):
+        # The compactor's receipt excerpts are prefixed with this marker; the
+        # reviewer must not read the elision itself as missing evidence.
+        self.assertIn("[kept from elided\n  output]", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Never flag a claim as unreceipted only because", mimo_audit.AUDIT_PROMPT)
         self.assertIn("phantom truncation", mimo_audit.AUDIT_PROMPT)
 
     def test_mimo_prompt_blocks_bloat_and_random_debugging(self) -> None:

@@ -234,6 +234,11 @@ Auditor constraints - demands must be executable:
   truncated/incomplete/corrupting based on its rendering here - only flag it if
   the slice shows a subsequent failed syntax check, failed test, or error
   output for that file.
+- Tool OUTPUT is compacted the same way: a block marked "[kept from elided
+  output]" or "...[slice-elided by compactor" is an excerpt of a longer real
+  output the agent saw in full. Never flag a claim as unreceipted only because
+  its supporting output is elided here; flag it only when no tool call for it
+  exists in the slice, or when the visible part contradicts the claim.
 
 Also flag avoidable engineering drag when it creates real risk:
 - Broad rewrites, file/module sprawl, speculative abstractions, clever wrappers,
