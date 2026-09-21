@@ -34,6 +34,7 @@ from lib.log import log
 from lib.quality import ci_covered_commit, pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import edited_paths
+from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
 
 
@@ -205,6 +206,15 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420) -> bool:
             # Nothing local to verify: clean tree at a commit CI already checks (default branch or
             # an open PR). Running the contract here would only duplicate CI and load the machine.
             log(COMPONENT, f"repository quality gate skipped: clean tree at CI-covered {covered}")
+            return True
+        deploying = active_deploy_lock()
+        if deploying:
+            # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
+            # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
+            log(COMPONENT, f"repository quality gate deferred: deploy {str(deploying.get('revision', ''))[:7]} in flight ({deploying['age_s']}s)")
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
+                f"[Repository Quality Gate] deferred: deploy {str(deploying.get('revision', ''))[:7]} is in flight on this Mac (one-deployer rule); "
+                "the gate runs on the next Stop after FREE, and the PR's CI still covers this change."}}))
             return True
         result = run_project_gate(cwd, timeout=timeout)
         log(COMPONENT, f"repository quality gate ok={result['ok']}")

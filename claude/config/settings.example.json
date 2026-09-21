@@ -62,6 +62,16 @@
             "timeout": 45
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/domininclynch/.claude/hooks/deploy_guard.py",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
