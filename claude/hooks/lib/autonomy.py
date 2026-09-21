@@ -12,7 +12,10 @@ from lib.json_state import load_json_locked, update_json_locked
 
 
 STATE_DIR = Path.home() / ".codex" / "state"
-SECRETS_ENV = Path.home() / ".codex" / "secrets" / "hook_env"
+# The Claude install has its own switches; the Codex file is only a fallback
+# for keys the Claude file does not set (shared audit keys).
+SECRETS_ENV = Path.home() / ".claude" / "secrets" / "hook_env"
+SECRETS_ENV_FALLBACK = Path.home() / ".codex" / "secrets" / "hook_env"
 QUEUE_PATH = STATE_DIR / "autonomy_queue.json"
 REPOS_PATH = STATE_DIR / "autonomy_repos.json"
 LESSONS_JSONL = STATE_DIR / "lessons.jsonl"
@@ -40,16 +43,17 @@ def hook_env(name: str, default: str = "") -> str:
     value = os.environ.get(name)
     if value is not None:
         return value
-    try:
-        for line in SECRETS_ENV.read_text().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or "=" not in stripped:
-                continue
-            key, raw = stripped.split("=", 1)
-            if key.strip() == name:
-                return raw.strip().strip("\"'")
-    except Exception:
-        pass
+    for path in (SECRETS_ENV, SECRETS_ENV_FALLBACK):
+        try:
+            for line in path.read_text().splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, raw = stripped.split("=", 1)
+                if key.strip() == name:
+                    return raw.strip().strip("\"'")
+        except Exception:
+            pass
     return default
 
 

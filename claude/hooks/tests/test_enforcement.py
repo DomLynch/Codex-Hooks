@@ -44,6 +44,7 @@ class EnforcementTests(unittest.TestCase):
         (self.root/'pending.txt').write_text('uncommitted task work\n')
         before = (git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch))
         with (
+            patch.object(post_tool, 'CHECKPOINTS_ENABLED', True),
             patch.object(post_tool, 'checkpoint_state', return_value={'edits_since_last_commit': 5}),
             patch.object(post_tool, 'update_checkpoint_state') as state,
             patch.object(post_tool, 'commit', return_value=(False, 'not committed')) as commit,

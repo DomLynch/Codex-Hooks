@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import time
@@ -554,6 +555,26 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertTrue(tasks)
         self.assertEqual(tasks[0]["title"], "Resolve backlog marker in hook.py")
         self.assertEqual(tasks[0]["cwd"], tmp)
+
+    def test_hook_env_prefers_claude_file_over_codex_fallback(self) -> None:
+        # Regression: the Claude install read only ~/.codex/secrets/hook_env, so
+        # CODEX_HOOK_AUTO_PR=0 in ~/.claude/secrets/hook_env was ignored.
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_env = Path(tmp) / "claude_env"
+            codex_env = Path(tmp) / "codex_env"
+            claude_env.write_text("# comment\nCODEX_HOOK_AUTO_PR=0\n")
+            codex_env.write_text("CODEX_HOOK_AUTO_PR=1\nSHARED_ONLY='x'\n")
+            with (
+                mock.patch.object(autonomy, "SECRETS_ENV", claude_env),
+                mock.patch.object(autonomy, "SECRETS_ENV_FALLBACK", codex_env),
+                mock.patch.dict(os.environ, {}, clear=False),
+            ):
+                os.environ.pop("CODEX_HOOK_AUTO_PR", None)
+                self.assertEqual(autonomy.hook_env("CODEX_HOOK_AUTO_PR", "1"), "0")
+                self.assertEqual(autonomy.hook_env("SHARED_ONLY"), "x")
+                self.assertEqual(autonomy.hook_env("MISSING", "d"), "d")
+                os.environ["CODEX_HOOK_AUTO_PR"] = "1"
+                self.assertEqual(autonomy.hook_env("CODEX_HOOK_AUTO_PR", "0"), "1")
 
     def test_claude_autonomy_queue_holds_risky_tasks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
