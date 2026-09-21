@@ -20,8 +20,8 @@ CODEX_AUDIT_MODEL = os.environ.get("CODEX_AUDIT_MODEL", "gpt-5.6-terra")
 CODEX_AUDIT_EFFORT = os.environ.get("CODEX_AUDIT_EFFORT", "high")
 CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-opus-4-7")
 # Reviewer model and effort: the environment, then ~/.claude/secrets/hook_env (where the owner sets them), then the default.
-CLAUDE_AUDIT_MODEL = hook_env("CLAUDE_AUDIT_MODEL", "claude-sonnet-5").strip()
-CLAUDE_AUDIT_EFFORT = hook_env("CLAUDE_AUDIT_EFFORT", "high").strip().lower()
+CLAUDE_AUDIT_MODEL = hook_env("CLAUDE_AUDIT_MODEL", "claude-sonnet-5").strip() or "claude-sonnet-5"
+CLAUDE_AUDIT_EFFORT = hook_env("CLAUDE_AUDIT_EFFORT", "high").strip().lower() or "high"
 # "claude" = Claude CLI on the user's subscription; "codex" = GPT via Codex CLI.
 AUDIT_TRANSPORT = hook_env("CLAUDE_AUDIT_TRANSPORT", "claude").strip().lower()
 # Set on the audit child's environment so hooks inside it exit immediately (no recursion).
