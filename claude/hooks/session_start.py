@@ -106,7 +106,7 @@ def codegraph_notice(cwd: str | None) -> str:
     return "# Codegraph\n- No local index found for this repo; run `codegraph init -i` before structural code work."
 
 
-def memory_receipt(cwd: Path) -> str:
+def memory_receipt(cwd: Path, session_id: str = "") -> str:
     """Prove the memory actually loaded, at the top of a fresh session.
 
     Memory is keyed by a path, and after a re-home there are TWO of them: the key this folder implies, and the
@@ -132,7 +132,9 @@ def memory_receipt(cwd: Path) -> str:
     index = resolved / "MEMORY.md"
     lines = len([ln for ln in index.read_text(errors="ignore").splitlines() if ln.startswith("- ")]) if index.exists() else 0
     written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
-    return (f"# Memory check\nKey: {key}{link}\n{len(files)} memory file(s), {lines} index line(s){written}\n"
+    # A cleared session is dark until something prompts it, so the lane needs its own id to ask for a wake-up.
+    me = f"\nThis session's id: {session_id}" if session_id else ""
+    return (f"# Memory check\nKey: {key}{link}\n{len(files)} memory file(s), {lines} index line(s){written}{me}\n"
             "Compare this key with the memory path in your own system prompt: if they differ, symlink that path to "
             "this key before doing anything else, or you are reading the wrong memory.\n"
             "If you have just restarted, read today's files before answering and say which ones you loaded.")
@@ -180,7 +182,7 @@ def main() -> None:
             write_session_spec(session_id, prompt)
             log(COMPONENT, f"session spec captured chars={len(prompt)}")
         remember_repo(cwd)
-        additional_context(memory_receipt(cwd))
+        additional_context(memory_receipt(cwd, session_id))
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])

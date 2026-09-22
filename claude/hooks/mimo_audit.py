@@ -40,6 +40,7 @@ from lib.transcript import compact_task_entries, deterministic_findings, doc_onl
 from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd  # noqa: E402
 from lib.rehome import is_rehome_turn  # noqa: E402
+from lib.handoff_check import handoff_notice  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at, owner_instructions, peer_triggered_unauthorized_action  # noqa: E402
 
 
@@ -569,8 +570,18 @@ def read_task_slice(path: str) -> str:
     return compact_task_entries(task_entries, MAX_TRANSCRIPT_CHARS)
 
 
+# Set once per run so allow_stop can append the handoff report without threading it through every call site.
+_HANDOFF: dict[str, str] = {}
+
+
 def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
     log(f"ALLOW: {reason}")
+    notice = _HANDOFF.get("text")
+    if notice:
+        # Reported, never enforced: a Stop hook that demanded a pushed commit could trap a lane with nothing to
+        # commit or no network, which is the block loop this repo fixed on 2026-09-22.
+        log(f"HANDOFF_CHECK: {'ready' if 'Backup verified' in notice else 'not ready'}")
+        print(notice, file=sys.stderr)
     if unresolved:
         print(f"[{AUDITOR_NAME}] Review limit reached without PASS. "
               "Outstanding work is unresolved; this is not completion.", file=sys.stderr)
@@ -839,6 +850,11 @@ def main() -> None:
     turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
     transcript_path = payload.get("transcript_path") or ""
     last_msg = payload.get("last_assistant_message") or ""
+
+    try:
+        _HANDOFF["text"] = handoff_notice(transcript_path, Path(payload.get("cwd") or "."), last_msg)
+    except Exception as exc:   # never let the report break the gate
+        log(f"HANDOFF_CHECK failed: {exc}")
 
     iterations = load_iterations(session_id, turn_id)
     if iterations >= MAX_ITERATIONS:

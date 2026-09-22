@@ -1906,3 +1906,33 @@ def test_memory_receipt(tmp_path, monkeypatch):
     # missing key tells the lane where to look instead of failing
     out3 = ss.memory_receipt(Path("/work/lane-c"))
     assert "No memory directory" in out3 and "grep -i <lane>" in out3
+
+
+def test_handoff_check_reports_never_blocks(tmp_path, monkeypatch):
+    """Dom chose the reporting variant (2026-09-22): three checks, no block. A hook that demanded a pushed commit
+    could trap a lane with nothing to commit or no network — the block loop fixed earlier the same day."""
+    from lib import handoff_check as hc
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 400_000}}}) + "\n")
+    repo = tmp_path / "frankendom-combat"
+    (repo / "docs" / "state").mkdir(parents=True)
+    # under threshold, or mid-task: silent either way
+    small = tmp_path / "s.jsonl"
+    small.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 100_000}}}) + "\n")
+    assert hc.handoff_notice(str(small), repo, "PR #12 merged") == ""
+    assert hc.handoff_notice(str(t), repo, "still working on it") == ""
+    # task closed and over threshold, but nothing written: reports what is missing, never the clear instruction
+    out = hc.handoff_notice(str(t), repo, "PR #12 merged, handed over")
+    assert "NOT ready to clear" in out and "Not blocking you" in out
+    assert "clear_session" not in out
+    assert "docs/state/combat.md does not exist" in out
+    # the ready path names the tool only when both checks pass
+    monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane: (True, "state ok"))
+    monkeypatch.setattr(hc, "memory_written_today", lambda cwd: (True, "memory ok"))
+    ready = hc.handoff_notice(str(t), repo, "PR #12 merged")
+    assert "Backup verified" in ready and 'clear_session with session_id "self"' in ready
+    assert "system prompt" in ready   # the third check stays
+    # a half-done backup still does not instruct a clear
+    monkeypatch.setattr(hc, "memory_written_today", lambda cwd: (False, "no memory file written today"))
+    half = hc.handoff_notice(str(t), repo, "PR #12 merged")
+    assert "NOT ready" in half and "clear_session" not in half
