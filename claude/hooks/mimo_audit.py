@@ -64,7 +64,7 @@ DELIVERABLE_RE = re.compile(
 CONSECUTIVE_BLOCK_PREFIX = "consecutive_blocks:"
 AUDIT_ERROR_PREFIX = "audit_errors:"
 MAX_CONSECUTIVE_AUDIT_ERRORS = 3   # reviewer down this many Stops in a row -> escalate + release
-PRESERVED_PREFIXES = (CONSECUTIVE_BLOCK_PREFIX, AUDIT_ERROR_PREFIX)  # never evicted by save_iterations()
+PRESERVED_PREFIXES = (CONSECUTIVE_BLOCK_PREFIX, AUDIT_ERROR_PREFIX, "blocked_turn:")  # never evicted by save_iterations()
 ESCALATION_DIR = Path.home() / ".claude" / "state" / "escalations"
 PENDING_WORK_RE = re.compile(
     r"\b(shall I|should I|may I|want me to|would you like me to|can I proceed|"
@@ -385,6 +385,25 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
         return data
 
     update_json_locked(STATE_FILE, updater)
+
+
+def blocked_turn_key(session_id: str) -> str:
+    return f"blocked_turn:{session_id}"
+
+
+def remember_blocked_turn(session_id: str, turn_id: str) -> None:
+    update_json_locked(STATE_FILE, lambda data: {**data, blocked_turn_key(session_id): turn_id})
+
+
+def retry_turn_id(session_id: str, payload: dict, turn_id: str) -> str:
+    """On a Stop retry (stop_hook_active), keep the turn id of the attempt we blocked.
+    The synthesized id hashes the transcript size, and every 'Idle.' the lane appends after a block changes it,
+    so iterations restarted at 0 on each retry and MAX_ITERATIONS never released the turn: Claude Code's own cap
+    ended a Finishers turn after 9 blocks on 2026-09-22 12:5x. With a stable id the per-turn cap works again."""
+    if not payload.get("stop_hook_active"):
+        return turn_id
+    remembered = load_json_locked(STATE_FILE, {}).get(blocked_turn_key(session_id))
+    return str(remembered) if remembered else turn_id
 
 
 def consecutive_block_key(session_id: str) -> str:
@@ -790,7 +809,7 @@ def main() -> None:
     # Normalize Claude payload → fills in synthesized turn_id and last_assistant_message.
     payload = normalize_payload(payload)
     session_id = payload.get("session_id") or "unknown"
-    turn_id = payload.get("turn_id") or ""
+    turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
     transcript_path = payload.get("transcript_path") or ""
     last_msg = payload.get("last_assistant_message") or ""
 
@@ -931,6 +950,7 @@ def main() -> None:
             allow_stop(f"all findings escalated ({', '.join(escalated)}); released unresolved", unresolved=True)
             return
         save_iterations(session_id, turn_id, iterations + 1)
+        remember_blocked_turn(session_id, turn_id)
         save_verdict(session_id, turn_id, "ISSUES", verdict_text)
         consecutive_blocks = increment_consecutive_blocks(session_id)
         if consecutive_blocks == 1:

@@ -1784,3 +1784,26 @@ def test_unanchored_quote_filter(monkeypatch):
     out3, d3 = m.filter_unanchored_findings('VERDICT: ISSUES\n1. [quote: "never said this"] x', slice_text)
     assert out3 == "VERDICT: PASS" and len(d3) == 1
     assert "[quote:" in m.AUDIT_PROMPT and "checked mechanically" in m.AUDIT_PROMPT
+
+
+def test_retry_turn_id_is_stable_across_stop_retries(tmp_path, monkeypatch):
+    """The Finishers loop (2026-09-22): each 'Idle.' after a block grows the transcript, the synthesized turn id
+    changes, iterations restart at 0 and MAX_ITERATIONS never releases. A retry must reuse the blocked turn's id."""
+    import mimo_audit as m
+    from lib.claude_adapter import synthesize_turn_id
+    monkeypatch.setattr(m, "STATE_FILE", tmp_path / "iters.json")
+    t = tmp_path / "t.jsonl"
+    t.write_text("x" * 100)
+    first = synthesize_turn_id("s1", str(t), False)
+    assert m.retry_turn_id("s1", {"stop_hook_active": False}, first) == first
+    m.save_iterations("s1", first, 1)
+    m.remember_blocked_turn("s1", first)
+    t.write_text("x" * 140)  # lane appended "Idle."
+    again = synthesize_turn_id("s1", str(t), True)
+    assert again != first
+    assert m.retry_turn_id("s1", {"stop_hook_active": True}, again) == first
+    assert m.load_iterations("s1", first) == 1
+    # the remembered key survives eviction of old per-turn keys
+    for i in range(60):
+        m.save_iterations("s1", f"turn{i}", 1)
+    assert m.retry_turn_id("s1", {"stop_hook_active": True}, "whatever") == first
