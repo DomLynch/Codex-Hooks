@@ -1824,3 +1824,24 @@ def test_contentless_turn_skips_relays_but_never_claims():
     # long answers are reviewed even without claim words
     assert m.contentless_turn("x" * (m.CONTENTLESS_MAX_CHARS + 1), []) == ""
     assert m.contentless_turn("", []) == ""
+
+
+def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
+    """1,405 full-contract injections on 2026-09-22, the same ~2,150 tokens each time. Send it on the first
+    project prompt and every REFRESH_EVERY after (compaction can drop it); a pointer in between."""
+    import user_prompt_submit as u
+    from pathlib import Path
+    monkeypatch.setattr(u, "POLICY_STATE", tmp_path / "policy.json")
+    monkeypatch.setattr(u, "active_lessons", lambda: ["a lesson"])
+    first = u.context_for("fix src/a.ts", Path("/tmp"), "s1")
+    assert "Apply before acting." in first and "a lesson" in first
+    for _ in range(u.REFRESH_EVERY - 1):
+        later = u.context_for("fix src/a.ts", Path("/tmp"), "s1")
+        assert "Apply before acting." not in later
+        assert "still applies" in later and "a lesson" in later  # lessons always sent
+        assert len(later) < len(first)
+    assert "Apply before acting." in u.context_for("fix src/a.ts", Path("/tmp"), "s1")  # refresh
+    # a different session gets its own full copy
+    assert "Apply before acting." in u.context_for("fix src/a.ts", Path("/tmp"), "s2")
+    # non-project prompts are unaffected
+    assert "Current-Prompt Discipline" in u.context_for("hello", Path("/tmp"), "s1")

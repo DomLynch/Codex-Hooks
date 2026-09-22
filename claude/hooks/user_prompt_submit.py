@@ -19,6 +19,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import active_lessons
+from lib.json_state import update_json_locked
 from lib.api import exit_if_audit_child
 from lib.log import log
 
@@ -101,7 +102,38 @@ def is_project_work(prompt: str) -> bool:
     return bool(re.search(r"[\w./ -]+\.(py|ts|tsx|js|go|rs|md|toml|json|yaml|yml)\b", prompt))
 
 
-def context_for(prompt: str, cwd: Path) -> str:
+# The static policy text is identical on every prompt and stays in the model's context once injected.
+# Measured 2026-09-22: 1,791 injections that day, 1,405 of them the full ~2,400-token project contract - about
+# 3.4M tokens of the same words re-sent. Send it in full on a session's first project prompt and every
+# REFRESH_EVERY prompts after (compaction can drop it); send a short pointer in between. Active Lessons change
+# per turn and are always sent in full.
+POLICY_STATE = Path.home() / ".claude" / "state" / "prompt_policy.json"
+REFRESH_EVERY = 15
+POINTER = ("# V4/MCP Task Routing Contract\n"
+           "The full contract was injected earlier in this session and still applies: autonomy (act on reversible "
+           "defaults, ask only on true blockers), release close-out, finding closure, work quality (smallest "
+           "surgical change, run .quality-gate.json, receipts not claims), context efficiency (lean output, "
+           "Semble + Codegraph before non-trivial edits, scope to the current task).")
+
+
+def policy_due(session_id: str) -> bool:
+    """True when the full contract should be re-sent (first project prompt, or every REFRESH_EVERY)."""
+    if not session_id:
+        return True
+    try:
+        def updater(data: dict) -> dict:
+            n = int(data.get(session_id, 0)) + 1
+            data[session_id] = n
+            if len(data) > 60:
+                data = dict(list(data.items())[-60:])
+            return data
+        after = update_json_locked(POLICY_STATE, updater)
+        return (int(after.get(session_id, 1)) - 1) % REFRESH_EVERY == 0
+    except Exception:
+        return True
+
+
+def context_for(prompt: str, cwd: Path, session_id: str = "") -> str:
     lessons = active_lessons()
     lessons_context = ""
     if lessons:
@@ -114,6 +146,9 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.\n\n"
             f"{AUTONOMY_POLICY}{lessons_context}"
         )
+
+    if not policy_due(session_id):
+        return "\n".join([POINTER, f"- Current cwd from hook: `{cwd}`.", lessons_context.strip()])
 
     return "\n".join(
         [
@@ -158,7 +193,7 @@ def main() -> None:
         cwd = Path(payload.get("cwd") or ".").resolve()
         mode = "project" if is_project_work(prompt) else "simple"
         log(COMPONENT, f"context injected mode={mode} prompt_chars={len(prompt)} cwd={cwd}")
-        emit_context(context_for(prompt, cwd))
+        emit_context(context_for(prompt, cwd, str(payload.get("session_id") or "")))
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 
