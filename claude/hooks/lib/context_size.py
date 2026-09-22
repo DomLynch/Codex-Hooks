@@ -2,7 +2,8 @@
 
 Measured 2026-09-22: lanes started the day near 85k and ended pinned at the 966k ceiling; every tool call
 re-reads the whole context, so the day cost ~4,800M tokens against ~5.4M of actual generated output. Held near
-200k the same work costs 1,707M — a 64% saving with no model or quality change.
+200k the same work costs 1,707M — a 64% saving with no model or quality change. WARN_TOKENS is 300k rather than
+that 200k because Dom asked for headroom on 2026-09-22; the arithmetic above is unchanged.
 
 Context is a per-task budget, not a diary (Dom, 2026-09-22 16:55): a large audit may legitimately sit at 600k;
 a seven-line fix at 860k is the waste. So the notice never asks for a mid-task restart - it fires at the task
@@ -17,7 +18,7 @@ import json
 import os
 import re
 
-WARN_TOKENS = 200_000
+WARN_TOKENS = 300_000   # Dom, 2026-09-22, in his own session: raised from 200k "to give some balance"
 URGENT_TOKENS = 500_000
 TAIL_BYTES = 512 * 1024
 LANE_RE = re.compile(r"frankendom-([\w.-]+)")
@@ -59,7 +60,8 @@ def context_notice(transcript_path: str, cwd: str) -> tuple[str, bool]:
     lane = lane_name(cwd)
     line = (f"# Context {tokens // 1000}k. When this task closes (PR merged or handed over), write "
             f"docs/state/{lane}.md + memory, then /clear and resume from them. Do not restart mid-task. "
-            f"Every tool call re-reads the whole context, so this session costs {tokens / WARN_TOKENS:.1f}x a 200k one "
+            f"Every tool call re-reads the whole context, so this session costs {tokens / WARN_TOKENS:.1f}x a "
+            f"{WARN_TOKENS // 1000}k one "
             f"per call — context is a per-task budget, not a diary: a long audit may legitimately sit high, a "
             f"seven-line fix at {tokens // 1000}k is waste.")
     return line, tokens >= URGENT_TOKENS

@@ -1858,9 +1858,12 @@ def test_context_notice_thresholds(tmp_path, monkeypatch):
 
     write(150_000)
     assert cs.context_notice(str(t), "/x/frankendom-combat") == ("", False)
-    write(210_000)
+    write(210_000)   # under the 300k threshold Dom set on 2026-09-22: still silent
+    assert cs.context_notice(str(t), "/x/frankendom-combat") == ("", False)
+    write(310_000)
     line, first = cs.context_notice(str(t), "/x/frankendom-combat")
-    assert "210k" in line and "docs/state/combat.md" in line and "/clear" in line and first is False
+    assert "310k" in line and "docs/state/combat.md" in line and "/clear" in line and first is False
+    assert "a 300k one per call" in line   # the line a lane reads names the live threshold
     assert "Do not restart mid-task" in line  # context is a per-task budget, not a diary
     write(320_000)
     assert cs.context_notice(str(t), "/x/frankendom-audio")[1] is False  # still appended, not first
@@ -1873,9 +1876,11 @@ def test_context_notice_thresholds(tmp_path, monkeypatch):
     write(520_000)
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
     assert out.startswith("# Context 520k") and out.rstrip().endswith("BODY")
-    write(210_000)
+    write(310_000)   # over WARN, under URGENT: appended after the body
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
-    assert out.startswith("BODY") and "# Context 210k" in out
+    assert out.startswith("BODY") and "# Context 310k" in out
+    write(210_000)   # under WARN: nothing injected at all
+    assert u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat")) == "BODY"
 
 
 def test_memory_receipt(tmp_path, monkeypatch):
