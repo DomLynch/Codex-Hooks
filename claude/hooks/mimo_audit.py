@@ -608,12 +608,62 @@ def valid_verdict(text: str) -> bool:
 
 
 ADVISORY_RE = re.compile(r"\b(confirm|ensure|verify|double-check|should be verified|before treating)\b", re.IGNORECASE)
-ELISION_RE = re.compile(r"\b(elided|elision|partially[- ]elided)\b", re.IGNORECASE)
+ELISION_RE = re.compile(
+    r"\b(elided|elision|partially[- ]elided|without showing (the )?(corresponding |actual )?(tool |run |command )?output"
+    r"|no visible (execution|tool|log|run|command)?[ /]*(log )?output|not (shown|visible) in (this |the )?slice)\b", re.IGNORECASE)
+
+
+# A finding that names any of these is asserting a defect, whatever else it says.
+DEFECT_RE = re.compile(
+    r"\b(bug|error|fails?|failed|failure|failing|missing|wrong|incorrect|broken|mismatch|regress\w*|contradict\w*|"
+    r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
+    r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production)\b", re.IGNORECASE)
+
+
+def void_finding(text: str) -> str:
+    """Why this numbered finding is void ('' if it stands). Deterministic, word-boundary only.
+    Elision-based: the finding's basis is that output is elided here, and it names no contradiction.
+    Advisory: 'confirm/ensure/verify' with no defect named at all. Everything else stands."""
+    if ELISION_RE.search(text) and not DEFECT_RE.search(text):
+        return "elision-only"
+    if ADVISORY_RE.search(text) and not DEFECT_RE.search(text):
+        return "advisory-only"
+    return ""
+
+
+def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
+    """Drop void findings from an ISSUES verdict and renumber. Returns (text, dropped findings verbatim).
+    The reviewer prompt already forbids these; medium effort still emits them (11 blocks on 2026-09-22,
+    4 were this class). The filter makes the rule mechanical; every drop is logged in full."""
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, dropped = [], []
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            kept.append(line)
+            continue
+        why = void_finding(m.group(1))
+        if why:
+            dropped.append(m.group(1))
+            log(f"VOID_FINDING ({why}): {m.group(1)[:400]}")
+        else:
+            kept.append(m.group(1))
+    if not dropped:
+        return verdict_text, []
+    findings = [ln for ln in kept if not numbered.match(ln) and ln.strip()]
+    # `kept` now holds finding bodies (unnumbered) and any prose lines; renumber the bodies in order.
+    out, n = [], 0
+    for ln in kept:
+        if ln.strip() and ln in findings:
+            n += 1
+            out.append(f"{n}. {ln}")
+    if not n:
+        return "VERDICT: PASS", dropped
+    return "VERDICT: ISSUES\n" + "\n".join(out), dropped
 
 
 def log_noise_classes(verdict_text: str) -> None:
-    """Measurement only: how many numbered findings read as advisories or rest on elided output.
-    Nothing is filtered on this; it is the counter the medium-vs-high comparison reads."""
+    """Counter for the medium-vs-high comparison: findings that read as advisories or rest on elided output."""
     findings = [line for line in verdict_text.splitlines() if re.match(r"^\s*\d+[.)]\s+\S", line)]
     advisory = sum(1 for f in findings if ADVISORY_RE.search(f))
     elision = sum(1 for f in findings if ELISION_RE.search(f))
@@ -809,6 +859,15 @@ def main() -> None:
 
     if verdict_text.startswith("VERDICT: ISSUES"):
         log_noise_classes(verdict_text)
+        verdict_text, dropped = filter_void_findings(verdict_text)
+        if dropped and verdict_text.startswith("VERDICT: PASS"):
+            log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
+            save_verdict(session_id, turn_id, "PASS", verdict_text)
+            reset_consecutive_blocks(session_id)
+            ledger.clear(session_id)
+            allow_stop("audit passed (only void findings)")
+            return
+    if verdict_text.startswith("VERDICT: ISSUES"):
         verdict_text, escalated = ledger.register_findings(session_id, verdict_text)
         if escalated:
             log(f"LEDGER_ESCALATED: {', '.join(escalated)} re-raised past MAX_REOPENS; dropped from block")

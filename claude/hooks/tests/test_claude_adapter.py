@@ -1738,3 +1738,26 @@ def test_noise_class_counter_and_prompt_rule():
     assert sum(1 for f in findings if m.ADVISORY_RE.search(f)) == 1
     assert sum(1 for f in findings if m.ELISION_RE.search(f)) == 1
     m.log_noise_classes(text)  # must not raise
+
+
+def test_filter_void_findings_drops_elision_and_advisory_only(monkeypatch):
+    import mimo_audit as m
+    monkeypatch.setattr(m, "log", lambda *_a, **_k: None)
+    text = ("VERDICT: ISSUES\n"
+            "1. [F1] The test edit weakens coverage: counts changed 7 to 4 with no source change in the diff\n"
+            "2. [F2] Supporting output is elided in the slice — confirm the run output before treating it as verified\n"
+            "3. [F3] Ensure the assistant is only relaying the peer's plan; this should be verified\n"
+            "4. [F4] Claim presented as confirmed while the cited tool call is still pending in the slice\n")
+    out, dropped = m.filter_void_findings(text)
+    assert len(dropped) == 2 and "elided" in dropped[0] and "Ensure" in dropped[1]
+    assert out.splitlines() == ["VERDICT: ISSUES", "1. [F1] The test edit weakens coverage: counts changed 7 to 4 with no source change in the diff",
+                                "2. [F4] Claim presented as confirmed while the cited tool call is still pending in the slice"]
+    # untouched when nothing is void
+    same, none = m.filter_void_findings("VERDICT: ISSUES\n1. missing null check crashes on empty list\n")
+    assert none == [] and same.startswith("VERDICT: ISSUES\n1. missing")
+    # all void -> PASS
+    only, gone = m.filter_void_findings("VERDICT: ISSUES\n1. without showing the corresponding tool output; cite the actual run output\n")
+    assert only == "VERDICT: PASS" and len(gone) == 1
+    # a defect word keeps an elision-mentioning finding
+    assert m.void_finding("output is elided here but the visible part contradicts the claim: 3 failed") == ""
+    assert m.void_finding("ensure the peer plan does not apply the production migration unasked") == ""
