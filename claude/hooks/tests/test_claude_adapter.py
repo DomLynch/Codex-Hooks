@@ -1908,6 +1908,36 @@ def test_memory_receipt(tmp_path, monkeypatch):
     assert "No memory directory" in out3 and "grep -i <lane>" in out3
 
 
+def test_state_doc_read_from_trunk_with_aliases(monkeypatch):
+    """Reading the worktree reported four lanes missing a doc that was already on trunk (Lead + me, both stale
+    within an hour on 2026-09-22). Trunk is the shared truth, the sha is reported, and a lane whose doc is not
+    named after its worktree is mapped, never renamed."""
+    from lib import handoff_check as hc
+    calls = []
+
+    def fake_git(args, cwd):
+        calls.append(args)
+        if args[:2] == ["rev-parse", "--short"]:
+            return "ed4539e"
+        if args[0] == "log":
+            return "2026-09-22" if "--format=%cs" in args else "9dea712"
+        return ""
+    monkeypatch.setattr(hc, "_git", fake_git)
+    monkeypatch.setattr(hc.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(hc, "datetime", type("D", (), {"now": staticmethod(lambda: __import__("datetime").datetime(2026, 9, 22))}))
+    ok, why = hc.state_file_pushed(Path("/repo"), "deploy")
+    assert ok and "on trunk ed4539e" in why and "updated today" in why
+    assert ["fetch", "-q", "origin"] in calls          # never answers from a stale local ref
+    assert any(hc.TRUNK in a for a in calls if isinstance(a, list) for a in a)
+    # Lead's doc is lead.md, referenced by AGENTS.md: map the name, do not rename the file
+    _, why_lead = hc.state_file_pushed(Path("/repo"), "lead-catalogue")
+    assert "docs/state/lead.md" in why_lead
+    # a doc missing from trunk fails with the sha it read, so a stale answer is visible
+    monkeypatch.setattr(hc.subprocess, "run", lambda *a, **k: type("R", (), {"returncode": 1})())
+    ok2, why2 = hc.state_file_pushed(Path("/repo"), "multichar")
+    assert not ok2 and "not on trunk (ed4539e)" in why2
+
+
 def test_handoff_check_reports_never_blocks(tmp_path, monkeypatch):
     """Dom chose the reporting variant (2026-09-22): three checks, no block. A hook that demanded a pushed commit
     could trap a lane with nothing to commit or no network — the block loop fixed earlier the same day."""
@@ -1925,7 +1955,7 @@ def test_handoff_check_reports_never_blocks(tmp_path, monkeypatch):
     out = hc.handoff_notice(str(t), repo, "PR #12 merged, handed over")
     assert "NOT ready to clear" in out and "Not blocking you" in out
     assert "clear_session" not in out
-    assert "docs/state/combat.md does not exist" in out
+    assert "cannot read" in out or "not on trunk" in out   # the check now reads trunk, not the worktree
     # the ready path names the tool only when both checks pass
     monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane: (True, "state ok"))
     monkeypatch.setattr(hc, "memory_written_today", lambda cwd: (True, "memory ok"))

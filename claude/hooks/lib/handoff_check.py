@@ -27,22 +27,34 @@ def _git(args: list[str], cwd: Path) -> str:
         return ""
 
 
+# A lane's doc is not always named after its worktree. Lead's is docs/state/lead.md, referenced by AGENTS.md and
+# by every handoff entry in it, so the check maps the name rather than asking anyone to rename the file.
+STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world"}
+TRUNK = "origin/codex/01a09a76/task-1"
+
+
 def state_file_pushed(cwd: Path, lane: str) -> tuple[bool, str]:
-    """Today's docs/state/<lane>.md committed AND present on a pushed ref."""
-    rel = f"docs/state/{lane}.md"
-    if not (cwd / rel).exists():
-        return False, f"{rel} does not exist"
-    if _git(["status", "--porcelain", "--", rel], cwd):
-        return False, f"{rel} has uncommitted changes"
-    sha = _git(["log", "-1", "--format=%H", "--", rel], cwd)
-    if not sha:
-        return False, f"{rel} is not committed"
-    when = _git(["log", "-1", "--format=%cs", "--", rel], cwd)
+    """Today's docs/state/<lane>.md on TRUNK, not in this worktree.
+
+    Reading the worktree was wrong and both Lead and I were bitten by it within an hour on 2026-09-22: a doc
+    merged to trunk is absent from every worktree that has not pulled, so the check reported four lanes missing
+    a file that existed. Trunk is the shared truth, and the receipt names the sha it read so a stale answer is
+    visible rather than silent.
+    """
+    doc = STATE_DOC_ALIASES.get(lane, lane)
+    rel = f"docs/state/{doc}.md"
+    _git(["fetch", "-q", "origin"], cwd)
+    head = _git(["rev-parse", "--short", TRUNK], cwd)
+    if not head:
+        return False, f"cannot read {TRUNK} from {cwd} - check the remote"
+    if not _git(["cat-file", "-e", f"{TRUNK}:{rel}"], cwd) and subprocess.run(
+            ["git", "cat-file", "-e", f"{TRUNK}:{rel}"], cwd=str(cwd), capture_output=True).returncode != 0:
+        return False, f"{rel} is not on trunk ({head}) - write it, commit it and get it merged"
+    when = _git(["log", "-1", "--format=%cs", TRUNK, "--", rel], cwd)
     if when != datetime.now().strftime("%Y-%m-%d"):
-        return False, f"{rel} was last committed {when or 'never'}, not today"
-    if not _git(["branch", "-r", "--contains", sha], cwd):
-        return False, f"{rel} is committed ({sha[:7]}) but that commit is not on any remote branch - push it"
-    return True, f"{rel} committed {sha[:7]}, on a remote branch"
+        return False, f"{rel} is on trunk ({head}) but last updated {when or 'unknown'}, not today"
+    sha = _git(["log", "-1", "--format=%h", TRUNK, "--", rel], cwd)
+    return True, f"{rel} on trunk {head}, updated today by {sha}"
 
 
 def memory_written_today(cwd: Path) -> tuple[bool, str]:
