@@ -21,6 +21,10 @@ class EnforcementTests(unittest.TestCase):
         cache = patch.object(quality, 'GATE_CACHE_PATH', self.root / 'gate-cache.json')
         cache.start()
         self.addCleanup(cache.stop)
+        # The gate defers while a real Frankendom deploy holds the lock; these tests must not depend on that.
+        lock = patch.object(stop_orchestrator, 'active_deploy_lock', return_value=None)
+        lock.start()
+        self.addCleanup(lock.stop)
 
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
