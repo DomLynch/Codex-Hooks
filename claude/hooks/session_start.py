@@ -120,7 +120,7 @@ def lane_from_identity(cwd: Path) -> str:
     return name.removeprefix("frankendom-") if name.startswith("frankendom-") else name
 
 
-STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world"}
+STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world", "char": "character"}
 TRUNK = "origin/codex/01a09a76/task-1"
 
 
