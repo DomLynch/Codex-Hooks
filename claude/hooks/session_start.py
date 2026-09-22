@@ -243,7 +243,16 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
         "Ask Hooks to run scripts/lane-identity.mjs for this lane.")
     brief = now_paragraph(cwd, lane)
     doc_name = STATE_DOC_ALIASES.get(lane, lane)
-    brief = f"\n\n## Now (from docs/state/{doc_name}.md on trunk)\n{brief}" if brief else ""
+    if brief:
+        brief = f"\n\n## Now (from docs/state/{doc_name}.md on trunk)\n{brief}"
+    else:
+        # Nightborn, Goblin, Pitborn and Veteran have no state doc on any branch (2026-09-22). Printing nothing
+        # let a lane conclude its brief was LOST and go hunting for a file that never existed - the trap that
+        # cost Auditer an hour. Say the doc is absent, and that writing one is the lane's own job.
+        brief = (f"\n\n## Now\nNo docs/state/{doc_name}.md exists on trunk or in this worktree. That is a gap, "
+                 "not a lost file - do not go looking for it and do not assume your state was deleted. Your memory "
+                 "files above are the whole picture. If this lane owns work worth a brief, write the doc and open a "
+                 "PR for it (the Executioner lane did exactly this in PR #469).")
     empty = blind_restart_hint(key) if not files else ""
     return (f"# Memory check — lane: {lane}\nKey: {key}{link}\n"
             f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}{identity}\n"
