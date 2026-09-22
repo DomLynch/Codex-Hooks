@@ -272,6 +272,16 @@ VERDICT: ISSUES
 
 Do not nitpick style. Only block for concrete misses.
 
+A finding must assert a DEFECT: what is wrong, where, and what evidence shows it.
+"Confirm that...", "ensure the agent only...", "should be verified before...",
+"double-check..." are advisories, not findings: if you cannot name the defect, do
+not number it. A finding whose only basis is that supporting output is elided in
+this slice is void (the elision rule below): the tool call is the receipt. A
+finding that restates a gap the agent itself already disclosed in the slice
+("still blocked on X", "not proven", "waiting for your word") is not a miss
+either; the agent has done the disclosing. Prefer VERDICT: PASS with nothing
+over ISSUES with advisories.
+
 Evidence and current-request discipline (takes precedence over generic checklists):
 - Review only the latest real USER request. PRIOR REVIEW entries, Active Lessons,
   pasted conversations and developer handoffs are context, not new user tasks.
@@ -597,6 +607,20 @@ def valid_verdict(text: str) -> bool:
     return text.startswith("VERDICT: ISSUES") and bool(re.search(r"(?m)^\s*\d+[.)]\s+\S", text))
 
 
+ADVISORY_RE = re.compile(r"\b(confirm|ensure|verify|double-check|should be verified|before treating)\b", re.IGNORECASE)
+ELISION_RE = re.compile(r"\b(elided|elision|partially[- ]elided)\b", re.IGNORECASE)
+
+
+def log_noise_classes(verdict_text: str) -> None:
+    """Measurement only: how many numbered findings read as advisories or rest on elided output.
+    Nothing is filtered on this; it is the counter the medium-vs-high comparison reads."""
+    findings = [line for line in verdict_text.splitlines() if re.match(r"^\s*\d+[.)]\s+\S", line)]
+    advisory = sum(1 for f in findings if ADVISORY_RE.search(f))
+    elision = sum(1 for f in findings if ELISION_RE.search(f))
+    if findings:
+        log(f"NOISE_CLASS: findings={len(findings)} advisory={advisory} elision={elision}")
+
+
 def has_tool_activity(transcript: str) -> bool:
     return any(marker in transcript for marker in TOOL_ACTIVITY_MARKERS)
 
@@ -784,6 +808,7 @@ def main() -> None:
         return
 
     if verdict_text.startswith("VERDICT: ISSUES"):
+        log_noise_classes(verdict_text)
         verdict_text, escalated = ledger.register_findings(session_id, verdict_text)
         if escalated:
             log(f"LEDGER_ESCALATED: {', '.join(escalated)} re-raised past MAX_REOPENS; dropped from block")

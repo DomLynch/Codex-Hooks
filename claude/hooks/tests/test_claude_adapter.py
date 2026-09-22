@@ -1725,3 +1725,16 @@ class UnreceiptedLiveClaimTests(unittest.TestCase):
         self.assertEqual(out["decision"], "block")
         self.assertIn("Unreceipted: frankendom.com", out["reason"])
         model.assert_not_called()
+
+
+def test_noise_class_counter_and_prompt_rule():
+    import mimo_audit as m
+    assert "A finding must assert a DEFECT" in m.AUDIT_PROMPT
+    assert "already disclosed in the slice" in m.AUDIT_PROMPT
+    text = ("VERDICT: ISSUES\n1. [F1] confirm the run output before treating it as verified\n"
+            "2. [F2] supporting output is elided in the slice\n3. [F3] counts changed 7 to 4 with no source change")
+    findings = [line for line in text.splitlines() if m.re.match(r"^\s*\d+[.)]\s+\S", line)]
+    assert len(findings) == 3
+    assert sum(1 for f in findings if m.ADVISORY_RE.search(f)) == 1
+    assert sum(1 for f in findings if m.ELISION_RE.search(f)) == 1
+    m.log_noise_classes(text)  # must not raise
