@@ -31,6 +31,7 @@ from lib.git import (
 )
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
+from lib.rehome import is_rehome_turn
 from lib.quality import ci_covered_commit, pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import edited_paths
@@ -498,7 +499,12 @@ STATUS: COMPLETE
 def main() -> None:
     exit_if_audit_child()
     try:
-        payload = normalize_payload(json.loads(sys.stdin.read() or "{}"))
+        payload = json.loads(sys.stdin.read() or "{}")
+        why = is_rehome_turn(payload)
+        if why:
+            log(COMPONENT, f"REHOME_FAST_EXIT: {why}")
+            return
+        payload = normalize_payload(payload)
         session_id = payload.get("session_id") or "unknown"
         turn_id = payload.get("turn_id") or ""
         cwd = Path(payload.get("cwd") or ".").resolve()

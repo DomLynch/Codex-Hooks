@@ -39,6 +39,7 @@ from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd  # noqa: E402
+from lib.rehome import is_rehome_turn  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at, owner_instructions, peer_triggered_unauthorized_action  # noqa: E402
 
 
@@ -617,7 +618,8 @@ ELISION_RE = re.compile(
 DEFECT_RE = re.compile(
     r"\b(bug|error|fails?|failed|failure|failing|missing|wrong|incorrect|broken|mismatch|regress\w*|contradict\w*|"
     r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
-    r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production)\b", re.IGNORECASE)
+    r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
+    r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported)\b", re.IGNORECASE)
 
 
 def void_finding(text: str) -> str:
@@ -733,6 +735,12 @@ def main() -> None:
         payload = json.loads(raw) if raw.strip() else {}
     except Exception as e:
         allow_stop(f"bad payload: {e}")
+        return
+
+    why = is_rehome_turn(payload)
+    if why:
+        log(f"REHOME_FAST_EXIT: {why}")
+        allow_stop("re-home turn: change_directory must apply within seconds of the turn ending")
         return
 
     # Normalize Claude payload → fills in synthesized turn_id and last_assistant_message.
