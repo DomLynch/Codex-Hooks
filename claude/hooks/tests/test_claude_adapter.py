@@ -1845,3 +1845,31 @@ def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
     assert "Apply before acting." in u.context_for("fix src/a.ts", Path("/tmp"), "s2")
     # non-project prompts are unaffected
     assert "Current-Prompt Discipline" in u.context_for("hello", Path("/tmp"), "s1")
+
+
+def test_context_notice_thresholds(tmp_path, monkeypatch):
+    """2026-09-22: lanes ran to the 966k ceiling; capping at 200k would have cut the lane bill 64%.
+    Warn at 200k (appended), make it the first line at 300k. Below that, silence."""
+    from lib import context_size as cs
+    t = tmp_path / "t.jsonl"
+
+    def write(tokens):
+        t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": tokens}}}) + "\n")
+
+    write(150_000)
+    assert cs.context_notice(str(t), "/x/frankendom-combat") == ("", False)
+    write(210_000)
+    line, first = cs.context_notice(str(t), "/x/frankendom-combat")
+    assert "210k" in line and "docs/state/combat.md" in line and "/clear" in line and first is False
+    write(320_000)
+    line, first = cs.context_notice(str(t), "/x/frankendom-audio")
+    assert first is True and "docs/state/audio.md" in line
+    assert cs.context_notice(str(tmp_path / "missing.jsonl"), "/x") == ("", False)
+    # placement in the injected context
+    import user_prompt_submit as u
+    write(320_000)
+    out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
+    assert out.startswith("# Context 320k") and out.rstrip().endswith("BODY")
+    write(210_000)
+    out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
+    assert out.startswith("BODY") and "# Context 210k" in out
