@@ -1890,6 +1890,8 @@ def test_memory_receipt(tmp_path, monkeypatch):
     monkeypatch.setattr(ss.Path, "home", classmethod(lambda cls: home))
     out = ss.memory_receipt(Path("/work/lane-a"))
     assert "1 memory file(s), 1 index line(s)" in out and "written today" in out
+    # the hook cannot see the app's own memory root; only the model can, so it must be told to compare
+    assert "memory path in your own system prompt" in out and "symlink" in out
     # symlinked key resolves and says so
     link_key = home / ".claude" / "projects" / "-work-lane-b" / "memory"
     link_key.parent.mkdir(parents=True)

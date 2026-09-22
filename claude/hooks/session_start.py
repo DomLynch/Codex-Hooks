@@ -131,6 +131,8 @@ def memory_receipt(cwd: Path) -> str:
     lines = len([ln for ln in index.read_text(errors="ignore").splitlines() if ln.startswith("- ")]) if index.exists() else 0
     written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
     return (f"# Memory check\nKey: {key}{link}\n{len(files)} memory file(s), {lines} index line(s){written}\n"
+            "Compare this key with the memory path in your own system prompt: if they differ, symlink that path to "
+            "this key before doing anything else, or you are reading the wrong memory.\n"
             "If you have just restarted, read today's files before answering and say which ones you loaded.")
 
 
