@@ -29,6 +29,16 @@ def _git(args: list[str], cwd: Path) -> str:
 
 # A lane's doc is not always named after its worktree. Lead's is docs/state/lead.md, referenced by AGENTS.md and
 # by every handoff entry in it, so the check maps the name rather than asking anyone to rename the file.
+def project_slug(cwd) -> str:
+    """The app's folder name for a cwd: every "/" AND every space becomes "-".
+
+    The Stats lane sat in "~/Developer/Frankendom - Stats"; replacing only "/" produced a key with spaces
+    still in it, which matches no directory, so its receipt named an empty store while its real one was
+    elsewhere. The app writes "-Users-...-Frankendom---Stats", i.e. spaces are hyphens too.
+    """
+    return str(cwd).replace("/", "-").replace(" ", "-").lstrip("-")
+
+
 STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world", "char": "character"}
 TRUNK = "origin/codex/01a09a76/task-1"
 
@@ -59,7 +69,7 @@ def state_file_pushed(cwd: Path, lane: str) -> tuple[bool, str]:
 
 def memory_written_today(cwd: Path) -> tuple[bool, str]:
     """A memory file written today under the key THIS session reads, and indexed in MEMORY.md."""
-    key = Path.home() / ".claude" / "projects" / ("-" + str(cwd).replace("/", "-").lstrip("-")) / "memory"
+    key = Path.home() / ".claude" / "projects" / ("-" + project_slug(cwd)) / "memory"
     try:
         resolved = key.resolve()
         files = [p for p in resolved.iterdir() if p.suffix == ".md" and p.name != "MEMORY.md"]

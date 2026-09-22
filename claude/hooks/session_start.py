@@ -17,6 +17,7 @@ from lib.git import is_git_repo
 from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
+from lib.handoff_check import project_slug
 from user_prompt_submit import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
 
 
@@ -215,7 +216,7 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     the model to compare that against the memory path in its own system prompt, which only the model can read.
     Read-only, no model call.
     """
-    key = Path.home() / ".claude" / "projects" / ("-" + str(cwd).replace("/", "-").lstrip("-")) / "memory"
+    key = Path.home() / ".claude" / "projects" / ("-" + project_slug(cwd)) / "memory"
     lane = lane_from_identity(cwd)
     try:
         resolved = key.resolve()
