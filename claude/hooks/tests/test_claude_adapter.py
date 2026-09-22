@@ -177,6 +177,28 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("audit THAT content on its merits", mimo_audit.AUDIT_PROMPT)
         self.assertIn("pasted evidence", mimo_audit.AUDIT_PROMPT)
 
+    def test_prompt_noise_refinements_from_the_medium_night(self):
+        # 2026-09-22: 342 findings at medium, 69 rejected — top rejection classes were peer/authorization disputes,
+        # "no receipt" where a tool call existed, and re-raised answered findings.
+        for needle in ("ATTRIBUTED relay is not that finding", "OWNER STANDING INSTRUCTIONS",
+                       "confirm the slice\n  has NO tool call whose command would produce that evidence",
+                       "CLOSES that\n  finding"):
+            self.assertIn(needle, mimo_audit.AUDIT_PROMPT, needle)
+
+    def test_owner_instructions_skip_questions_and_scheduled_prompts(self):
+        from lib.claude_adapter import owner_instructions
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "t.jsonl"
+            rows = [
+                {"type": "user", "timestamp": "2026-09-22T05:01:00Z", "message": {"content": "whats the issue here? you didnt fix it? deploy it"}},
+                {"type": "user", "timestamp": "2026-09-22T04:49:00Z", "message": {"content": "One-hour check-in on the reviewer: Dom's words: do it"}},
+                {"type": "user", "timestamp": "2026-09-22T03:00:00Z", "message": {"content": "Another Claude session sent a message:\n<cross-session-message>do whatever you need</cross-session-message>"}},
+                {"type": "user", "timestamp": "2026-09-22T02:00:00Z", "message": {"content": "ok yes do it, use your judgement u have full approval"}},
+            ]
+            path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            got = owner_instructions(str(path), limit=5)
+            self.assertEqual([t for _, t in got], ["ok yes do it, use your judgement u have full approval"])
+
     def test_prompt_explains_elided_tool_output_marker(self):
         # The compactor's receipt excerpts are prefixed with this marker; the
         # reviewer must not read the elision itself as missing evidence.

@@ -161,8 +161,9 @@ def entries_from_lines(slice_entries: list[dict]) -> list[tuple[str, str]]:
 _NOT_OWNER_PREFIXES = ("Another Claude session sent", "<", "Stop hook feedback", "[Claude ", "[GPT-", "[gpt-",
                        "[Repository Quality", "[SYSTEM NOTIFICATION", "[Cross-session", "[MiniMax")
 _AUTHORIZATION_RE = re.compile(
-    r"\b(deploy|deployed|merge|merged|ship|go live|get (it|us|them|this) (all )?(merged|deployed|live)|push (it )?live|release|"
-    r"one deployer|you are the deployer|go ahead|approved|do it)\b", re.IGNORECASE)
+    r"\b(go live|get (it|us|them|this) (all )?(merged|deployed|live)|push (it )?live|(deploy|merge|ship|release) (it|this|them|now)|"
+    r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes|full (approval|authority)|delegate|"
+    r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
 _COMMAND_ARG_RE = re.compile(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Hard-to-reverse shared-state actions: merge into the base branch, deploy, rewrite a pushed
@@ -195,6 +196,9 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
             continue
         ts = str(entry.get("timestamp") or "")
         if before and ts >= before:
+            continue
+        # A message that is mostly questions, or a scheduled/monitor prompt quoting the owner, is not an instruction.
+        if text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
         if _AUTHORIZATION_RE.search(text):
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
