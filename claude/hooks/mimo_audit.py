@@ -619,7 +619,7 @@ DEFECT_RE = re.compile(
     r"\b(bug|error|fails?|failed|failure|failing|missing|wrong|incorrect|broken|mismatch|regress\w*|contradict\w*|"
     r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
     r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
-    r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported)\b", re.IGNORECASE)
+    r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported|only shows|does not show|doesn't show)\b", re.IGNORECASE)
 
 
 def void_finding(text: str) -> str:
