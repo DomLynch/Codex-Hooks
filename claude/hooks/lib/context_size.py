@@ -1,8 +1,12 @@
 """How big is this session's context, and what should the agent be told about it?
 
 Measured 2026-09-22: lanes started the day near 85k and ended pinned at the 966k ceiling; every tool call
-re-reads the whole context, so the day cost ~4,800M tokens against ~5.4M of actual generated output. Capping
-sessions at 200k would have cost 1,707M — a 64% saving with no model or quality change.
+re-reads the whole context, so the day cost ~4,800M tokens against ~5.4M of actual generated output. Held near
+200k the same work costs 1,707M — a 64% saving with no model or quality change.
+
+Context is a per-task budget, not a diary (Dom, 2026-09-22 16:55): a large audit may legitimately sit at 600k;
+a seven-line fix at 860k is the waste. So the notice never asks for a mid-task restart - it fires at the task
+boundary, when a PR is merged or the work is handed over.
 
 The size comes from the transcript's own usage records (cache_read + cache_creation + input on the last
 assistant message), so it is what the API actually charged for, not an estimate. Read from the file tail only.
@@ -14,7 +18,7 @@ import os
 import re
 
 WARN_TOKENS = 200_000
-URGENT_TOKENS = 300_000
+URGENT_TOKENS = 500_000
 TAIL_BYTES = 512 * 1024
 LANE_RE = re.compile(r"frankendom-([\w.-]+)")
 
@@ -53,7 +57,9 @@ def context_notice(transcript_path: str, cwd: str) -> tuple[str, bool]:
     if tokens < WARN_TOKENS:
         return "", False
     lane = lane_name(cwd)
-    line = (f"# Context {tokens // 1000}k — restart due. Finish the task in hand, write docs/state/{lane}.md and "
-            f"your memory files so the next session can pick it up cold, then /clear. Every tool call re-reads "
-            f"this whole context: a {tokens // 1000}k session costs {tokens / WARN_TOKENS:.1f}x a 200k one per call.")
+    line = (f"# Context {tokens // 1000}k. When this task closes (PR merged or handed over), write "
+            f"docs/state/{lane}.md + memory, then /clear and resume from them. Do not restart mid-task. "
+            f"Every tool call re-reads the whole context, so this session costs {tokens / WARN_TOKENS:.1f}x a 200k one "
+            f"per call — context is a per-task budget, not a diary: a long audit may legitimately sit high, a "
+            f"seven-line fix at {tokens // 1000}k is waste.")
     return line, tokens >= URGENT_TOKENS

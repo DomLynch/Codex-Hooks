@@ -1861,15 +1861,18 @@ def test_context_notice_thresholds(tmp_path, monkeypatch):
     write(210_000)
     line, first = cs.context_notice(str(t), "/x/frankendom-combat")
     assert "210k" in line and "docs/state/combat.md" in line and "/clear" in line and first is False
+    assert "Do not restart mid-task" in line  # context is a per-task budget, not a diary
     write(320_000)
+    assert cs.context_notice(str(t), "/x/frankendom-audio")[1] is False  # still appended, not first
+    write(520_000)
     line, first = cs.context_notice(str(t), "/x/frankendom-audio")
     assert first is True and "docs/state/audio.md" in line
     assert cs.context_notice(str(tmp_path / "missing.jsonl"), "/x") == ("", False)
     # placement in the injected context
     import user_prompt_submit as u
-    write(320_000)
+    write(520_000)
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
-    assert out.startswith("# Context 320k") and out.rstrip().endswith("BODY")
+    assert out.startswith("# Context 520k") and out.rstrip().endswith("BODY")
     write(210_000)
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
     assert out.startswith("BODY") and "# Context 210k" in out
