@@ -106,6 +106,66 @@ def codegraph_notice(cwd: str | None) -> str:
     return "# Codegraph\n- No local index found for this repo; run `codegraph init -i` before structural code work."
 
 
+def lane_from_identity(cwd: Path) -> str:
+    """The lane name the worktree declares in its untracked CLAUDE.local.md, else the folder suffix."""
+    try:
+        for line in (cwd / "CLAUDE.local.md").read_text(errors="ignore").splitlines():
+            if "lane" in line and "**" in line:
+                parts = [p for p in line.split("**") if p.strip()]
+                if len(parts) >= 2:
+                    return parts[1].strip()
+    except OSError:
+        pass
+    name = cwd.name
+    return name.removeprefix("frankendom-") if name.startswith("frankendom-") else name
+
+
+def now_paragraph(cwd: Path, lane: str) -> str:
+    """The 'Now' section of docs/state/<lane>.md: what the next session should pick up."""
+    try:
+        text = (cwd / "docs" / "state" / f"{lane}.md").read_text(errors="ignore")
+    except OSError:
+        return ""
+    lines = text.splitlines()
+    # Prefer an explicit "Now" section (the handoff format we ask for); otherwise fall back to the newest
+    # "## " section, which is what the lanes' existing append-style state docs actually look like.
+    start, stop = None, len(lines)
+    for i, line in enumerate(lines):
+        if line.lstrip("#*_ ").lower().startswith("now"):
+            # "**Now:** nothing in flight." is inline, not a heading, so keep the matched line itself.
+            start = i
+            for j in range(start + 1, len(lines)):
+                if lines[j].startswith("#") or lines[j].lstrip("*_ ").lower().startswith(("done today", "open", "gotchas")):
+                    stop = j
+                    break
+            break
+    if start is None:
+        heads = [i for i, line in enumerate(lines) if line.startswith("## ")]
+        if not heads:
+            return ""
+        start, stop = heads[0], (heads[1] if len(heads) > 1 else len(lines))
+    return "\n".join(lines[start:stop]).strip()[:900]
+
+
+def blind_restart_hint(key: Path) -> str:
+    """The resolved key is empty but another key's index mentions this lane: print the exact fix, not a warning."""
+    lane = key.parent.name.split("frankendom-")[-1]
+    if not lane:
+        return ""
+    for other in sorted((Path.home() / ".claude" / "projects").glob("*/memory/MEMORY.md")):
+        if other.parent == key or "claude-audit" in str(other):
+            continue
+        try:
+            if lane.lower() not in other.read_text(errors="ignore").lower():
+                continue
+        except OSError:
+            continue
+        return (f"\nAnother key mentions this lane: {other.parent}\n"
+                f"If that is your memory, link it before doing anything else:\n"
+                f"  mv {key} {key}.pre-restore 2>/dev/null; ln -s {other.parent} {key}")
+    return ""
+
+
 def memory_receipt(cwd: Path, session_id: str = "") -> str:
     """Prove the memory actually loaded, at the top of a fresh session.
 
@@ -118,13 +178,15 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     Read-only, no model call.
     """
     key = Path.home() / ".claude" / "projects" / ("-" + str(cwd).replace("/", "-").lstrip("-")) / "memory"
+    lane = lane_from_identity(cwd)
     try:
         resolved = key.resolve()
         files = sorted(p for p in resolved.iterdir() if p.suffix == ".md" and p.name != "MEMORY.md")
     except OSError:
-        return ("# Memory check\n"
-                f"No memory directory for this folder ({key}). If you expected a handoff here it was written from a "
-                "different cwd - find it with: ls ~/.claude/projects/*/memory/ | grep -i <lane>")
+        return (f"# Memory check — lane: {lane}\n"
+                f"No memory directory for this folder ({key})." + (blind_restart_hint(key) or
+                " If you expected a handoff here it was written from a different cwd - find it with: "
+                "ls ~/.claude/projects/*/memory/ | grep -i <lane>"))
     today = datetime.now().strftime("%Y-%m-%d")
     fresh = [f.name for f in sorted((f for f in files if datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d") == today),
                                     key=lambda f: f.stat().st_mtime, reverse=True)]
@@ -134,10 +196,17 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
     # A cleared session is dark until something prompts it, so the lane needs its own id to ask for a wake-up.
     me = f"\nThis session's id: {session_id}" if session_id else ""
-    return (f"# Memory check\nKey: {key}{link}\n{len(files)} memory file(s), {lines} index line(s){written}{me}\n"
+    brief = now_paragraph(cwd, lane)
+    brief = f"\n\n## Now (from docs/state/{lane}.md)\n{brief}" if brief else ""
+    empty = blind_restart_hint(key) if not files else ""
+    return (f"# Memory check — lane: {lane}\nKey: {key}{link}\n"
+            f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}\n"
             "Compare this key with the memory path in your own system prompt: if they differ, symlink that path to "
             "this key before doing anything else, or you are reading the wrong memory.\n"
-            "If you have just restarted, read today's files before answering and say which ones you loaded.")
+            "If you have just restarted, read today's files before answering and say which ones you loaded."
+            + brief +
+            "\n\nLast resort if this is all wrong: the app's 'Resume previous session' restores the old conversation, "
+            "and hooks/lib/export_transcript.py turns its .jsonl into readable markdown.")
 
 
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:

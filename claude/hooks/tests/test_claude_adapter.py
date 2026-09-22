@@ -1936,3 +1936,49 @@ def test_handoff_check_reports_never_blocks(tmp_path, monkeypatch):
     monkeypatch.setattr(hc, "memory_written_today", lambda cwd: (False, "no memory file written today"))
     half = hc.handoff_notice(str(t), repo, "PR #12 merged")
     assert "NOT ready" in half and "clear_session" not in half
+
+
+def test_receipt_additions_and_export(tmp_path, monkeypatch):
+    """Strategy's brief (Dom's authority, 2026-09-22): the receipt must carry lane, session id, the Now brief and
+    a blind-restart fix, so a woken session needs no context; and a cleared transcript stays readable."""
+    import session_start as ss
+    from lib import export_transcript as ex
+    home = tmp_path / "home"
+    repo = tmp_path / "frankendom-audio"
+    (repo / "docs" / "state").mkdir(parents=True)
+    (repo / "CLAUDE.local.md").write_text("This checkout is the Frankendom **audio** lane; session **X**.\n")
+    (repo / "docs" / "state" / "audio.md").write_text("# Audio\n\n**Now:** rebuild the clash bank.\n\n## older\nstuff\n")
+    key = home / ".claude" / "projects" / ("-" + str(repo).replace("/", "-").lstrip("-")) / "memory"
+    key.mkdir(parents=True)
+    (key / "a.md").write_text("x")
+    (key / "MEMORY.md").write_text("# Memory Index\n\n- [A](a.md) — hook\n")
+    monkeypatch.setattr(ss.Path, "home", classmethod(lambda cls: home))
+    out = ss.memory_receipt(repo, "sess-9")
+    assert "lane: audio" in out                      # lane from CLAUDE.local.md, not the folder
+    assert "This session's id: sess-9" in out        # no lookup needed to ask for a wake-up
+    assert "rebuild the clash bank" in out           # the brief travels with the receipt
+    assert "Resume previous session" in out and "export_transcript.py" in out
+    # blind restart: empty key, another key's index names the lane -> print the exact symlink command
+    other = home / ".claude" / "projects" / "-other-frankendom-audio" / "memory"
+    other.mkdir(parents=True)
+    (other / "MEMORY.md").write_text("- [Audio handoff](audio_handoff.md) — audio lane\n")
+    empty_repo = tmp_path / "elsewhere" / "frankendom-audio"   # same lane, different path -> different key
+    empty_repo.mkdir(parents=True)
+    empty_key = home / ".claude" / "projects" / ("-" + str(empty_repo).replace("/", "-").lstrip("-")) / "memory"
+    empty_key.mkdir(parents=True)
+    hint = ss.blind_restart_hint(empty_key)
+    assert "ln -s" in hint and str(other) in hint
+    # exporter keeps the human thread and drops tool noise
+    src = tmp_path / "s.jsonl"
+    src.write_text("\n".join([
+        json.dumps({"timestamp": "2026-09-22T10:00:00Z", "message": {"role": "user", "content": "do the thing"}}),
+        json.dumps({"timestamp": "2026-09-22T10:00:05Z", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}}),
+        json.dumps({"timestamp": "2026-09-22T10:00:09Z", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "done, here is why"}]}}),
+    ]) + "\n")
+    md = tmp_path / "s.md"
+    users, replies, dropped = ex.export(src, md)
+    assert (users, replies, dropped) == (1, 1, 1)
+    body = md.read_text()
+    assert "do the thing" in body and "done, here is why" in body and "Bash" not in body
