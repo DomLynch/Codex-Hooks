@@ -1989,6 +1989,7 @@ def test_receipt_additions_and_export(tmp_path, monkeypatch):
     # the lane to be woken BY LANE TITLE instead of handing over an id that fails silently.
     assert "ask by LANE TITLE" in out and "sess-9" not in out
     assert "rebuild the clash bank" in out           # the brief travels with the receipt
+    assert "on trunk" in out                        # read from trunk: a lane on an old branch still sees it
     assert "Resume previous session" in out and "export_transcript.py" in out
     # blind restart: empty key, another key's index names the lane -> print the exact symlink command
     other = home / ".claude" / "projects" / "-other-frankendom-audio" / "memory"

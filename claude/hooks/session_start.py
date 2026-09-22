@@ -120,12 +120,31 @@ def lane_from_identity(cwd: Path) -> str:
     return name.removeprefix("frankendom-") if name.startswith("frankendom-") else name
 
 
+STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world"}
+TRUNK = "origin/codex/01a09a76/task-1"
+
+
 def now_paragraph(cwd: Path, lane: str) -> str:
-    """The 'Now' section of docs/state/<lane>.md: what the next session should pick up."""
+    """The 'Now' brief from docs/state/<lane>.md, read from TRUNK.
+
+    A lane sitting on a feature branch cannot see a state doc merged after it branched - Auditer reported its
+    doc "does not exist" on 2026-09-22 while it was on trunk as #449. Trunk is the shared truth; the worktree
+    is only a fallback for an unfetched or offline checkout.
+    """
+    import subprocess
+    doc = STATE_DOC_ALIASES.get(lane, lane)
+    text = ""
     try:
-        text = (cwd / "docs" / "state" / f"{lane}.md").read_text(errors="ignore")
-    except OSError:
-        return ""
+        r = subprocess.run(["git", "show", f"{TRUNK}:docs/state/{doc}.md"],
+                           cwd=str(cwd), capture_output=True, text=True, timeout=10)
+        text = r.stdout if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        text = ""
+    if not text:
+        try:
+            text = (cwd / "docs" / "state" / f"{doc}.md").read_text(errors="ignore")
+        except OSError:
+            return ""
     lines = text.splitlines()
     # Prefer an explicit "Now" section (the handoff format we ask for); otherwise fall back to the newest
     # "## " section, which is what the lanes' existing append-style state docs actually look like.
@@ -223,7 +242,8 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
         "\nNo CLAUDE.local.md in this worktree: the standing context/handoff rule is NOT loaded here. "
         "Ask Hooks to run scripts/lane-identity.mjs for this lane.")
     brief = now_paragraph(cwd, lane)
-    brief = f"\n\n## Now (from docs/state/{lane}.md)\n{brief}" if brief else ""
+    doc_name = STATE_DOC_ALIASES.get(lane, lane)
+    brief = f"\n\n## Now (from docs/state/{doc_name}.md on trunk)\n{brief}" if brief else ""
     empty = blind_restart_hint(key) if not files else ""
     return (f"# Memory check — lane: {lane}\nKey: {key}{link}\n"
             f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}{identity}\n"
