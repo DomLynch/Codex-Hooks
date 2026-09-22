@@ -162,7 +162,7 @@ _NOT_OWNER_PREFIXES = ("Another Claude session sent", "<", "Stop hook feedback",
                        "[Repository Quality", "[SYSTEM NOTIFICATION", "[Cross-session", "[MiniMax")
 _AUTHORIZATION_RE = re.compile(
     r"\b(go live|get (it|us|them|this) (all )?(merged|deployed|live)|push (it )?live|(deploy|merge|ship|release) (it|this|them|now)|"
-    r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes|full (approval|authority)|delegate|"
+    r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
 _COMMAND_ARG_RE = re.compile(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"')
@@ -197,10 +197,12 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
         ts = str(entry.get("timestamp") or "")
         if before and ts >= before:
             continue
-        # A message that is mostly questions, or a scheduled/monitor prompt quoting the owner, is not an instruction.
-        if text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
+        # An instruction is short and in the owner's own words. Long messages are pastes (reports, peer text,
+        # the agent's own words quoted back) whose buried "do it" / "ship it" is not the owner speaking; messages
+        # that are mostly questions, and scheduled/monitor prompts quoting the owner, are not instructions either.
+        if len(text) > 400 or text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
-        if _AUTHORIZATION_RE.search(text):
+        if _AUTHORIZATION_RE.search(text[:240]):
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
             if len(out) >= limit:
                 break

@@ -194,6 +194,7 @@ class ClaudeAdapterTests(unittest.TestCase):
                 {"type": "user", "timestamp": "2026-09-22T04:49:00Z", "message": {"content": "One-hour check-in on the reviewer: Dom's words: do it"}},
                 {"type": "user", "timestamp": "2026-09-22T03:00:00Z", "message": {"content": "Another Claude session sent a message:\n<cross-session-message>do whatever you need</cross-session-message>"}},
                 {"type": "user", "timestamp": "2026-09-22T02:00:00Z", "message": {"content": "ok yes do it, use your judgement u have full approval"}},
+                {"type": "user", "timestamp": "2026-09-22T01:00:00Z", "message": {"content": "how to solve this? " + "x" * 500 + " ship it"}},
             ]
             path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
             got = owner_instructions(str(path), limit=5)
