@@ -744,6 +744,33 @@ def has_deliverable_claim(transcript: str) -> bool:
     return bool(DELIVERABLE_RE.search(transcript))
 
 
+# A turn that edits nothing and asserts nothing is a relay, an ack or a hold ("Idle.", "Holding.",
+# "Standing by.", forwarding a peer's status). Reviewing it costs a full model call and can only produce
+# advisories. Measured 2026-09-22: 1,614 reviews, 133 with a code diff. The claim words below are the safety
+# net - anything that asserts state (live, merged, green, a sha, a count, a PR number) is still reviewed.
+STATUS_CLAIM_RE = re.compile(
+    r"\b(live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
+    r"green|pass\w*|fail\w*|verified|applied|resolved|running|started|queued|open|ready|clean|"
+    r"[0-9a-f]{7,40})\b"
+    r"|#\d+|\d+\s*/\s*\d+|\d+\s*(tests?|checks?|rows?|files?|PRs?)\b",
+    re.IGNORECASE)
+# An offer or a plan is not a hold: a turn that stops while proposing work is exactly what the reviewer exists to catch.
+HANDOFF_RE = re.compile(r"\b(I (can|could|will|would)\b|next:|next step|if you like|let me know|happy to|propose|suggest)", re.IGNORECASE)
+CONTENTLESS_MAX_CHARS = 600
+
+
+def contentless_turn(answer: str, edited: list) -> str:
+    """Why the model call can be skipped ('' if it cannot). Edits, claims and status assertions all disqualify."""
+    if edited:
+        return ""
+    text = (answer or "").strip()
+    if not text or len(text) > CONTENTLESS_MAX_CHARS:
+        return ""
+    if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
+        return ""
+    return f"no edits, no claim, {len(text)} chars"
+
+
 def is_chat_turn(transcript: str) -> bool:
     # Review work requests regardless of how the assistant phrases its handoff.
     request, _, answer = transcript.rpartition("ASSISTANT:")
@@ -858,6 +885,13 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
+    elif contentless_turn(last_msg, edited_paths(entries)):
+        why = contentless_turn(last_msg, edited_paths(entries))
+        log(f"SKIP_CONTENTLESS: {why} — model call skipped")
+        save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
+        reset_consecutive_blocks(session_id)
+        allow_stop(f"contentless turn - audit skipped ({why})")
+        return
     elif doc_only_turn(entries, last_msg, DELIVERABLE_RE):
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")

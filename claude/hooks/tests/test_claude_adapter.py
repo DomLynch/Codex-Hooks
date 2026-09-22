@@ -1807,3 +1807,20 @@ def test_retry_turn_id_is_stable_across_stop_retries(tmp_path, monkeypatch):
     for i in range(60):
         m.save_iterations("s1", f"turn{i}", 1)
     assert m.retry_turn_id("s1", {"stop_hook_active": True}, "whatever") == first
+
+
+def test_contentless_turn_skips_relays_but_never_claims():
+    """2026-09-22: 1,614 reviews, 133 with a code diff; 39% of final answers were relays/acks/holds.
+    Those cost a full model call and can only produce advisories. Anything asserting state still gets reviewed."""
+    import mimo_audit as m
+    for text in ("Idle.", "Holding.", "Standing by.", "Waiting.", "Noted.", "On it.",
+                 "Guard OK (04:17): no lane has two misreads in a row"):
+        assert m.contentless_turn(text, []), text
+    for text in ("Live and trunk both 671e3aa", "Tests pass: 418/418", "PR #382 is open", "Deploy #88 running",
+                 "Done.", "Merged.", "3 checks green", "Applied the migration", "Sent to Lead; 12 rows"):
+        assert m.contentless_turn(text, []) == "", text
+    # an edit in the turn always disqualifies, however short the answer
+    assert m.contentless_turn("Idle.", ["src/a.ts"]) == ""
+    # long answers are reviewed even without claim words
+    assert m.contentless_turn("x" * (m.CONTENTLESS_MAX_CHARS + 1), []) == ""
+    assert m.contentless_turn("", []) == ""
