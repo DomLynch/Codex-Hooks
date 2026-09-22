@@ -1955,7 +1955,9 @@ def test_receipt_additions_and_export(tmp_path, monkeypatch):
     monkeypatch.setattr(ss.Path, "home", classmethod(lambda cls: home))
     out = ss.memory_receipt(repo, "sess-9")
     assert "lane: audio" in out                      # lane from CLAUDE.local.md, not the folder
-    assert "This session's id: sess-9" in out        # no lookup needed to ask for a wake-up
+    # Lead proved the hook's id does not resolve in send_message (it is the transcript id), so the receipt tells
+    # the lane to be woken BY LANE TITLE instead of handing over an id that fails silently.
+    assert "ask by LANE TITLE" in out and "sess-9" not in out
     assert "rebuild the clash bank" in out           # the brief travels with the receipt
     assert "Resume previous session" in out and "export_transcript.py" in out
     # blind restart: empty key, another key's index names the lane -> print the exact symlink command
