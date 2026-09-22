@@ -29,7 +29,8 @@ def _git(args: list[str], cwd: Path) -> str:
 
 # A lane's doc is not always named after its worktree. Lead's is docs/state/lead.md, referenced by AGENTS.md and
 # by every handoff entry in it, so the check maps the name rather than asking anyone to rename the file.
-STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world", "char": "character"}
+STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world", "char": "character",
+                      "veteran-polish": "veteran"}
 TRUNK = "origin/codex/01a09a76/task-1"
 
 
