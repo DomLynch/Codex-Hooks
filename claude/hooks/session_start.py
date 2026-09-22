@@ -213,8 +213,12 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     index = resolved / "MEMORY.md"
     lines = len([ln for ln in index.read_text(errors="ignore").splitlines() if ln.startswith("- ")]) if index.exists() else 0
     written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
-    # A cleared session is dark until something prompts it, so the lane needs its own id to ask for a wake-up.
-    me = f"\nThis session's id: {session_id}" if session_id else ""
+    # A cleared session is dark until something prompts it, so it must ask for a wake-up before it goes. It cannot
+    # hand over an id: the hook only sees the transcript id (8e9d31a7-...), while the app's send_message resolves
+    # a different one (local_ea03a6d4-...). Lead proved that the hook's id returns "session not found" and that it
+    # resolves lanes by title instead, so the line names the lane, not an id that fails silently.
+    me = "\nTo be woken after a clear, ask by LANE TITLE, not by id: the id in this hook is the transcript id and "\
+         "send_message will not resolve it."
     identity = "" if (cwd / "CLAUDE.local.md").is_file() else (
         "\nNo CLAUDE.local.md in this worktree: the standing context/handoff rule is NOT loaded here. "
         "Ask Hooks to run scripts/lane-identity.mjs for this lane.")

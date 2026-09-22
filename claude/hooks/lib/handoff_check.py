@@ -83,11 +83,12 @@ def handoff_notice(transcript_path: str, cwd: Path, last_message: str) -> str:
     ok_mem, why_mem = memory_written_today(cwd)
     head = f"# Handoff check — context {tokens // 1000}k and this turn closed a task"
     if ok_state and ok_mem:
-        sid = Path(transcript_path).stem
         return (f"{head}\nBackup verified: {why_state}; {why_mem}.\n"
                 "Confirm the memory key above matches the memory path in your own system prompt, then, IN THIS ORDER:\n"
-                f'  1. message Lead: "clearing now, wake me: {sid}" — a cleared session is dark until something '
-                "prompts it, so ask for the wake-up BEFORE you go.\n"
+                f'  1. message Lead: "clearing now, wake me: the {lane} lane" — a cleared session is dark until '
+                "something prompts it, so ask for the wake-up BEFORE you go. Ask by LANE TITLE: the transcript id "
+                "this hook can see is not the id send_message resolves (Lead, 2026-09-22: it returns session not "
+                "found).\n"
                 '  2. call mcp__ccd_session_mgmt__clear_session with session_id "self" as the last thing you do.\n'
                 "It fires when the turn ends; the old conversation stays recoverable via Resume previous session.")
     missing = [w for ok, w in ((ok_state, why_state), (ok_mem, why_mem)) if not ok]
