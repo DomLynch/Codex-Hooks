@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent
@@ -105,6 +106,34 @@ def codegraph_notice(cwd: str | None) -> str:
     return "# Codegraph\n- No local index found for this repo; run `codegraph init -i` before structural code work."
 
 
+def memory_receipt(cwd: Path) -> str:
+    """Prove the memory actually loaded, at the top of a fresh session.
+
+    Memory is keyed by cwd, so a lane that wrote its handoff from one worktree and restarted in another cannot see
+    it - hit live on 2026-09-22, when a handoff written from lead-catalogue was invisible to a session restarted in
+    frankendom-strategy. After a /clear that failure is silent and looks like amnesia. This prints the resolved key
+    (following a symlink, which some lanes use), the file count and anything written today, so the first reply after
+    a restart cites what it loaded instead of guessing. Read-only, no model call.
+    """
+    key = Path.home() / ".claude" / "projects" / ("-" + str(cwd).replace("/", "-").lstrip("-")) / "memory"
+    try:
+        resolved = key.resolve()
+        files = sorted(p for p in resolved.iterdir() if p.suffix == ".md" and p.name != "MEMORY.md")
+    except OSError:
+        return ("# Memory check\n"
+                f"No memory directory for this folder ({key}). If you expected a handoff here it was written from a "
+                "different cwd - find it with: ls ~/.claude/projects/*/memory/ | grep -i <lane>")
+    today = datetime.now().strftime("%Y-%m-%d")
+    fresh = [f.name for f in sorted((f for f in files if datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d") == today),
+                                    key=lambda f: f.stat().st_mtime, reverse=True)]
+    link = f" (symlink -> {resolved})" if key.is_symlink() else ""
+    index = resolved / "MEMORY.md"
+    lines = len([ln for ln in index.read_text(errors="ignore").splitlines() if ln.startswith("- ")]) if index.exists() else 0
+    written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
+    return (f"# Memory check\nKey: {key}{link}\n{len(files)} memory file(s), {lines} index line(s){written}\n"
+            "If you have just restarted, read today's files before answering and say which ones you loaded.")
+
+
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:
     if not handoff:
         return {}
@@ -147,6 +176,7 @@ def main() -> None:
             write_session_spec(session_id, prompt)
             log(COMPONENT, f"session spec captured chars={len(prompt)}")
         remember_repo(cwd)
+        additional_context(memory_receipt(cwd))
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])

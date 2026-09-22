@@ -1876,3 +1876,26 @@ def test_context_notice_thresholds(tmp_path, monkeypatch):
     write(210_000)
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
     assert out.startswith("BODY") and "# Context 210k" in out
+
+
+def test_memory_receipt(tmp_path, monkeypatch):
+    """Memory is keyed by cwd; a lane that restarts in another worktree silently sees nothing (live, 2026-09-22).
+    The receipt names the resolved key (through a symlink), the counts and today's files."""
+    import session_start as ss
+    home = tmp_path / "home"
+    key = home / ".claude" / "projects" / "-work-lane-a" / "memory"
+    key.mkdir(parents=True)
+    (key / "old.md").write_text("x")
+    (key / "MEMORY.md").write_text("# Memory Index\n\n- [Old](old.md) — hook\n")
+    monkeypatch.setattr(ss.Path, "home", classmethod(lambda cls: home))
+    out = ss.memory_receipt(Path("/work/lane-a"))
+    assert "1 memory file(s), 1 index line(s)" in out and "written today" in out
+    # symlinked key resolves and says so
+    link_key = home / ".claude" / "projects" / "-work-lane-b" / "memory"
+    link_key.parent.mkdir(parents=True)
+    link_key.symlink_to(key)
+    out2 = ss.memory_receipt(Path("/work/lane-b"))
+    assert "symlink ->" in out2 and "1 memory file(s)" in out2
+    # missing key tells the lane where to look instead of failing
+    out3 = ss.memory_receipt(Path("/work/lane-c"))
+    assert "No memory directory" in out3 and "grep -i <lane>" in out3
