@@ -268,8 +268,12 @@ Also flag avoidable engineering drag when it creates real risk:
 
 If there are issues, use:
 VERDICT: ISSUES
-1. <specific, actionable fix>
-2. <specific, actionable fix>
+1. [quote: "<6-25 words copied VERBATIM from the slice: the exact claim, code line or message the finding is about>"] <specific, actionable fix>
+2. [quote: "..."] <specific, actionable fix>
+
+The quote is mandatory and is checked mechanically against the slice: a finding whose quote does not appear
+verbatim in the slice is discarded. Copy, do not paraphrase. A finding that something is MISSING (no test run, no
+receipt) quotes the claim that lacks it. If you cannot find words in the slice to quote, the finding has no basis.
 
 Do not nitpick style. Only block for concrete misses.
 
@@ -664,6 +668,45 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
     return "VERDICT: ISSUES\n" + "\n".join(out), dropped
 
 
+QUOTE_RE = re.compile(r"\[quote:\s*[\"“']([^\"”']{3,400})[\"”']\s*\]", re.IGNORECASE)
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def filter_unanchored_findings(verdict_text: str, slice_text: str) -> tuple[str, list[str]]:
+    """Drop numbered findings whose [quote: "..."] anchor is not in the slice the reviewer saw.
+    Premise-wrong findings ('no receipt shown' when the receipt is in the slice, 'claims complete' when it did
+    not) were 14 of 30 lane rejections on 2026-09-22 at medium effort. A verbatim quote that must exist in the
+    slice is the cheapest mechanical check on the reviewer's premise. Findings without any quote are kept and
+    counted (NOQUOTE) so the rule can be tightened once the reviewer complies."""
+    hay = _norm(slice_text)
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, dropped, noquote = [], [], 0
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            continue
+        body = m.group(1)
+        q = QUOTE_RE.search(body)
+        if not q:
+            noquote += 1
+            kept.append(body)
+            continue
+        if _norm(q.group(1)) in hay:
+            kept.append(body)
+        else:
+            dropped.append(body)
+            log(f"VOID_FINDING (unanchored quote): {body[:400]}")
+    log(f"ANCHORS: kept={len(kept)} unanchored={len(dropped)} noquote={noquote}")
+    if not dropped:
+        return verdict_text, []
+    if not kept:
+        return "VERDICT: PASS", dropped
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
+
+
 def log_noise_classes(verdict_text: str) -> None:
     """Counter for the medium-vs-high comparison: findings that read as advisories or rest on elided output."""
     findings = [line for line in verdict_text.splitlines() if re.match(r"^\s*\d+[.)]\s+\S", line)]
@@ -867,7 +910,9 @@ def main() -> None:
 
     if verdict_text.startswith("VERDICT: ISSUES"):
         log_noise_classes(verdict_text)
+        verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
+        dropped = unanchored + dropped
         if dropped and verdict_text.startswith("VERDICT: PASS"):
             log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
             save_verdict(session_id, turn_id, "PASS", verdict_text)

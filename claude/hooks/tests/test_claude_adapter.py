@@ -1761,3 +1761,26 @@ def test_filter_void_findings_drops_elision_and_advisory_only(monkeypatch):
     # a defect word keeps an elision-mentioning finding
     assert m.void_finding("output is elided here but the visible part contradicts the claim: 3 failed") == ""
     assert m.void_finding("ensure the peer plan does not apply the production migration unasked") == ""
+
+
+def test_unanchored_quote_filter(monkeypatch):
+    import mimo_audit as m
+    monkeypatch.setattr(m, "log", lambda *_a, **_k: None)
+    slice_text = 'USER: ship it\nASSISTANT: Tests pass: 418/418.\nTOOL OUTPUT: 418 passed, 0 failed\nASSISTANT: "Done — all green."'
+    text = ('VERDICT: ISSUES\n'
+            '1. [quote: "Tests pass: 418/418"] claims tests pass but the run shows failures\n'
+            '2. [quote: "no test run was performed"] no receipt for the test claim\n'
+            '3. [quote: "Done — all green."] completion claimed while a check is pending\n'
+            '4. a finding with no quote at all: missing null check')
+    out, dropped = m.filter_unanchored_findings(text, slice_text)
+    assert len(dropped) == 1 and "no test run was performed" in dropped[0]
+    assert out.splitlines()[1:] == ['1. [quote: "Tests pass: 418/418"] claims tests pass but the run shows failures',
+                                    '2. [quote: "Done — all green."] completion claimed while a check is pending',
+                                    '3. a finding with no quote at all: missing null check']
+    # punctuation / case / whitespace differences do not break the match
+    out2, d2 = m.filter_unanchored_findings('VERDICT: ISSUES\n1. [quote: "tests PASS:  418/418"] x', slice_text)
+    assert d2 == []
+    # all unanchored -> PASS
+    out3, d3 = m.filter_unanchored_findings('VERDICT: ISSUES\n1. [quote: "never said this"] x', slice_text)
+    assert out3 == "VERDICT: PASS" and len(d3) == 1
+    assert "[quote:" in m.AUDIT_PROMPT and "checked mechanically" in m.AUDIT_PROMPT
