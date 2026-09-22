@@ -109,11 +109,13 @@ def codegraph_notice(cwd: str | None) -> str:
 def memory_receipt(cwd: Path) -> str:
     """Prove the memory actually loaded, at the top of a fresh session.
 
-    Memory is keyed by cwd, so a lane that wrote its handoff from one worktree and restarted in another cannot see
-    it - hit live on 2026-09-22, when a handoff written from lead-catalogue was invisible to a session restarted in
-    frankendom-strategy. After a /clear that failure is silent and looks like amnesia. This prints the resolved key
-    (following a symlink, which some lanes use), the file count and anything written today, so the first reply after
-    a restart cites what it loaded instead of guessing. Read-only, no model call.
+    Memory is keyed by a path, and after a re-home there are TWO of them: the key this folder implies, and the
+    memory root the desktop app handed the session. On 2026-09-22 a lane's own files sat in its cwd key while the
+    app pointed it at its pre-rehome root (two files), so a /clear looked like amnesia; the lane fixed it by
+    symlinking the app's root at the real key. This hook can only compute the cwd key - it cannot see the app's
+    root - so it prints what it can prove (resolved key, following a symlink, counts, newest files today) and asks
+    the model to compare that against the memory path in its own system prompt, which only the model can read.
+    Read-only, no model call.
     """
     key = Path.home() / ".claude" / "projects" / ("-" + str(cwd).replace("/", "-").lstrip("-")) / "memory"
     try:
