@@ -147,21 +147,40 @@ def now_paragraph(cwd: Path, lane: str) -> str:
     return "\n".join(lines[start:stop]).strip()[:900]
 
 
+# A pre-rehome folder key is SHARED by every lane created from it (Weapons, 2026-09-22 19:55: its system prompt
+# names the same root as Strategy's). Linking one is how a lane hands its memory to every other lane, so these
+# are never link targets however well their index matches.
+SHARED_KEYS = ("-Users-domininclynch-Desktop-Business-frankendom", "-Users-domininclynch-Desktop-Business-Research-Agent-Bot")
+
+
 def blind_restart_hint(key: Path) -> str:
-    """The resolved key is empty but another key's index mentions this lane: print the exact fix, not a warning."""
-    lane = key.parent.name.split("frankendom-")[-1]
+    """Empty key + another key whose index is clearly THIS lane's: print the exact fix. Otherwise say nothing."""
+    lane = key.parent.name.split("frankendom-")[-1].lower()
     if not lane:
         return ""
+    try:   # only for a genuinely empty key - never propose relinking one that already holds memory
+        if any(p.suffix == ".md" and p.name != "MEMORY.md" for p in key.resolve().iterdir()):
+            return ""
+    except OSError:
+        pass
     for other in sorted((Path.home() / ".claude" / "projects").glob("*/memory/MEMORY.md")):
-        if other.parent == key or "claude-audit" in str(other):
+        if other.parent == key or "claude-audit" in str(other) or other.parent.parent.name in SHARED_KEYS:
             continue
         try:
-            if lane.lower() not in other.read_text(errors="ignore").lower():
-                continue
+            text = other.read_text(errors="ignore")
         except OSError:
             continue
-        return (f"\nAnother key mentions this lane: {other.parent}\n"
-                f"If that is your memory, link it before doing anything else:\n"
+        if lane not in text.lower():
+            continue
+        # A key whose index opens with another lane's name belongs to that lane, whatever else it mentions.
+        first = next((ln for ln in text.splitlines() if ln.startswith("- ")), "").lower()
+        owner = other.parent.parent.name.split("frankendom-")[-1].lower()
+        if owner and owner != lane:
+            continue
+        if first and lane not in first and any(x in first for x in ("lane", "handoff")):
+            continue
+        return (f"\nAnother key holds this lane's memory: {other.parent}\n"
+                f"If that is yours, link it before doing anything else:\n"
                 f"  mv {key} {key}.pre-restore 2>/dev/null; ln -s {other.parent} {key}")
     return ""
 
@@ -201,8 +220,10 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     empty = blind_restart_hint(key) if not files else ""
     return (f"# Memory check — lane: {lane}\nKey: {key}{link}\n"
             f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}\n"
-            "Compare this key with the memory path in your own system prompt: if they differ, symlink that path to "
-            "this key before doing anything else, or you are reading the wrong memory.\n"
+            "Compare this key with the memory path in your own system prompt. If they differ, READ THIS KEY "
+            "DIRECTLY and write your memory here: the system-prompt path is a SHARED pre-rehome root used by every "
+            "lane created from that folder, so do not symlink or copy into it - that would hand your memory to the "
+            "other lanes and take theirs.\n"
             "If you have just restarted, read today's files before answering and say which ones you loaded."
             + brief +
             "\n\nLast resort if this is all wrong: the app's 'Resume previous session' restores the old conversation, "

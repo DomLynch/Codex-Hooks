@@ -1968,6 +1968,17 @@ def test_receipt_additions_and_export(tmp_path, monkeypatch):
     empty_key.mkdir(parents=True)
     hint = ss.blind_restart_hint(empty_key)
     assert "ln -s" in hint and str(other) in hint
+    # Weapons, 2026-09-22 19:55: a pre-rehome folder key is SHARED by every lane made from it. Never a link target.
+    shared = home / ".claude" / "projects" / "-Users-domininclynch-Desktop-Business-frankendom" / "memory"
+    shared.mkdir(parents=True)
+    (shared / "MEMORY.md").write_text("- [Audio handoff](audio_handoff.md) — audio lane\n")
+    import shutil
+    shutil.rmtree(other)
+    assert ss.blind_restart_hint(empty_key) == ""          # the only candidate is shared -> stay silent
+    # a key that already holds memory is never relinked
+    assert ss.blind_restart_hint(key) == ""
+    # and the compare line must not tell anyone to symlink the shared root
+    assert "do not symlink or copy into it" in out and "symlink that path to this key" not in out
     # exporter keeps the human thread and drops tool noise
     src = tmp_path / "s.jsonl"
     src.write_text("\n".join([
