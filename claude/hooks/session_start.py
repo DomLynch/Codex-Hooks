@@ -215,11 +215,14 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
     written = (f"; {len(fresh)} written today, newest: {', '.join(fresh[:3])}" if fresh else "; none written today")
     # A cleared session is dark until something prompts it, so the lane needs its own id to ask for a wake-up.
     me = f"\nThis session's id: {session_id}" if session_id else ""
+    identity = "" if (cwd / "CLAUDE.local.md").is_file() else (
+        "\nNo CLAUDE.local.md in this worktree: the standing context/handoff rule is NOT loaded here. "
+        "Ask Hooks to run scripts/lane-identity.mjs for this lane.")
     brief = now_paragraph(cwd, lane)
     brief = f"\n\n## Now (from docs/state/{lane}.md)\n{brief}" if brief else ""
     empty = blind_restart_hint(key) if not files else ""
     return (f"# Memory check — lane: {lane}\nKey: {key}{link}\n"
-            f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}\n"
+            f"{len(files)} memory file(s), {lines} index line(s){written}{me}{empty}{identity}\n"
             "Compare this key with the memory path in your own system prompt. If they differ, READ THIS KEY "
             "DIRECTLY and write your memory here: the system-prompt path is a SHARED pre-rehome root used by every "
             "lane created from that folder, so do not symlink or copy into it - that would hand your memory to the "
