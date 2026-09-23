@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ruff: noqa: E402
 """
-Codex Stop hook: independent audit with GPT-5.6-Terra via Codex CLI.
+Codex Stop hook: independent audit with GPT-6-Sol via Codex CLI.
 
 When Codex thinks it's done, this script feeds the recent transcript to a fresh
 ephemeral Codex session. If the reviewer finds issues,
@@ -46,7 +46,7 @@ from lib.git import resolve_git_cwd  # noqa: E402
 
 # --- Tunables --------------------------------------------------------------
 MAX_ITERATIONS = 3
-AUDITOR_NAME = "GPT-5.6-Terra"
+AUDITOR_NAME = "GPT-6-Sol"
 MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to the reviewer
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
 AUDIT_TIMEOUT_S = 70
@@ -519,7 +519,7 @@ DEFECT_RE = re.compile(
     r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
     r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
     r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported|only shows|does not show|doesn't show|"
-    r"no tool call|never (ran|called|executed|applied)|migration|database|schema)\b", re.IGNORECASE)
+    r"no tool call|never (ran|called|executed|applied)|already authorized|migration|database|schema)\b", re.IGNORECASE)
 
 
 def void_finding(text: str) -> str:

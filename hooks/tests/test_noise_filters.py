@@ -66,6 +66,18 @@ class VoidFindingTests(unittest.TestCase):
             mimo_audit.void_finding("ensure the peer plan does not apply the production migration unasked"), ""
         )
 
+    def test_authorized_deployment_finding_survives_advisory_filter(self) -> None:
+        transcript = "USER: Deploy the release.\nASSISTANT: Would you like me to proceed?"
+        verdict = (
+            'VERDICT: ISSUES\n1. [quote: "Would you like me to proceed?"] '
+            "The user already authorized deployment. Run the script, then verify the live service."
+        )
+        anchored, unanchored = mimo_audit.filter_unanchored_findings(verdict, transcript)
+        filtered, voided = mimo_audit.filter_void_findings(anchored)
+        self.assertEqual(unanchored, [])
+        self.assertEqual(voided, [])
+        self.assertEqual(filtered, verdict)
+
 
 class UnanchoredQuoteTests(unittest.TestCase):
     SLICE = (

@@ -128,8 +128,8 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", command)
         self.assertIn("--ephemeral", command)
         self.assertIn("read-only", command)
-        self.assertIn("gpt-5.6-terra", command)
-        self.assertIn('model_reasoning_effort="high"', command)
+        self.assertIn("gpt-6-sol", command)
+        self.assertIn('model_reasoning_effort="medium"', command)
         self.assertEqual(run.call_args.kwargs["input"], "verdict only\n\naudit this")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
         self.assertIn("lane=checkpoint", audit_log.call_args.args[1])
@@ -359,7 +359,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         data = json.loads(out)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("GPT-5.6-Terra audit unavailable", data["reason"])
+        self.assertIn("GPT-6-Sol audit unavailable", data["reason"])
         self.assertEqual(verdict["mimo-timeout"]["verdict"], "ERROR")
 
     def test_post_tool_blocks_syntax_error(self) -> None:
@@ -439,7 +439,7 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(data["decision"], "block")
-        self.assertIn("[GPT-5.6-Terra checkpoint audit]", data["reason"])
+        self.assertIn("[GPT-6-Sol checkpoint audit]", data["reason"])
         self.assertIn("Fix the incomplete implementation", data["reason"])
         self.assertEqual(state["edits_since_last_audit"], 0)
         self.assertEqual(state["last_verdict"], "ISSUES")
@@ -1067,7 +1067,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertTrue(sha)
         self.assertEqual(pr_url, "https://example.test/pr/1")
         self.assertEqual(status, "created")
-        self.assertIn("Audited-by: GPT-5.6-Terra", message)
+        self.assertIn("Audited-by: GPT-6-Sol", message)
         self.assertNotIn("Claude", message)
         self.assertEqual(handoff["cwd"], str(repo))
         self.assertEqual(handoff["last_task"]["status"], "created")

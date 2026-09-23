@@ -18,7 +18,7 @@ hooks = true
 type = "command"
 command = "python3 /Users/domininclynch/.codex/hooks/mimo_audit.py"
 timeout = 180
-statusMessage = "GPT-5.6-Terra audit"
+statusMessage = "GPT-6-Sol audit"
 
 [[hooks.Stop.hooks]]
 type = "command"

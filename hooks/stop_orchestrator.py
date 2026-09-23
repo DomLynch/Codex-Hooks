@@ -367,7 +367,7 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
         return "", "", "", "branch_failed"
 
     summary = transcript.splitlines()[0][:80] if transcript.strip() else "Codex task"
-    auditors = ["GPT-5.6-Terra"]
+    auditors = ["GPT-6-Sol"]
     if CLAUDE_AUDIT_ENABLED:
         auditors.append("Claude")
     message = f"[task {task_n}] {summary}\n\nAudited-by: {', '.join(auditors)}\nSession: {session_id}"
@@ -509,7 +509,7 @@ def main() -> None:
         if not audit_with_claude(session_id, transcript, session_spec):
             return
         if not wait_for_mimo_pass(session_id, turn_id):
-            log(COMPONENT, "side effects skipped: GPT-5.6-Terra did not pass current turn")
+            log(COMPONENT, "side effects skipped: GPT-6-Sol did not pass current turn")
             return
         branch, sha, pr_url, auto_pr_status = commit_push_pr(session_id, cwd, transcript)
         if auto_pr_status in {"push_failed", "pr_failed"}:

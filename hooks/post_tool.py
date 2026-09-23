@@ -204,8 +204,8 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     if verdict == "ISSUES":
         record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized, cwd)
         block(
-            "[GPT-5.6-Terra checkpoint audit]\n\n"
-            "A fresh GPT-5.6-Terra session reviewed this in-progress task checkpoint and found concrete issues. "
+            "[GPT-6-Sol checkpoint audit]\n\n"
+            "A fresh GPT-6-Sol session reviewed this in-progress task checkpoint and found concrete issues. "
             "Fix these before continuing:\n\n"
             f"{normalized[:5000]}"
         )
