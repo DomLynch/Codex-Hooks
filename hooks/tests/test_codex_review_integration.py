@@ -98,6 +98,32 @@ class CodexReviewIntegrationTests(unittest.TestCase):
             self.assertEqual(third, "")
             self.assertEqual(json.loads((root / "audit_pending.json").read_text()), {})
 
+    def test_max_iteration_release_does_not_block_a_later_turn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = {"session_id": "released", "turn_id": "old",
+                       "last_assistant_message": "The review remains unresolved."}
+            with (mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"),
+                  mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"),
+                  mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"),
+                  mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "audit_pending.json"),
+                  mock.patch.object(mimo_audit, "record_lesson")):
+                mimo_audit.ledger.register_findings("released", "VERDICT: ISSUES\n1. Old task finding")
+                with (mock.patch("sys.stdin", io.StringIO(json.dumps(payload))),
+                      mock.patch.object(mimo_audit, "load_iterations", return_value=3),
+                      redirect_stdout(io.StringIO())):
+                    with self.assertRaises(SystemExit):
+                        mimo_audit.main()
+                self.assertEqual(mimo_audit.ledger.open_findings("released"), [])
+                payload["turn_id"] = "new"
+                payload["last_assistant_message"] = "I fixed the renderer and tested it."
+                with (mock.patch("sys.stdin", io.StringIO(json.dumps(payload))),
+                      mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as review,
+                      redirect_stdout(io.StringIO())):
+                    with self.assertRaises(SystemExit):
+                        mimo_audit.main()
+                review.assert_called_once()
+
     def test_review_outage_escalates_across_turns(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

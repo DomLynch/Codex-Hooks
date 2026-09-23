@@ -850,6 +850,7 @@ def main() -> None:
     turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
     transcript_path = payload.get("transcript_path") or ""
     last_msg = payload.get("last_assistant_message") or ""
+    log(f"START session={session_id} turn={turn_id}")
 
     # The owner's off switch for the per-Stop reviewer (default on). CODEX_HOOK_CLAUDE_AUDIT only gates
     # stop_orchestrator's second pass, not this hook. A verdict is still written so the orchestrator does not
@@ -866,6 +867,10 @@ def main() -> None:
 
     iterations = load_iterations(session_id, turn_id)
     if iterations >= MAX_ITERATIONS:
+        pending_ids = [finding["id"] for finding in ledger.open_findings(session_id)]
+        if pending_ids:
+            log(f"LEDGER_RELEASED: {', '.join(pending_ids)} after max iterations; unresolved")
+        ledger.clear(session_id)
         save_verdict(session_id, turn_id, "MAX_ALLOW", f"max iterations reached ({iterations}/{MAX_ITERATIONS})")
         allow_stop(f"max iterations reached ({iterations}/{MAX_ITERATIONS})", unresolved=True)
         return

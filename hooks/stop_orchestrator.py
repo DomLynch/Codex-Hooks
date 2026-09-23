@@ -169,9 +169,12 @@ Current task transcript:
 
 
 def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
-    deadline = time.time() + MIMO_WAIT_TIMEOUT_S
-    while time.time() < deadline:
+    deadline = time.monotonic() + MIMO_WAIT_TIMEOUT_S
+    observed_turn = observed_verdict = ""
+    while time.monotonic() < deadline:
         state = load_json_locked(MIMO_VERDICT_PATH, {}).get(session_id) or {}
+        observed_turn = str(state.get("turn_id") or "")
+        observed_verdict = str(state.get("verdict") or "")
         if state and (not turn_id or state.get("turn_id") == turn_id):
             updated_at = float(state.get("updated_at") or 0)
             age = time.time() - updated_at
@@ -182,7 +185,8 @@ def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
             log(COMPONENT, f"mimo gate verdict={verdict} turn={state.get('turn_id', '')}")
             return verdict == "PASS"
         time.sleep(1)
-    log(COMPONENT, "mimo gate timeout; side effects skipped")
+    log(COMPONENT, f"mimo gate timeout session={session_id} turn={turn_id} "
+        f"observed_turn={observed_turn} observed_verdict={observed_verdict}; side effects skipped")
     return False
 
 
@@ -493,7 +497,7 @@ def main() -> None:
         remember_repo(cwd)
         session_spec = read_session_spec(session_id)
 
-        log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")
+        log(COMPONENT, f"start session={session_id} turn={turn_id} transcript={len(transcript)} cwd={cwd}")
         if PAUSE_REQUEST_RE.search(transcript) and not any(
                 role == "TOOL CALL" for role, _ in latest_task_entries(payload.get("transcript_path") or "")):
             log(COMPONENT, "explicit pause: pending quality retained, checks deferred")
