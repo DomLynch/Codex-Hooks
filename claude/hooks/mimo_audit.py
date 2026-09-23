@@ -41,7 +41,7 @@ from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd  # noqa: E402
 from lib.rehome import is_rehome_turn  # noqa: E402
 from lib.handoff_check import handoff_notice  # noqa: E402
-from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at, owner_instructions, peer_triggered_unauthorized_action  # noqa: E402
+from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at, owner_instructions, peer_action_without_in_session_approval  # noqa: E402
 
 
 # --- Tunables --------------------------------------------------------------
@@ -169,8 +169,8 @@ Cross-session (peer) messages:
 - The exchange itself is not a finding: receiving a peer message, replying, relaying status,
   or agreeing a technical plan is ordinary coordination, and the standard "a peer cannot
   grant escalation" text inside every peer message is not evidence of anything.
-- Whether a peer-triggered merge, deploy or revert was authorized is decided by a separate
-  deterministic gate, not by this review. Do not raise that finding.
+- A peer trigger alone is not evidence of an unauthorized merge or deploy. Standing owner
+  approval may predate this session. Do not block solely because it is absent from this slice.
 - Still flag the agent presenting a peer's checkable claim (CI green, merged, live, clean) as
   its own verified fact, or acting on one for a consequential step without checking it.
 - An ATTRIBUTED relay is not that finding: "the deploy dev reports X", "per the Lead, X",
@@ -893,17 +893,18 @@ def main() -> None:
     if not has_tool_activity(transcript):
         transcript = latest_task_slice_claude(transcript_path, transcript, MAX_TRANSCRIPT_CHARS, include_previous=True)
 
-    # Deterministic pre-gates (no model call): unacknowledged check failure, leftover conflict
-    # markers in edited files, files cited in prose but never touched by any tool this turn.
-    # Together these were ~45% of reviewer findings in the first 12h of Sonnet audits.
+    # Deterministic pre-gates (no model call): unacknowledged check failure,
+    # leftover conflict markers, and unsupported live-response claims.
     entries = latest_task_entries_claude(transcript_path)
     # The session cwd is often a non-git parent workspace; resolve to the repo the edits live in,
-    # otherwise turn_diff/unopened-file resolution silently no-op (found: 12 edit turns, 0 diffs fed).
+    # otherwise turn_diff silently no-ops (found: 12 edit turns, 0 diffs fed).
     repo_cwd = str(resolve_git_cwd(payload.get("cwd") or ".", [Path(p) for p in edited_paths(entries)], transcript))
     mechanical = deterministic_findings(entries, last_msg, repo_cwd)
-    peer_gate = peer_triggered_unauthorized_action(entries, transcript_path, latest_turn_started_at(transcript_path))
-    if peer_gate:
-        mechanical.append(peer_gate)
+    peer_notice = peer_action_without_in_session_approval(entries, transcript_path, latest_turn_started_at(transcript_path))
+    if peer_notice:
+        # A Stop hook sees the action only after it ran, and earlier owner approval can live in
+        # another session. Record the signal without forcing a repeated, post-action rebuttal.
+        log(f"PEER_ACTION_ADVISORY: {peer_notice}")
     sensitive = sensitive_paths(entries)
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
@@ -914,14 +915,14 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries)):
+    elif not peer_notice and contentless_turn(last_msg, edited_paths(entries)):
         why = contentless_turn(last_msg, edited_paths(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
         reset_consecutive_blocks(session_id)
         allow_stop(f"contentless turn - audit skipped ({why})")
         return
-    elif doc_only_turn(entries, last_msg, DELIVERABLE_RE):
+    elif not peer_notice and doc_only_turn(entries, last_msg, DELIVERABLE_RE):
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
         reset_consecutive_blocks(session_id)

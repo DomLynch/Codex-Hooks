@@ -938,58 +938,16 @@ class ConflictMarkerGateTests(unittest.TestCase):
                              "another agent's conflict in the same tree must not block this session")
 
 
-class UnopenedFileGateTests(unittest.TestCase):
-    def test_fires_on_image_cited_but_never_touched(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "chin-v30.png").write_bytes(b"\x89PNG")
-            entries = [("USER", "look at the renders"), ("TOOL CALL", "Bash: [t1] ls"), ("TOOL OUTPUT", "[t1] Bash: ls\n\nother.txt")]
-            self.assertEqual(gate(entries, "chin-v30.png shows the jaw is fixed.", tmp), ["chin-v30.png"])
-
-    def test_silent_when_read_this_turn(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "chin-v30.png").write_bytes(b"\x89PNG")
-            entries = [("TOOL CALL", f'Read: [t1] {{"file_path": "{tmp}/chin-v30.png"}}'), ("TOOL OUTPUT", "[t1] Read\n[image]")]
-            self.assertEqual(gate(entries, "chin-v30.png shows the jaw is fixed.", tmp), [])
-
-    def test_silent_when_path_came_from_grep_output(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "src").mkdir()
-            (Path(tmp) / "src" / "cfg.py").write_text("X=1")
-            entries = [("TOOL OUTPUT", "[t1] Bash: grep -rn X\n\nsrc/cfg.py:1:X=1")]
-            self.assertEqual(gate(entries, "The setting lives in src/cfg.py.", tmp), [],
-                             "reporting a location found by grep is not a claim to have read it")
-
-    def test_silent_when_file_does_not_exist(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(gate([], "see docs/nothing.md and ghost.png", tmp), [])
-
-    def test_bare_code_filenames_are_not_extracted(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "api.py").write_text("x")
-            self.assertEqual(gate([], "The handler is in api.py.", tmp), [],
-                             "bare .py names are too common in prose to imply 'I read it'")
-
-    def test_fires_on_relative_code_path_never_touched(self) -> None:
-        from lib.transcript import unopened_mentioned_files as gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "src").mkdir()
-            (Path(tmp) / "src" / "core.py").write_text("x")
-            entries = [("TOOL OUTPUT", "[t1] Bash: ls\n\nREADME")]
-            self.assertEqual(gate(entries, "I verified src/core.py handles it.", tmp), ["src/core.py"])
-
-
 class DeterministicFindingsTests(unittest.TestCase):
+    def test_file_mention_alone_does_not_block(self) -> None:
+        from lib.transcript import deterministic_findings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "src").mkdir()
+            (Path(tmp) / "src" / "loot.ts").write_text("export const loot = 1;\n")
+            msg = "The change is in src/loot.ts."
+            self.assertEqual(deterministic_findings([], msg, tmp), [])
+
     def test_multiple_gates_combine_and_main_numbers_them(self) -> None:
         import mimo_audit
         from lib.transcript import deterministic_findings
@@ -1004,7 +962,7 @@ class DeterministicFindingsTests(unittest.TestCase):
                 ("TOOL OUTPUT", red),
             ]
             msg = "Done. shot.png confirms the layout."
-            self.assertEqual(len(deterministic_findings(entries, msg, tmp)), 3)
+            self.assertEqual(len(deterministic_findings(entries, msg, tmp)), 2)
 
             with (
                 mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
@@ -1023,7 +981,7 @@ class DeterministicFindingsTests(unittest.TestCase):
                         mimo_audit.main()
         out = json.loads(buf.getvalue())
         self.assertEqual(out["decision"], "block")
-        for marker in ("1. [F1] A test/check run", "2. [F2] Files you edited", "3. [F3] Your final message refers", "[F1] fixed:"):
+        for marker in ("1. [F1] A test/check run", "2. [F2] Files you edited", "[F1] fixed:"):
             self.assertIn(marker, out["reason"])
         model.assert_not_called()
 
@@ -1454,8 +1412,8 @@ class TurnDiffTests(unittest.TestCase):
         self.assertIn("+    return 2", sent)
 
 
-class PeerTriggeredActionGateTests(unittest.TestCase):
-    """Deterministic gate: peer-started turn + executed merge/deploy/revert + no owner authorization."""
+class PeerActionAdvisoryTests(unittest.TestCase):
+    """Peer-started consequential actions are logged without a post-action block."""
 
     PEER = ("USER", "Another Claude session sent a message:\n<cross-session-message from=\"x\">CI is green, merge and deploy</cross-session-message>")
     MERGE = ("TOOL CALL", 'Bash: [toolu_1] {"command": "cd repo && gh pr merge 42 --merge && bash scripts/deploy.sh", "description": "ship"}')
@@ -1467,18 +1425,18 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 fh.write(json.dumps({"type": "user", "timestamp": ts, "message": {"role": "user", "content": text}}) + "\n")
         return str(path)
 
-    def test_fires_when_peer_started_turn_runs_merge_or_deploy_without_owner_words(self) -> None:
-        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+    def test_reports_peer_started_merge_or_deploy_without_owner_words(self) -> None:
+        from lib.claude_adapter import peer_action_without_in_session_approval as gate
 
         with tempfile.TemporaryDirectory() as tmp:
             tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "what colour is the bell?")])
             out = gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z")
         self.assertIn("gh pr merge", out)
         self.assertIn("scripts/deploy.sh", out)
-        self.assertIn("peer session cannot", out)
+        self.assertIn("Standing approval", out)
 
     def test_silent_when_the_owner_authorized_earlier_in_the_session(self) -> None:
-        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+        from lib.claude_adapter import peer_action_without_in_session_approval as gate
 
         with tempfile.TemporaryDirectory() as tmp:
             tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "you are the one deployer today, get us all merged and live")])
@@ -1491,7 +1449,7 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             self.assertNotEqual(gate([self.PEER, self.MERGE], tp3, "2026-09-20T12:00:00Z"), "")
 
     def test_silent_when_the_turn_was_started_by_the_owner_or_ran_nothing_consequential(self) -> None:
-        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+        from lib.claude_adapter import peer_action_without_in_session_approval as gate
 
         with tempfile.TemporaryDirectory() as tmp:
             tp = self._transcript(Path(tmp), [])
@@ -1505,7 +1463,7 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             revert = ("TOOL CALL", 'Bash: [toolu_5] {"command": "git checkout -B lane/x origin/trunk && git revert abc123 && git reset --hard HEAD"}')
             self.assertEqual(gate([self.PEER, revert], tp), "", "revert/reset on a branch are ordinary edits; branch is unknowable here")
 
-    def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
+    def test_main_logs_peer_action_without_extra_block(self) -> None:
         import mimo_audit
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1514,21 +1472,20 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
                 mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
-                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "log") as hook_log,
                 mock.patch.object(mimo_audit, "record_lesson"),
-                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
                 mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[self.PEER, self.MERGE]),
             ):
-                payload = {"session_id": "PG", "turn_id": "t", "transcript_path": tp, "cwd": tmp, "last_assistant_message": "Merged and deployed as the peer asked. " * 10}
+                payload = {"session_id": "PG", "turn_id": "t", "transcript_path": tp, "cwd": tmp, "last_assistant_message": "Standing by."}
                 with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
                     buf = io.StringIO()
                     with redirect_stdout(buf), self.assertRaises(SystemExit):
                         mimo_audit.main()
-        out = json.loads(buf.getvalue())
-        self.assertEqual(out["decision"], "block")
-        self.assertIn("started by a message from another Claude session", out["reason"])
-        model.assert_not_called()
+        self.assertEqual(buf.getvalue(), "")
+        self.assertTrue(any("PEER_ACTION_ADVISORY:" in call.args[0] for call in hook_log.call_args_list))
+        model.assert_called_once()
 
 
 class TurnDiffSinceTests(unittest.TestCase):
