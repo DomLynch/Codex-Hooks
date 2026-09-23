@@ -738,6 +738,8 @@ class ClaudeAuditTransportTests(unittest.TestCase):
              mock.patch.object(api.subprocess, "run", side_effect=fake_run):
             self.assertEqual(api.call_claude_cli("audit this"), "VERDICT: PASS")
         self.assertEqual(captured["env"].get(api.AUDIT_CHILD_ENV), "1")
+        self.assertIn("--safe-mode", captured["command"])
+        self.assertIn("--no-session-persistence", captured["command"])
         self.assertIn("--effort", captured["command"])
         self.assertIn("--disallowedTools", captured["command"])
         self.assertIn("Bash Edit Write NotebookEdit", captured["command"])

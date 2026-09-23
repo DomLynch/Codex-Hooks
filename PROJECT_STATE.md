@@ -20,5 +20,10 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 - Keep Codex and Claude model settings separate. Claude no longer blocks solely because a final answer names an unopened file. A peer-started merge/deploy with no in-session owner approval is logged for audit, while the normal model review still runs; the Stop hook only sees that action after it happened.
 - Failed checks, conflict markers, and unsupported live-response claims still block. Local verification: 195 Codex tests, 201 Claude tests, and Ruff passed.
 
+## Claude reviewer timeout mitigation — 2026-09-23
+- Claude Stop reviews allow 100 seconds per attempt, retry once after 2 seconds, and have a 240-second outer Stop cap. Three first attempts timed out around 19:49–19:51; none exhausted retries. Cause is unproven.
+- The Claude CLI reviewer now starts in safe mode without session persistence. Its review prompt supplies the needed context; this avoids loading user hooks, plugins, MCP and saved session state. Codex reviewer settings are unchanged.
+- A direct isolated CLI call returned PASS in 9.2 seconds, and the changed hook transport returned PASS in 5.8 seconds. These smoke checks prove compatibility, not a reduced tail-timeout rate. Compare future live Stop logs before calling the timeout issue resolved.
+
 ## Next validation
 - Compare repo and both installed hook trees, then run the two test suites and Ruff separately before any hook change. Verify a real reviewer call after any model or effort change.
