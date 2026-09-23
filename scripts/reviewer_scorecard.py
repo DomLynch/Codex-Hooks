@@ -8,7 +8,10 @@ the lanes accepted the findings.
 
 Columns:
   reviews     Stop-hook verdicts rendered in the window
-  blocks/rate verdicts that came back ISSUES (each one costs a lane turn)
+  mblock/rate verdicts the MODEL returned as ISSUES (each one costs a lane turn). This is the
+              number the model/effort A/B is judged on.
+  gate        turns blocked by a DETERMINISTIC_GATE finding, where the model was never called.
+              Excluded from mblock: they say nothing about the reviewer model.
   damper/100  BLOCK_CHAIN_DAMPER firings per 100 reviews
   timeouts    review calls that timed out
   void        findings dropped by the void/anchor filters
@@ -113,12 +116,27 @@ def main() -> int:
         print(f"no reviewer log at {args.logs / 'mimo_audit.log'}", flush=True)
         return 1
 
-    print(f"{'window':26s} reviews blocks rate  damper/100 timeouts void  median  p90   accept")
+    print(f"{'window':26s} reviews mblock rate  gate damper/100 timeouts void  median  p90   accept")
     for label, lo, hi in windows:
         a = in_window(audit, lo, hi)
         c = in_window(calls, lo, hi)
         reviews = sum("verdict (iter" in line for line in a)
         blocks = sum("VERDICT: ISSUES" in line for line in a)
+        # A DETERMINISTIC_GATE finding blocks the turn WITHOUT calling the model, but still writes a
+        # "Claude <model> verdict ...: VERDICT: ISSUES" line. Counting those as model blocks makes the
+        # reviewer look worse the more the deterministic rules fire, which is how the 2026-09-22 evening
+        # window read as "Opus 5 low regressed to 20% blocked" when the model had blocked nothing at all.
+        det = 0
+        pending_gate = False
+        for line in a:
+            if "DETERMINISTIC_GATE" in line:
+                pending_gate = True
+            elif "VERDICT: ISSUES" in line:
+                det += pending_gate
+                pending_gate = False
+            elif "VERDICT: PASS" in line:
+                pending_gate = False
+        model_blocks = blocks - det
         damper = sum("BLOCK_CHAIN_DAMPER" in line for line in a)
         timeouts = sum("timed out" in line for line in a)
         void = sum("VOID_FINDING" in line for line in a)
@@ -132,8 +150,8 @@ def main() -> int:
         answered = fixed + rejected
         accept = f"{fixed / answered * 100:3.0f}% ({answered})" if answered else "  n/a"
 
-        print(f"{label:26s} {reviews:7d} {blocks:6d} {blocks / reviews * 100 if reviews else 0:4.0f}% "
-              f"{damper / reviews * 100 if reviews else 0:9.1f} {timeouts:8d} {void:5d} "
+        print(f"{label:26s} {reviews:7d} {model_blocks:6d} {model_blocks / reviews * 100 if reviews else 0:4.0f}% "
+              f"{det:5d} {damper / reviews * 100 if reviews else 0:9.1f} {timeouts:8d} {void:5d} "
               f"{median:6.1f}s {p90:5.1f}s  {accept}")
     return 0
 
