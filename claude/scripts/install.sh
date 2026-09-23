@@ -38,8 +38,12 @@ if [ ! -f "$HOOK_ENV" ]; then
 # Claude hook runtime flags
 # CODEX_HOOK_AUTO_PR: 1 = enable auto-commit/push/PR after Stop audit pass
 # CODEX_HOOK_CLAUDE_AUDIT: 1 = enable second-pass Anthropic audit (requires anthropic_api_key)
+# CLAUDE_AUDIT_MODEL / CLAUDE_AUDIT_EFFORT: the per-Stop reviewer (Opus 5 low won the 2026-09 scorecard)
+# CLAUDE_STOP_REVIEW: 0 = turn the per-Stop reviewer off
 CODEX_HOOK_AUTO_PR=0
 CODEX_HOOK_CLAUDE_AUDIT=0
+CLAUDE_AUDIT_MODEL=claude-opus-5
+CLAUDE_AUDIT_EFFORT=low
 EOF
   chmod 600 "$HOOK_ENV"
   echo "==> Created default hook_env (Auto-PR=0, Claude=0). Edit $HOOK_ENV to enable."
@@ -52,20 +56,21 @@ if [ -f "$SETTINGS" ]; then
   echo "    Backup: $BACKUP"
 fi
 
-python3 - "$SRC_DIR/config/settings.example.json" "$SETTINGS" <<'PYEOF'
+python3 - "$SRC_DIR/config/settings.example.json" "$SETTINGS" "$HOOKS_DIR" <<'PYEOF'
 import json, sys
 from pathlib import Path
 
-example_path, target_path = sys.argv[1], sys.argv[2]
-example = json.loads(Path(example_path).read_text())
+example_path, target_path, hooks_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+# The example is written against the author's home; point every command at THIS machine's hooks dir.
+AUTHOR_PREFIX = "python3 /Users/domininclynch/.claude/hooks/"
+OUR_COMMAND_PREFIX = f"python3 {hooks_dir}/"
+example = json.loads(Path(example_path).read_text().replace(AUTHOR_PREFIX, OUR_COMMAND_PREFIX))
 new_hooks = example.get("hooks", {})
 
 target = Path(target_path)
 existing = json.loads(target.read_text()) if target.exists() else {}
 existing.setdefault("hooks", {})
 
-# Hook commands we are managing — used to identify our entries for replacement.
-OUR_COMMAND_PREFIX = "python3 /Users/domininclynch/.claude/hooks/"
 
 for event, blocks in new_hooks.items():
     existing_blocks = existing["hooks"].setdefault(event, [])
