@@ -57,6 +57,9 @@ CLAUDE_ITERATIONS_PATH = Path.home() / ".claude" / "state" / "claude_iterations.
 AAA_PROTOCOL_PATH = Path.home() / ".claude" / "specs" / "aaa_protocol.md"
 MIMO_VERDICT_PATH = Path.home() / ".claude" / "state" / "mimo_last_verdict.json"
 HOOK_ENV_PATH = Path.home() / ".claude" / "secrets" / "hook_env"
+# session_id -> deploy revision already announced. Stop additionalContext continues the turn, so repeating the
+# deferral on every Stop re-woke an idle lane until Claude Code's consecutive-block cap ended it (2026-09-23).
+DEFERRAL_NOTICE_PATH = Path.home() / ".claude" / "state" / "deploy_deferral_notified.json"
 
 
 def hook_env(name: str, default: str = "") -> str:
@@ -200,7 +203,7 @@ def milestone_detected(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
-def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420) -> bool:
+def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool:
     if (cwd / ".quality-gate.json").exists():
         covered = ci_covered_commit(cwd)
         if covered:
@@ -212,7 +215,11 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420) -> bool:
         if deploying:
             # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
             # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
-            log(COMPONENT, f"repository quality gate deferred: deploy {str(deploying.get('revision', ''))[:7]} in flight ({deploying['age_s']}s)")
+            revision = str(deploying.get('revision', ''))[:7]
+            log(COMPONENT, f"repository quality gate deferred: deploy {revision} in flight ({deploying['age_s']}s)")
+            if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == revision:
+                return True
+            update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: revision})
             sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
                 f"[Repository Quality Gate] deferred: deploy {str(deploying.get('revision', ''))[:7]} is in flight on this Mac (one-deployer rule); "
                 "the gate runs on the next Stop after FREE, and the PR's CI still covers this change."}}))
@@ -521,9 +528,9 @@ def main() -> None:
             target = Path(project)
             if not (target / ".quality-gate.json").exists():
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
-            if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic()):
+            if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id):
                 return
-        if str(cwd) not in pending and is_git_repo(cwd) and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic()):
+        if str(cwd) not in pending and is_git_repo(cwd) and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id):
             return
         if pending:
             pending_quality(session_id, clear=True)

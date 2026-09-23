@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -208,6 +209,29 @@ class EnforcementTests(unittest.TestCase):
         with patch.object(stop_orchestrator, 'run_project_gate', return_value={'ok': True, 'results': []}) as run_gate, patch.object(stop_orchestrator, 'log'):
             self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
             run_gate.assert_called_once()
+
+    def test_deploy_deferral_notice_is_sent_once_per_session_and_revision(self):
+        # Stop additionalContext continues the turn: repeating it on every Stop looped an idle lane (2026-09-23).
+        self.contract([['true']])
+        lock = {'revision': 'c0b321c7f8', 'age_s': 60}
+        with patch.object(stop_orchestrator, 'active_deploy_lock', return_value=lock), \
+                patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'), \
+                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=''), \
+                patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
+                patch.object(stop_orchestrator, 'log'), \
+                patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
+            self.assertIn('deferred: deploy c0b321c', out.getvalue())
+            out.truncate(0), out.seek(0)
+            self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
+            self.assertEqual(out.getvalue(), '', 'second Stop under the same deploy must stay silent')
+            self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s2'))
+            self.assertIn('deferred', out.getvalue(), 'another session still hears it once')
+            out.truncate(0), out.seek(0)
+            lock['revision'] = 'dfed9951aa'
+            self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
+            self.assertIn('deferred: deploy dfed995', out.getvalue(), 'a new deploy is announced again')
+            run_gate.assert_not_called()
 
     def test_failures_are_never_cached(self):
         repo = self.root / 'repo'
