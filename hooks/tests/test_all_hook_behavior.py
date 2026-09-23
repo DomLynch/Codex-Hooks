@@ -129,7 +129,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("--ephemeral", command)
         self.assertIn("read-only", command)
         self.assertIn("gpt-6-sol", command)
-        self.assertIn('model_reasoning_effort="medium"', command)
+        self.assertIn('model_reasoning_effort="low"', command)
         self.assertEqual(run.call_args.kwargs["input"], "verdict only\n\naudit this")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
         self.assertIn("lane=checkpoint", audit_log.call_args.args[1])
