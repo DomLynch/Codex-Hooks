@@ -17,7 +17,7 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 
 ## Reviewer block calibration — 2026-09-23
 - In 31 recent Claude blocks, 8 of 11 model findings led to substantive corrections. Twelve file-reference blocks mostly caused rereads; seven of eight peer-action blocks were rejected with cited standing approval.
-- Keep Codex and Claude model settings separate. Claude no longer blocks solely because a final answer names an unopened file. A peer-started merge/deploy with no in-session owner approval is logged for audit, while the normal model review still runs; the Stop hook only sees that action after it happened.
+- Keep Codex and Claude model settings separate. Claude no longer blocks solely because a final answer names an unopened file. A peer-started merge/deploy with no in-session owner approval blocks again (restored at Dom's request on 2026-09-23 after being logged-only); the lane answers with `[Fn] rejected: <owner's words>` when standing approval exists.
 - Failed checks, conflict markers, and unsupported live-response claims still block. Local verification: 195 Codex tests, 201 Claude tests, and Ruff passed.
 
 ## Claude reviewer timeout mitigation — 2026-09-23
