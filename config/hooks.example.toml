@@ -43,6 +43,18 @@ command = "python3 /Users/domininclynch/.codex/hooks/user_prompt_submit.py"
 timeout = 10
 statusMessage = "AAA task router"
 
+# One-deployer rule: while Frankendom's deploy.sh holds ~/.claude/state/deploy_in_flight.json, refuse the heavy
+# commands (browser checks, whole suites, builds, bakes) from every other session. Shares the Claude install's
+# lock on purpose - one deployer per Mac, not one per agent. Light commands are never blocked.
+[[hooks.PreToolUse]]
+matcher = "^(exec|shell|Bash)$"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "python3 /Users/domininclynch/.codex/hooks/deploy_guard.py"
+timeout = 10
+statusMessage = "Deploy guard"
+
 [[hooks.PreToolUse]]
 matcher = "^mcp__codegraph__codegraph_explore$"
 

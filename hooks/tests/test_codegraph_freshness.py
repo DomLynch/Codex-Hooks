@@ -27,9 +27,12 @@ def invoke(payload: dict) -> str:
 class CodegraphFreshnessTests(unittest.TestCase):
     def test_example_config_registers_pre_query_hook(self) -> None:
         config = tomllib.loads((Path(__file__).resolve().parents[2] / "config" / "hooks.example.toml").read_text())
-        group = config["hooks"]["PreToolUse"][0]
-        self.assertEqual(group["matcher"], "^mcp__codegraph__codegraph_explore$")
-        self.assertIn("codegraph_freshness.py", group["hooks"][0]["command"])
+        # Looked up by matcher, not by index: this asserted PreToolUse[0] until 2026-09-23, so adding any other
+        # PreToolUse hook (the deploy guard) failed it for a reason that had nothing to do with codegraph.
+        groups = [g for g in config["hooks"]["PreToolUse"]
+                  if g.get("matcher") == "^mcp__codegraph__codegraph_explore$"]
+        self.assertEqual(len(groups), 1)
+        self.assertIn("codegraph_freshness.py", groups[0]["hooks"][0]["command"])
 
     def test_refreshes_nearest_index_not_session_cwd_or_outer_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
