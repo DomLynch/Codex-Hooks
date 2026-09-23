@@ -18,7 +18,7 @@ from lib import log as hook_log  # noqa: E402
 
 
 class CompletionTests(unittest.TestCase):
-    def invoke(self, user, answer, verdict="PASS", exhausted=None, stop_review="1"):
+    def invoke(self, user, answer, verdict="PASS", exhausted=None, stop_review="1", pending=False):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root = Path(tmp)
             rows = []
@@ -40,6 +40,8 @@ class CompletionTests(unittest.TestCase):
                                 ("LOG_FILE", root / "audit.log")):
                 stack.enter_context(mock.patch.object(mimo_audit, name, value))
             stack.enter_context(mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"))
+            if pending:
+                mimo_audit.ledger.register_findings("completion", "VERDICT: ISSUES\n1. Old task finding")
             stack.enter_context(mock.patch.object(mimo_audit, "record_lesson"))
             stack.enter_context(mock.patch.object(mimo_audit, "hook_env", lambda name, default="":
                                                   stop_review if name == "CLAUDE_STOP_REVIEW" else default))
@@ -53,6 +55,7 @@ class CompletionTests(unittest.TestCase):
                 mimo_audit.main()
             self.assertEqual(exit.exception.code, 0)
             state = json.loads((root / "verdict.json").read_text())["completion"]["verdict"]
+            self.last_open_findings = mimo_audit.ledger.open_findings("completion")
             return state, stdout.getvalue(), stderr.getvalue(), transport
 
     def test_stop_review_off_switch_skips_the_model_without_passing(self):
@@ -109,6 +112,10 @@ class CompletionTests(unittest.TestCase):
                 self.assertIn("without PASS", err)
                 self.assertIn("not completion", err)
                 self.assertEqual(transport.call_count, int(limit == "damper"))
+
+    def test_iteration_release_clears_old_findings(self):
+        self.invoke("Fix the typo.", "Still unresolved.", exhausted="iterations", pending=True)
+        self.assertEqual(self.last_open_findings, [])
 
     def test_both_injection_surfaces_preserve_authorization_and_scope(self):
         for policy in (session_start.SESSION_BASELINE, user_prompt_submit.AUTONOMY_POLICY):

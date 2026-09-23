@@ -636,6 +636,18 @@ class ClaudeAdapterTests(unittest.TestCase):
         ):
             self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
 
+    def test_claude_stop_orchestrator_wait_ignores_wall_clock_jump(self) -> None:
+        with (
+            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
+            mock.patch.object(stop_orchestrator.time, "monotonic", side_effect=[0, 0, 1]),
+            mock.patch.object(stop_orchestrator.time, "time", side_effect=[100, 10_000]),
+            mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=[{},
+                {"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": 100}}]),
+            mock.patch.object(stop_orchestrator.time, "sleep"),
+            mock.patch.object(stop_orchestrator, "log"),
+        ):
+            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
+
     def test_claude_stop_orchestrator_rejects_same_turn_chat_skip_without_waiting(self) -> None:
         with (
             mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
