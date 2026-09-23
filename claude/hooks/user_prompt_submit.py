@@ -21,6 +21,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from lib.autonomy import active_lessons
 from lib.json_state import update_json_locked
 from lib.context_size import context_notice
+from lib.inbox import claim_for, render as render_inbox
 from lib.api import exit_if_audit_child
 from lib.log import log
 
@@ -194,6 +195,20 @@ def emit_context(context: str) -> None:
     )
 
 
+def with_inbox(context: str, cwd: Path) -> str:
+    """Prepend any messages other agents (Codex) left for this session. Fail-open: an inbox problem never blocks a
+    prompt, it just delivers nothing, and the message stays in the inbox for the next prompt."""
+    try:
+        messages = claim_for(cwd)
+    except Exception as exc:
+        log(COMPONENT, f"inbox fail-open: {exc}")
+        return context
+    if not messages:
+        return context
+    log(COMPONENT, f"inbox delivered {len(messages)} message(s) from {sorted({str(m.get('from')) for m in messages})}")
+    return f"{render_inbox(messages)}\n\n{context}"
+
+
 def main() -> None:
     exit_if_audit_child()
     try:
@@ -203,7 +218,7 @@ def main() -> None:
         mode = "project" if is_project_work(prompt) else "simple"
         log(COMPONENT, f"context injected mode={mode} prompt_chars={len(prompt)} cwd={cwd}")
         context = context_for(prompt, cwd, str(payload.get("session_id") or ""))
-        emit_context(with_context_notice(context, str(payload.get("transcript_path") or ""), cwd))
+        emit_context(with_inbox(with_context_notice(context, str(payload.get("transcript_path") or ""), cwd), cwd))
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 
