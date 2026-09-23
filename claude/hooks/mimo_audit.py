@@ -31,7 +31,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.autonomy import record_lesson  # noqa: E402
+from lib.autonomy import hook_env, record_lesson  # noqa: E402
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
@@ -850,6 +850,14 @@ def main() -> None:
     turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
     transcript_path = payload.get("transcript_path") or ""
     last_msg = payload.get("last_assistant_message") or ""
+
+    # The owner's off switch for the per-Stop reviewer (default on). CODEX_HOOK_CLAUDE_AUDIT only gates
+    # stop_orchestrator's second pass, not this hook. A verdict is still written so the orchestrator does not
+    # wait out its timeout; it is not PASS, so no auto-PR runs on an unreviewed turn.
+    if hook_env("CLAUDE_STOP_REVIEW", "1").strip() == "0":
+        save_verdict(session_id, turn_id, "SKIP_DISABLED", "CLAUDE_STOP_REVIEW=0")
+        allow_stop("stop review disabled by CLAUDE_STOP_REVIEW=0")
+        return
 
     try:
         _HANDOFF["text"] = handoff_notice(transcript_path, Path(payload.get("cwd") or "."), last_msg)

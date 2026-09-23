@@ -18,7 +18,7 @@ from lib import log as hook_log  # noqa: E402
 
 
 class CompletionTests(unittest.TestCase):
-    def invoke(self, user, answer, verdict="PASS", exhausted=None):
+    def invoke(self, user, answer, verdict="PASS", exhausted=None, stop_review="1"):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             root = Path(tmp)
             rows = []
@@ -41,6 +41,8 @@ class CompletionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(mimo_audit, name, value))
             stack.enter_context(mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"))
             stack.enter_context(mock.patch.object(mimo_audit, "record_lesson"))
+            stack.enter_context(mock.patch.object(mimo_audit, "hook_env", lambda name, default="":
+                                                  stop_review if name == "CLAUDE_STOP_REVIEW" else default))
             if exhausted == "iterations":
                 stack.enter_context(mock.patch.object(mimo_audit, "load_iterations", return_value=3))
             elif exhausted == "damper":
@@ -52,6 +54,13 @@ class CompletionTests(unittest.TestCase):
             self.assertEqual(exit.exception.code, 0)
             state = json.loads((root / "verdict.json").read_text())["completion"]["verdict"]
             return state, stdout.getvalue(), stderr.getvalue(), transport
+
+    def test_stop_review_off_switch_skips_the_model_without_passing(self):
+        state, _, _, transport = self.invoke("Fix the typo.", "Fixed the typo in README.", stop_review="0")
+        transport.assert_not_called()
+        self.assertEqual(state, "SKIP_DISABLED", "a verdict is written so the orchestrator does not wait, but not PASS")
+        state, _, _, transport = self.invoke("Fix the typo.", "Fixed the typo in README.")
+        transport.assert_called()
 
     def test_short_handoffs_reach_reviewer_and_block(self):
         for answer in ("Shall I correct the typo?", "Would you like me to proceed?",
