@@ -239,8 +239,21 @@ Also flag avoidable engineering drag when it creates real risk:
 
 If there are issues, use:
 VERDICT: ISSUES
-1. <specific, actionable fix>
-2. <specific, actionable fix>
+1. [quote: "<6-25 words copied VERBATIM from the slice: the exact claim, code line or message the finding is about>"] <specific, actionable fix>
+2. [quote: "..."] <specific, actionable fix>
+
+The quote is mandatory and is checked mechanically against the slice: a finding whose quote does not appear
+verbatim in the slice is discarded. Copy, do not paraphrase. A finding that something is MISSING (no test run, no
+receipt) quotes the claim that lacks it. If you cannot find words in the slice to quote, the finding has no basis.
+
+A finding must assert a DEFECT: what is wrong, where, and what evidence shows it.
+"Confirm that...", "ensure the agent only...", "should be verified before...",
+"double-check..." are advisories, not findings: if you cannot name the defect, do
+not number it. A finding whose only basis is that supporting output is elided in
+this slice is void: the tool call is the receipt. A finding that restates a gap the
+agent itself already disclosed in the slice ("still blocked on X", "not proven",
+"waiting for your word") is not a miss either; the agent has done the disclosing.
+Prefer VERDICT: PASS with nothing over ISSUES with advisories.
 
 Do not nitpick style. Only block for concrete misses.
 
@@ -494,6 +507,138 @@ def valid_verdict(text: str) -> bool:
     return text.startswith("VERDICT: ISSUES") and bool(re.search(r"(?m)^\s*\d+[.)]\s+\S", text))
 
 
+ADVISORY_RE = re.compile(r"\b(confirm|ensure|verify|double-check|should be verified|before treating)\b", re.IGNORECASE)
+ELISION_RE = re.compile(
+    r"\b(elided|elision|partially[- ]elided|without showing (the )?(corresponding |actual )?(tool |run |command )?output"
+    r"|no visible (execution|tool|log|run|command)?[ /]*(log )?output|not (shown|visible) in (this |the )?slice)\b", re.IGNORECASE)
+
+
+# A finding that names any of these is asserting a defect, whatever else it says.
+DEFECT_RE = re.compile(
+    r"\b(bug|error|fails?|failed|failure|failing|missing|wrong|incorrect|broken|mismatch|regress\w*|contradict\w*|"
+    r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
+    r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
+    r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported|only shows|does not show|doesn't show|"
+    r"no tool call|never (ran|called|executed|applied)|migration|database|schema)\b", re.IGNORECASE)
+
+
+def void_finding(text: str) -> str:
+    """Why this numbered finding is void ('' if it stands). Deterministic, word-boundary only.
+    Elision-based: the finding's basis is that output is elided here, and it names no contradiction.
+    Advisory: 'confirm/ensure/verify' with no defect named at all. Everything else stands."""
+    if ELISION_RE.search(text) and not DEFECT_RE.search(text):
+        return "elision-only"
+    if ADVISORY_RE.search(text) and not DEFECT_RE.search(text):
+        return "advisory-only"
+    return ""
+
+
+def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
+    """Drop void findings from an ISSUES verdict and renumber. Returns (text, dropped findings verbatim).
+    The reviewer prompt already forbids these; medium effort still emits them (11 blocks on 2026-09-22,
+    4 were this class). The filter makes the rule mechanical; every drop is logged in full."""
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, dropped = [], []
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            kept.append(line)
+            continue
+        why = void_finding(m.group(1))
+        if why:
+            dropped.append(m.group(1))
+            log(f"VOID_FINDING ({why}): {m.group(1)[:400]}")
+        else:
+            kept.append(m.group(1))
+    if not dropped:
+        return verdict_text, []
+    findings = [ln for ln in kept if not numbered.match(ln) and ln.strip()]
+    # `kept` now holds finding bodies (unnumbered) and any prose lines; renumber the bodies in order.
+    out, n = [], 0
+    for ln in kept:
+        if ln.strip() and ln in findings:
+            n += 1
+            out.append(f"{n}. {ln}")
+    if not n:
+        return "VERDICT: PASS", dropped
+    return "VERDICT: ISSUES\n" + "\n".join(out), dropped
+
+
+QUOTE_RE = re.compile(r"\[quote:\s*[\"“']([^\"”']{3,400})[\"”']\s*\]", re.IGNORECASE)
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def filter_unanchored_findings(verdict_text: str, slice_text: str) -> tuple[str, list[str]]:
+    """Drop numbered findings whose [quote: "..."] anchor is not in the slice the reviewer saw.
+    Premise-wrong findings ('no receipt shown' when the receipt is in the slice, 'claims complete' when it did
+    not) were 14 of 30 lane rejections on 2026-09-22 at medium effort. A verbatim quote that must exist in the
+    slice is the cheapest mechanical check on the reviewer's premise. Findings without any quote are kept and
+    counted (NOQUOTE) so the rule can be tightened once the reviewer complies."""
+    hay = _norm(slice_text)
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, dropped, noquote = [], [], 0
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            continue
+        body = m.group(1)
+        q = QUOTE_RE.search(body)
+        if not q:
+            noquote += 1
+            kept.append(body)
+            continue
+        if _norm(q.group(1)) in hay:
+            kept.append(body)
+        else:
+            dropped.append(body)
+            log(f"VOID_FINDING (unanchored quote): {body[:400]}")
+    log(f"ANCHORS: kept={len(kept)} unanchored={len(dropped)} noquote={noquote}")
+    if not dropped:
+        return verdict_text, []
+    if not kept:
+        return "VERDICT: PASS", dropped
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
+
+
+def log_noise_classes(verdict_text: str) -> None:
+    """Counter for the medium-vs-high comparison: findings that read as advisories or rest on elided output."""
+    findings = [line for line in verdict_text.splitlines() if re.match(r"^\s*\d+[.)]\s+\S", line)]
+    advisory = sum(1 for f in findings if ADVISORY_RE.search(f))
+    elision = sum(1 for f in findings if ELISION_RE.search(f))
+    if findings:
+        log(f"NOISE_CLASS: findings={len(findings)} advisory={advisory} elision={elision}")
+
+
+# A turn that edits nothing and asserts nothing is a relay, an ack or a hold ("Idle.", "Holding.",
+# "Standing by.", forwarding a peer's status). Reviewing it costs a full model call and can only produce
+# advisories. Measured 2026-09-22: 1,614 reviews, 133 with a code diff. The claim words below are the safety
+# net - anything that asserts state (live, merged, green, a sha, a count, a PR number) is still reviewed.
+STATUS_CLAIM_RE = re.compile(
+    r"\b(live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
+    r"green|pass\w*|fail\w*|verified|applied|resolved|running|started|queued|open|ready|clean|"
+    r"[0-9a-f]{7,40})\b"
+    r"|#\d+|\d+\s*/\s*\d+|\d+\s*(tests?|checks?|rows?|files?|PRs?)\b",
+    re.IGNORECASE)
+# An offer or a plan is not a hold: a turn that stops while proposing work is exactly what the reviewer exists to catch.
+HANDOFF_RE = re.compile(r"\b(I (can|could|will|would)\b|next:|next step|if you like|let me know|happy to|propose|suggest)", re.IGNORECASE)
+CONTENTLESS_MAX_CHARS = 600
+
+
+def contentless_turn(answer: str, edited: list) -> str:
+    """Why the model call can be skipped ('' if it cannot). Edits, claims and status assertions all disqualify."""
+    if edited:
+        return ""
+    text = (answer or "").strip()
+    if not text or len(text) > CONTENTLESS_MAX_CHARS:
+        return ""
+    if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
+        return ""
+    return f"no edits, no claim, {len(text)} chars"
+
+
 def has_tool_activity(transcript: str) -> bool:
     return any(marker in transcript for marker in TOOL_ACTIVITY_MARKERS)
 
@@ -600,6 +745,7 @@ def main() -> None:
         log(f"LEDGER_UNANSWERED: {', '.join(unanswered)}; model call skipped")
     if mechanical:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s); model call skipped")
+    from_model = not (pending or mechanical)
     if pending or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(
             f"{index}. {finding}" for index, finding in enumerate(pending + mechanical, 1)
@@ -609,6 +755,17 @@ def main() -> None:
         reset_audit_errors(session_id)
         reset_consecutive_blocks(session_id)
         allow_stop("doc-only turn - audit skipped")
+        return
+    elif (not ledger.prompt_section(session_id) and not has_tool_activity(transcript)
+          and contentless_turn(last_msg, paths)):
+        # Stricter than the Claude install: a turn that ran ANY tool is never treated as contentless here,
+        # so `test_mimo_short_transcript_with_tool_activity_is_audited` keeps holding. Codex records tool
+        # calls in the message text, where Claude carries them as transcript entries.
+        why = contentless_turn(last_msg, paths)
+        save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
+        reset_audit_errors(session_id)
+        reset_consecutive_blocks(session_id)
+        allow_stop(f"contentless turn - audit skipped ({why})")
         return
     else:
         history = ledger.prompt_section(session_id)
@@ -660,6 +817,16 @@ def main() -> None:
                 f"audit format error: {AUDITOR_NAME} returned no actionable verdict after repair",
             )
             return
+
+    if from_model and verdict_text.startswith("VERDICT: ISSUES"):
+        # Model noise only. A deterministic_findings/ledger verdict is already exact, and running the
+        # void/anchor filters over it could silently void the gate, so those bypass this entirely.
+        log_noise_classes(verdict_text)
+        verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
+        verdict_text, voided = filter_void_findings(verdict_text)
+        dropped = unanchored + voided
+        if dropped and verdict_text.startswith("VERDICT: PASS"):
+            log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
 
     if verdict_text.startswith("VERDICT: PASS"):
         save_verdict(session_id, turn_id, "PASS", verdict_text)
