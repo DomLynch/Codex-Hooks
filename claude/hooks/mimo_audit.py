@@ -654,7 +654,7 @@ DEFECT_RE = re.compile(
     r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
     r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
     r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported|only shows|does not show|doesn't show|"
-    r"no tool call|never (ran|called|executed|applied)|migration|database|schema)\b", re.IGNORECASE)
+    r"no tool call|never (ran|called|executed|applied)|already authorized|migration|database|schema)\b", re.IGNORECASE)
 
 
 def void_finding(text: str) -> str:

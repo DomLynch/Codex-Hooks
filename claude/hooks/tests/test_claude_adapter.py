@@ -2026,3 +2026,18 @@ def test_receipt_additions_and_export(tmp_path, monkeypatch):
     assert (users, replies, dropped) == (1, 1, 1)
     body = md.read_text()
     assert "do the thing" in body and "done, here is why" in body and "Bash" not in body
+
+
+def test_authorized_work_finding_survives_the_advisory_filter(monkeypatch):
+    """Found by the Codex hooks session on 2026-09-23 and fixed there first (59d434c). "Run the script, then verify
+    the live service" reads as advisory ("verify") and named no defect word, so the void filter silently dropped a
+    real finding: an agent asking permission it already had. "already authorized" now counts as a defect."""
+    import mimo_audit as m
+    monkeypatch.setattr(m, "log", lambda *_a, **_k: None)
+    transcript = "USER: Deploy the release.\nASSISTANT: Would you like me to proceed?"
+    verdict = ('VERDICT: ISSUES\n1. [quote: "Would you like me to proceed?"] '
+               "The user already authorized deployment. Run the script, then verify the live service.")
+    anchored, unanchored = m.filter_unanchored_findings(verdict, transcript)
+    filtered, voided = m.filter_void_findings(anchored)
+    assert unanchored == [] and voided == []
+    assert filtered == verdict
