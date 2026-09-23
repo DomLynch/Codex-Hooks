@@ -124,8 +124,10 @@ def call_claude_cli(
     token = hook_env("CLAUDE_CODE_OAUTH_TOKEN")
     if token:
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    # The review prompt is self-contained; user plugins, MCP and saved sessions add startup work.
     command = [
         claude_binary(), "-p",
+        "--safe-mode", "--no-session-persistence",
         "--model", CLAUDE_AUDIT_MODEL,
         "--effort", CLAUDE_AUDIT_EFFORT,
         "--disallowedTools", "Bash Edit Write NotebookEdit",
