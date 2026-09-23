@@ -314,6 +314,9 @@ def latest_task_entries(transcript_path: str, current_only: bool = True) -> list
         if item_type == "message":
             role = str(payload.get("role") or "message").upper()
             text = _content_text(payload.get("content"))
+            if (role == "USER" and re.fullmatch(
+                    r"\s*<environment_context>.*?</environment_context>\s*", text, re.DOTALL)):
+                role = "CONTEXT (not a new request)"
             if role == "USER" and text.lstrip().startswith("<hook_prompt"):
                 remaining = strip_hook_prompts(text)
                 if remaining:

@@ -180,6 +180,29 @@ class EnforcementTests(unittest.TestCase):
         edited = subprocess.run([sys.executable, stop_orchestrator.__file__], input=payload,
                                 capture_output=True, text=True, env=env, timeout=10)
         self.assertIn('Repository Quality Gate', edited.stdout)
+        pause_transcript = self.root/'pause.jsonl'
+        pause_transcript.write_text('\n'.join([
+            json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+                        'content': [{'type': 'text', 'text': 'ok standby for now'}]}}),
+            json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'user',
+                        'content': [{'type': 'text', 'text': '<environment_context>\n</environment_context>'}]}}),
+            json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': 'assistant',
+                        'content': [{'type': 'output_text', 'text': 'Standby, no work started.'}]}}),
+        ]))
+        pause_payload = json.dumps({'session_id': 'gate-test', 'turn_id': 't2', 'cwd': str(self.root),
+                                    'transcript_path': str(pause_transcript),
+                                    'last_assistant_message': 'Standby, no work started.'})
+        paused = subprocess.run([sys.executable, stop_orchestrator.__file__], input=pause_payload,
+                                capture_output=True, text=True, env=env, timeout=10)
+        self.assertEqual(paused.stdout, '')
+        self.assertEqual(json.loads((home/'.codex/state/pending_quality.json').read_text())['gate-test'],
+                         [str(self.root)])
+        with pause_transcript.open('a') as stream:
+            stream.write('\n' + json.dumps({'type': 'response_item', 'payload': {
+                'type': 'function_call', 'name': 'exec_command', 'arguments': '{"cmd":"touch changed.py"}'}}))
+        active = subprocess.run([sys.executable, stop_orchestrator.__file__], input=pause_payload,
+                                capture_output=True, text=True, env=env, timeout=10)
+        self.assertIn('Repository Quality Gate', active.stdout)
         (home/'.codex/state/pending_quality.json').unlink()
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Ready to deploy now.'})

@@ -33,7 +33,7 @@ from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
-from lib.transcript import latest_task_slice
+from lib.transcript import latest_task_entries, latest_task_slice
 
 
 COMPONENT = "stop_orchestrator"
@@ -44,6 +44,10 @@ MILESTONE_INTENT_PATTERNS = (
     re.compile(r"\bready\s+to\s+(?:merge|ship|release|deploy)\b", re.IGNORECASE),
     re.compile(r"\b(?:ship|merge|land|deploy|release)\s+(?:it|this|now)\b", re.IGNORECASE),
     re.compile(r"\baaa\s+milestone\s+(?:release|ship|merge|deploy)\b", re.IGNORECASE),
+)
+PAUSE_REQUEST_RE = re.compile(
+    r"^USER:\s*(?:ok[\s,]+)?(?:stop|pause|stand\s*by|hold off)\s+(?:for now|until\b)",
+    re.IGNORECASE,
 )
 DEFAULT_BASE_BRANCH = "main"
 MIMO_WAIT_TIMEOUT_S = 155
@@ -490,6 +494,10 @@ def main() -> None:
         session_spec = read_session_spec(session_id)
 
         log(COMPONENT, f"start transcript={len(transcript)} cwd={cwd}")
+        if PAUSE_REQUEST_RE.search(transcript) and not any(
+                role == "TOOL CALL" for role, _ in latest_task_entries(payload.get("transcript_path") or "")):
+            log(COMPONENT, "explicit pause: pending quality retained, checks deferred")
+            return
         pending = pending_quality(session_id)
         quality_deadline = time.monotonic() + 480
         for project in pending:

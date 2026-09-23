@@ -128,7 +128,8 @@ class UnanchoredQuoteTests(unittest.TestCase):
 
 class ContentlessTurnTests(unittest.TestCase):
     def test_relays_acks_and_holds_are_skippable(self) -> None:
-        for text in ("Idle.", "Holding.", "Standing by.", "Waiting.", "Noted.", "On it."):
+        for text in ("Idle.", "Holding.", "Standing by.", "Waiting.", "Noted.", "On it.",
+                     "Visuals & World - FYI received; standby, no work started."):
             self.assertTrue(mimo_audit.contentless_turn(text, []), text)
 
     def test_anything_asserting_state_is_still_reviewed(self) -> None:
@@ -141,6 +142,7 @@ class ContentlessTurnTests(unittest.TestCase):
             "Merged.",
             "3 checks green",
             "Applied the migration",
+            "Standby, no work started; production is live.",
         ):
             self.assertEqual(mimo_audit.contentless_turn(text, []), "", text)
 

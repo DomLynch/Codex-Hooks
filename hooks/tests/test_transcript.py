@@ -104,6 +104,29 @@ class TranscriptSliceTests(unittest.TestCase):
         self.assertIn("merge this now", text)
         self.assertIn("npm test failed", text)
 
+    def test_environment_context_does_not_replace_the_user_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "rollout.jsonl"
+            transcript.write_text("\n".join([
+                message("user", "ok standby for now"),
+                message("user", "<environment_context>\n<current_date>2026-09-23</current_date>\n</environment_context>"),
+                message("assistant", "Standby, no work started."),
+            ]))
+            text = latest_task_slice(str(transcript))
+        self.assertIn("ok standby for now", text)
+        self.assertIn("Standby, no work started.", text)
+
+    def test_environment_context_with_a_real_request_is_a_user_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "rollout.jsonl"
+            transcript.write_text("\n".join([
+                message("user", "old request"),
+                message("user", "<environment_context>\n</environment_context>\nFix the test"),
+            ]))
+            text = latest_task_slice(str(transcript))
+        self.assertIn("Fix the test", text)
+        self.assertNotIn("old request", text)
+
     def test_compacted_tool_call_marks_slice_elision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "rollout.jsonl"
