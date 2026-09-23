@@ -37,6 +37,7 @@ from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import edited_paths
 from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
+from mimo_audit import retry_turn_id
 
 
 COMPONENT = "stop_orchestrator"
@@ -517,7 +518,7 @@ def main() -> None:
             return
         payload = normalize_payload(payload)
         session_id = payload.get("session_id") or "unknown"
-        turn_id = payload.get("turn_id") or ""
+        turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice_claude(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
         edited = [Path(p) for p in edited_paths(latest_task_entries_claude(payload.get("transcript_path") or ""))]

@@ -636,6 +636,35 @@ class ClaudeAdapterTests(unittest.TestCase):
         ):
             self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
 
+    def test_claude_stop_orchestrator_waits_for_blocked_retry_turn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "transcript.jsonl"
+            transcript.write_text("x" * 100)
+            first = synthesize_turn_id("retry-session", str(transcript), False)
+            with mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "iterations.json"):
+                mimo_audit.remember_blocked_turn("retry-session", first)
+                transcript.write_text("x" * 140)
+                payload = {
+                    "session_id": "retry-session", "transcript_path": str(transcript),
+                    "cwd": tmp, "stop_hook_active": True,
+                }
+                self.assertNotEqual(normalize_payload(payload)["turn_id"], first)
+                with (
+                    mock.patch.object(stop_orchestrator, "exit_if_audit_child"),
+                    mock.patch.object(stop_orchestrator, "latest_task_slice_claude", return_value=""),
+                    mock.patch.object(stop_orchestrator, "latest_task_entries_claude", return_value=[]),
+                    mock.patch.object(stop_orchestrator, "resolve_git_cwd", return_value=Path(tmp)),
+                    mock.patch.object(stop_orchestrator, "remember_repo"),
+                    mock.patch.object(stop_orchestrator, "read_session_spec", return_value=""),
+                    mock.patch.object(stop_orchestrator, "pending_quality", return_value=[]),
+                    mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
+                    mock.patch.object(stop_orchestrator, "audit_with_claude", return_value=True),
+                    mock.patch.object(stop_orchestrator, "wait_for_mimo_pass", return_value=False) as wait,
+                    mock.patch.object(stop_orchestrator, "log"),
+                ):
+                    run_main_with_stdin(stop_orchestrator.main, payload)
+                wait.assert_called_once_with("retry-session", first)
+
     def test_claude_stop_orchestrator_wait_ignores_wall_clock_jump(self) -> None:
         with (
             mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
