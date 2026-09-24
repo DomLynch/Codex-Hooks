@@ -53,6 +53,10 @@ def state_file_pushed(cwd: Path, lane: str, fetch: bool = True) -> tuple[bool, s
     """
     doc = STATE_DOC_ALIASES.get(lane, lane)
     rel = f"docs/state/{doc}.md"
+    if not _git(["rev-parse", "--git-dir"], cwd):
+        # Stats runs from "~/Developer/Frankendom - Stats", which holds only .claude; its checkout is the usual
+        # worktree. Trunk is shared, so any checkout of the repo answers the question.
+        cwd = Path.home() / "Developer" / f"frankendom-{lane}"
     if fetch:   # the prompt path skips it: its hook has a 10 s budget, and a stale ref only under-reports ready
         _git(["fetch", "-q", "origin"], cwd)
     head = _git(["rev-parse", "--short", TRUNK], cwd)

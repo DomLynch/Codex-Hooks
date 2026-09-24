@@ -1959,6 +1959,7 @@ def test_handoff_check_reports_never_blocks(tmp_path, monkeypatch):
     """Dom chose the reporting variant (2026-09-22): three checks, no block. A hook that demanded a pushed commit
     could trap a lane with nothing to commit or no network — the block loop fixed earlier the same day."""
     from lib import handoff_check as hc
+    monkeypatch.setattr(hc.Path, "home", staticmethod(lambda: tmp_path))   # keep the worktree fallback off the real Mac
     t = tmp_path / "t.jsonl"
     t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 400_000}}}) + "\n")
     repo = tmp_path / "frankendom-combat"
@@ -2020,6 +2021,23 @@ def test_handoff_report_reaches_the_model_through_the_prompt_hook(tmp_path, monk
     monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane, fetch=True: 1 / 0)
     broken = ups.with_context_notice("BODY", str(t), Path("/x/frankendom-world"))
     assert broken.startswith("BODY") and "Context 360k" in broken
+
+
+def test_the_stats_lane_is_a_lane(tmp_path, monkeypatch):
+    """2026-09-24: Stats was opened in "~/Developer/Frankendom - Stats" (only .claude in it). The lowercase-only
+    pattern made it "session": no handoff check, a context line naming docs/state/session.md, and inbox messages
+    to "stats" never claimed. Its trunk check must also fall back to the real worktree."""
+    from lib import context_size as cs, handoff_check as hc, inbox
+    assert cs.lane_name("/Users/d/Developer/Frankendom - Stats") == "stats"
+    assert inbox.lane_key("/Users/d/Developer/Frankendom - Stats") == "stats"
+    assert cs.lane_name("/Users/d/Developer/frankendom-lead-catalogue") == "lead-catalogue"
+    assert cs.lane_name("/Users/d/Desktop/Business") == "session"
+    calls = []
+    monkeypatch.setattr(hc, "_git", lambda args, cwd: calls.append((args[0], str(cwd))) or "")
+    monkeypatch.setattr(hc.Path, "home", staticmethod(lambda: tmp_path))
+    hc.state_file_pushed(tmp_path / "Frankendom - Stats", "stats", fetch=False)
+    assert calls[0] == ("rev-parse", str(tmp_path / "Frankendom - Stats"))
+    assert calls[1] == ("rev-parse", str(tmp_path / "Developer" / "frankendom-stats"))
 
 
 def test_receipt_additions_and_export(tmp_path, monkeypatch):
