@@ -67,7 +67,8 @@ def context_notice(transcript_path: str, cwd: str) -> tuple[str, bool]:
     if tokens < warn:
         return "", False
     line = (f"# Context {tokens // 1000}k. When this task closes (PR merged or handed over), write "
-            f"docs/state/{lane}.md + memory, then /clear and resume from them. Do not restart mid-task. "
+            f"docs/state/{lane}.md + memory, then clear this session yourself and resume from them. Do not restart "
+            f"mid-task. "
             f"Every tool call re-reads the whole context, so this session costs {tokens / warn:.1f}x a "
             f"{warn // 1000}k one "
             f"per call — context is a per-task budget, not a diary: a long audit may legitimately sit high, a "

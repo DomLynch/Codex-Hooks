@@ -21,6 +21,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from lib.autonomy import active_lessons
 from lib.json_state import update_json_locked
 from lib.context_size import context_notice
+from lib.handoff_check import prompt_handoff_notice
 from lib.inbox import claim_for, render as render_inbox
 from lib.api import exit_if_audit_child
 from lib.log import log
@@ -140,6 +141,13 @@ def with_context_notice(context: str, transcript_path: str, cwd: Path) -> str:
     line, put_first = context_notice(transcript_path, str(cwd))
     if not line:
         return context
+    try:
+        handoff = prompt_handoff_notice(transcript_path, cwd)
+    except Exception as exc:   # the report must never cost the prompt its context
+        log(COMPONENT, f"handoff check failed: {exc}")
+        handoff = ""
+    if handoff:
+        line = f"{line}\n{handoff}"
     return f"{line}\n\n{context}" if put_first else f"{context}\n\n{line}"
 
 
