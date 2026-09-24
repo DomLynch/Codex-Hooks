@@ -1848,6 +1848,22 @@ def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
     assert "Current-Prompt Discipline" in u.context_for("hello", Path("/tmp"), "s1")
 
 
+def test_coordinating_lanes_warn_at_350k(tmp_path):
+    """Dom, 2026-09-24: Lead, Strategy and Deploy clear at 350k; every other lane stays at 300k."""
+    from lib import context_size as cs
+    from lib import handoff_check as hc
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 320_000}}}) + "\n")
+    for lane in ("lead-catalogue", "strategy", "deploy"):
+        assert cs.context_notice(str(t), f"/x/frankendom-{lane}") == ("", False)
+        assert hc.handoff_notice(str(t), Path(f"/x/frankendom-{lane}"), "PR merged") == ""
+    line, _ = cs.context_notice(str(t), "/x/frankendom-weapons")
+    assert "320k" in line and "300k one" in line
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 360_000}}}) + "\n")
+    line, _ = cs.context_notice(str(t), "/x/frankendom-deploy")
+    assert "360k" in line and "350k one" in line
+
+
 def test_context_notice_thresholds(tmp_path, monkeypatch):
     """2026-09-22: lanes ran to the 966k ceiling; capping at 200k would have cut the lane bill 64%.
     Warn at 200k (appended), make it the first line at 300k. Below that, silence."""
