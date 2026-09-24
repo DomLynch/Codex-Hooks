@@ -23,6 +23,9 @@ import os
 import re
 
 WARN_TOKENS = 300_000   # Dom, 2026-09-22, in his own session: raised from 200k "to give some balance"
+# The coordinating lanes refill fastest and lose the most working state on a restart (a deploy queue, the
+# PR merge order), so they get headroom (Dom, 2026-09-24). Every other lane stays at WARN_TOKENS.
+LANE_WARN_TOKENS = {"lead-catalogue": 350_000, "strategy": 350_000, "deploy": 350_000}
 URGENT_TOKENS = 500_000
 TAIL_BYTES = 512 * 1024
 LANE_RE = re.compile(r"frankendom-([\w.-]+)")
@@ -62,16 +65,21 @@ def lane_name(cwd: str) -> str:
     return m.group(1) if m else "session"
 
 
+def warn_tokens(lane: str) -> int:
+    return LANE_WARN_TOKENS.get(lane, WARN_TOKENS)
+
+
 def context_notice(transcript_path: str, cwd: str) -> tuple[str, bool]:
     """(line to inject, put_first). ('', False) below the warn threshold."""
     tokens = context_tokens(transcript_path)
-    if tokens < WARN_TOKENS:
-        return "", False
     lane = lane_name(cwd)
+    warn = warn_tokens(lane)
+    if tokens < warn:
+        return "", False
     line = (f"# Context {tokens // 1000}k. When this task closes (PR merged or handed over), write "
             f"docs/state/{lane}.md + your notes, then start a fresh session and resume from them. Do not "
             f"restart mid-task. Every tool call re-reads the whole context, so this session costs "
-            f"{tokens / WARN_TOKENS:.1f}x a {WARN_TOKENS // 1000}k one per call — context is a per-task "
+            f"{tokens / warn:.1f}x a {warn // 1000}k one per call — context is a per-task "
             f"budget, not a diary: a long audit may legitimately sit high, a seven-line fix at "
             f"{tokens // 1000}k is waste.")
     return line, tokens >= URGENT_TOKENS

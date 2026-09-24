@@ -74,6 +74,15 @@ class NoticeTests(unittest.TestCase):
             self.assertIn("docs/state/deploy.md", line)
             self.assertFalse(first)
 
+    def test_coordinating_lanes_get_350k(self) -> None:
+        # Dom, 2026-09-24: Lead, Strategy and Deploy at 350k; every other lane stays at WARN_TOKENS.
+        with TemporaryDirectory() as d:
+            path = write(Path(d), codex_record(320_000, 0))
+            self.assertEqual(context_notice(path, "/x/frankendom-deploy"), ("", False))
+            self.assertIn("300k one", context_notice(path, "/x/frankendom-weapons")[0])
+            path = write(Path(d), codex_record(360_000, 0))
+            self.assertIn("350k one", context_notice(path, "/x/frankendom-strategy")[0])
+
     def test_urgent_threshold_asks_to_be_put_first(self) -> None:
         with TemporaryDirectory() as d:
             path = write(Path(d), codex_record(URGENT_TOKENS + 1, 0))

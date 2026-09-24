@@ -13,7 +13,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from lib.context_size import WARN_TOKENS, context_tokens, lane_name
+from lib.context_size import context_tokens, lane_name, warn_tokens
 
 TASK_CLOSED_MARKERS = ("merged", "handed over", "handing over", "task closed", "shipped", "done for now",
                        "wrapped up", "handed back", "closing out", "that closes")
@@ -98,9 +98,9 @@ def task_closed(last_message: str) -> bool:
 def handoff_notice(transcript_path: str, cwd: Path, last_message: str) -> str:
     """The line(s) to append to a Stop turn. '' when this does not apply."""
     tokens = context_tokens(transcript_path)
-    if tokens < WARN_TOKENS or not task_closed(last_message):
-        return ""
     lane = lane_name(str(cwd))
+    if tokens < warn_tokens(lane) or not task_closed(last_message):
+        return ""
     ok_state, why_state = state_file_pushed(cwd, lane)
     ok_mem, why_mem = memory_written_today(cwd)
     head = f"# Handoff check — context {tokens // 1000}k and this turn closed a task"
