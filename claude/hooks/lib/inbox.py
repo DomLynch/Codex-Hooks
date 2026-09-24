@@ -26,12 +26,14 @@ from pathlib import Path
 INBOX = Path(os.environ.get("CLAUDE_INBOX") or Path.home() / ".claude" / "state" / "inbox")
 MAX_TEXT = 4000        # one message; longer is truncated, not rejected
 MAX_PER_PROMPT = 5     # the rest wait for the next prompt, oldest first
-LANE_RE = re.compile(r"frankendom-([\w.-]+)")
+# Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
+# the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
+LANE_RE = re.compile(r"frankendom(?:-| - )([\w.-]+)", re.IGNORECASE)
 
 
 def lane_key(cwd: str | Path) -> str:
     m = LANE_RE.search(str(cwd or ""))
-    return m.group(1) if m else ""
+    return m.group(1).lower() if m else ""
 
 
 def send(to: str, sender: str, text: str, *, inbox: str | Path | None = None) -> Path:

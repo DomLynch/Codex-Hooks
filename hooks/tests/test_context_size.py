@@ -15,7 +15,7 @@ from tempfile import TemporaryDirectory
 
 HOOKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS))
-from lib.context_size import URGENT_TOKENS, WARN_TOKENS, context_notice, context_tokens  # noqa: E402
+from lib.context_size import URGENT_TOKENS, WARN_TOKENS, context_notice, context_tokens, lane_name  # noqa: E402
 
 
 def write(tmp: Path, *records: dict) -> str:
@@ -82,6 +82,12 @@ class NoticeTests(unittest.TestCase):
             self.assertIn("300k one", context_notice(path, "/x/frankendom-weapons")[0])
             path = write(Path(d), codex_record(360_000, 0))
             self.assertIn("350k one", context_notice(path, "/x/frankendom-strategy")[0])
+
+    def test_the_stats_folder_is_a_lane(self) -> None:
+        # 2026-09-24: "~/Developer/Frankendom - Stats" resolved to "session" under the lowercase-only pattern.
+        self.assertEqual(lane_name("/Users/d/Developer/Frankendom - Stats"), "stats")
+        self.assertEqual(lane_name("/Users/d/Developer/frankendom-deploy"), "deploy")
+        self.assertEqual(lane_name("/Users/d/Desktop/Business"), "session")
 
     def test_urgent_threshold_asks_to_be_put_first(self) -> None:
         with TemporaryDirectory() as d:

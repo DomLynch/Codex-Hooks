@@ -24,7 +24,9 @@ WARN_TOKENS = 300_000   # Dom, 2026-09-22, in his own session: raised from 200k 
 LANE_WARN_TOKENS = {"lead-catalogue": 350_000, "strategy": 350_000, "deploy": 350_000}
 URGENT_TOKENS = 500_000
 TAIL_BYTES = 512 * 1024
-LANE_RE = re.compile(r"frankendom-([\w.-]+)")
+# Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
+# the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
+LANE_RE = re.compile(r"frankendom(?:-| - )([\w.-]+)", re.IGNORECASE)
 
 
 def context_tokens(transcript_path: str) -> int:
@@ -52,7 +54,7 @@ def context_tokens(transcript_path: str) -> int:
 
 def lane_name(cwd: str) -> str:
     m = LANE_RE.search(str(cwd or ""))
-    return m.group(1) if m else "session"
+    return m.group(1).lower() if m else "session"
 
 
 def warn_tokens(lane: str) -> int:
