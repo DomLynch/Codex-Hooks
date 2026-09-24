@@ -19,11 +19,17 @@ def main() -> None:
     tool_input = payload.get("tool_input") or {}
     if not isinstance(tool_input, dict):
         return
-    path = Path(tool_input.get("projectPath") or payload.get("cwd") or ".").expanduser().resolve()
-    for root in (path, *path.parents):
-        if (root / ".codegraph" / "codegraph.db").is_file():
-            break
-    else:
+    project_path = tool_input.get("projectPath")
+    if not isinstance(project_path, str) or not project_path.strip():
+        deny("CodeGraph needs projectPath set to the repository or worktree being queried.")
+        return
+    path = Path(project_path).expanduser().resolve()
+    root = next((candidate for candidate in (path, *path.parents) if (candidate / ".git").exists()), None)
+    if root is None:
+        deny(f"CodeGraph projectPath is outside a Git repository: {path}.")
+        return
+    if not (root / ".codegraph" / "codegraph.db").is_file():
+        deny(f"CodeGraph has no index in {root}; initialize that repository before querying it.")
         return
     try:
         result = subprocess.run(["codegraph", "sync", "-q"], cwd=root, capture_output=True, text=True, timeout=30)
@@ -32,10 +38,14 @@ def main() -> None:
         detail = f"exit {result.returncode}"
     except (OSError, subprocess.TimeoutExpired) as exc:
         detail = type(exc).__name__
+    deny(f"CodeGraph refresh failed ({detail}) in {root}; retry sync before using its index.")
+
+
+def deny(reason: str) -> None:
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": f"CodeGraph refresh failed ({detail}) in {root}; retry sync before using its index.",
+        "permissionDecisionReason": reason,
     }}))
 
 

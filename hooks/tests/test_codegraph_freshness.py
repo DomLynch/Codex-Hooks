@@ -13,6 +13,7 @@ import codegraph_freshness  # noqa: E402
 
 
 def indexed(root: Path) -> None:
+    (root / ".git").mkdir()
     (root / ".codegraph").mkdir(parents=True)
     (root / ".codegraph" / "codegraph.db").touch()
 
@@ -53,15 +54,47 @@ class CodegraphFreshnessTests(unittest.TestCase):
             indexed(root)
             with mock.patch.object(codegraph_freshness.subprocess, "run") as run:
                 self.assertEqual(invoke({"tool_name": "Bash", "cwd": str(root)}), "")
-                self.assertEqual(invoke({"tool_name": "mcp__codegraph__codegraph_explore",
-                                         "tool_input": {"projectPath": missing_tmp}}), "")
+                decision = json.loads(invoke({"tool_name": "mcp__codegraph__codegraph_explore",
+                                              "tool_input": {"projectPath": missing_tmp}}))["hookSpecificOutput"]
+                self.assertEqual(decision["permissionDecision"], "deny")
+            run.assert_not_called()
+
+    def test_never_falls_back_to_business_index_for_unindexed_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            business = Path(tmp)
+            worktree = business / "game-worktree"
+            worktree.mkdir()
+            indexed(business)
+            (worktree / ".git").touch()  # Linked worktrees use a .git file.
+            payload = {"tool_name": "mcp__codegraph__codegraph_explore", "cwd": str(business),
+                       "tool_input": {"projectPath": str(worktree)}}
+            with mock.patch.object(codegraph_freshness.subprocess, "run") as run:
+                decision = json.loads(invoke(payload))["hookSpecificOutput"]
+            self.assertEqual(decision["permissionDecision"], "deny")
+            self.assertIn(str(worktree), decision["permissionDecisionReason"])
+            run.assert_not_called()
+
+    def test_business_cwd_without_project_path_is_denied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            business = Path(tmp)
+            (business / ".codegraph").mkdir()
+            (business / ".codegraph" / "codegraph.db").touch()
+            with mock.patch.object(codegraph_freshness.subprocess, "run") as run:
+                decision = json.loads(invoke({"tool_name": "mcp__codegraph__codegraph_explore",
+                                              "cwd": str(business)}))["hookSpecificOutput"]
+                explicit = json.loads(invoke({"tool_name": "mcp__codegraph__codegraph_explore",
+                                              "tool_input": {"projectPath": str(business)}}))["hookSpecificOutput"]
+            self.assertEqual(decision["permissionDecision"], "deny")
+            self.assertIn("projectPath", decision["permissionDecisionReason"])
+            self.assertEqual(explicit["permissionDecision"], "deny")
             run.assert_not_called()
 
     def test_failed_sync_denies_stale_query(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             indexed(root)
-            payload = {"tool_name": "mcp__codegraph__codegraph_explore", "cwd": str(root)}
+            payload = {"tool_name": "mcp__codegraph__codegraph_explore",
+                       "tool_input": {"projectPath": str(root)}}
             with mock.patch.object(codegraph_freshness.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)):
                 decision = json.loads(invoke(payload))["hookSpecificOutput"]
             self.assertEqual(decision["hookEventName"], "PreToolUse")
