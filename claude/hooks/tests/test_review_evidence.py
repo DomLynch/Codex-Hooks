@@ -182,6 +182,16 @@ class ReviewEvidenceTests(unittest.TestCase):
         text = self.slice([{"type": "function_call_output", "output": "sk-SECRET123 ghp_SECRET456 tp-SECRET789"}])
         self.assertNotIn("SECRET", text)
 
+    def test_redaction_leaves_words_that_merely_contain_a_key_prefix(self):
+        # 2026-09-24: "task-1" read as "ta" + "sk-1", so trunk codex/01a09a76/task-1 reached the reviewer as
+        # "task-<redacted>" and it blocked Deploy twice for merging to a branch that was not trunk.
+        text = self.slice([{"type": "function_call_output",
+                            "output": "base codex/01a09a76/task-1 via http-server; key=sk-SECRET1 (tp-SECRET2)"}])
+        self.assertIn("codex/01a09a76/task-1", text)
+        self.assertIn("http-server", text)
+        self.assertNotIn("SECRET", text)
+        self.assertEqual(mimo_audit.redact_sensitive("http-server tp-SECRET"), "http-server tp-<redacted>")
+
     def test_terminal_wrappers_do_not_bury_suite_results(self):
         records = [
             {"type": "message", "role": "user", "content": "Verify hooks"},

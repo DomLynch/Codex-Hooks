@@ -411,7 +411,7 @@ def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "")
     update_json_locked(VERDICT_FILE, updater)
 
 def redact_sensitive(text: str) -> str:
-    text = re.sub(r'tp-[A-Za-z0-9]+', 'tp-<redacted>', text)
+    text = re.sub(r'(?<![A-Za-z0-9])tp-[A-Za-z0-9]+', 'tp-<redacted>', text)
     text = re.sub(
         r'"encrypted_content":\s*"[^"]+"',
         '"encrypted_content": "<omitted>"',

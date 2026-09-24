@@ -21,9 +21,9 @@ def _content_text(content: object) -> str:
 
 
 def sanitize(text: str) -> str:
-    text = re.sub(r"tp-[A-Za-z0-9]+", "tp-<redacted>", text)
-    text = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-<redacted>", text)
-    text = re.sub(r"ghp_[A-Za-z0-9_]+", "ghp_<redacted>", text)
+    text = re.sub(r"(?<![A-Za-z0-9])tp-[A-Za-z0-9]+", "tp-<redacted>", text)
+    text = re.sub(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]+", "sk-<redacted>", text)
+    text = re.sub(r"(?<![A-Za-z0-9])ghp_[A-Za-z0-9_]+", "ghp_<redacted>", text)
     text = re.sub(r'"encrypted_content":\s*"[^"]+"', '"encrypted_content": "<omitted>"', text)
     text = re.sub(r"<hook_prompt\b[^>]*>.*?</hook_prompt>", "<hook_prompt omitted>", text, flags=re.DOTALL)
     return text.replace("<hook_prompt", "<hook-prompt")
