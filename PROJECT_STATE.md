@@ -27,3 +27,9 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 
 ## Next validation
 - Compare repo and both installed hook trees, then run the two test suites and Ruff separately before any hook change. Verify a real reviewer call after any model or effort change.
+
+## Account switch and VPS sync — 2026-09-25
+- The Claude reviewer runs the terminal `claude` CLI on its keychain login; `hook_env` holds no token. The old account hit its weekly limit, so every Stop review failed. `claude auth login` to the new account fixed it: 100 reviews from 18:52 to 19:47 +04 with no errors (`~/.claude/logs/claude_audit.log`, model `claude-opus-5-5`, effort `low`).
+- Mac live installs match the repo; both suites pass from the main checkout (Codex 210, Claude 232). Run from a worktree or the live folder, three tests fail because they expect repo-relative paths.
+- VPS `/root/.codex/hooks` synced to 15ab573 (backup `/root/hooks-backup-20260925/`); 209 of 210 tests pass, and the one failure is the repo-path test above.
+- `install.sh` now seeds `claude-opus-5-5`, and the example Stop timeout for `stop_orchestrator.py` is 960 s, matching the budget in `stop_orchestrator.py`.
