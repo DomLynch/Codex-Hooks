@@ -18,11 +18,12 @@ import json
 import os
 import re
 
-WARN_TOKENS = 300_000   # Dom, 2026-09-22, in his own session: raised from 200k "to give some balance"
-# The coordinating lanes refill fastest and lose the most working state on a restart (a deploy queue, the
-# PR merge order), so they get headroom (Dom, 2026-09-24). Every other lane stays at WARN_TOKENS.
-LANE_WARN_TOKENS = {"lead-catalogue": 350_000, "strategy": 350_000, "deploy": 350_000}
-URGENT_TOKENS = 500_000
+WARN_TOKENS = 400_000   # Dom, 2026-09-25: raised from 300k (itself raised from 200k on 2026-09-22)
+# The coordinating lanes refill fastest and lose the most working state on a restart (the PR merge order,
+# the lane briefs), so they get headroom (Dom, 2026-09-25: Lead and Strategy at 500k; Deploy is back with the rest).
+# "lead" is the Lead lane when it is named from its session title rather than its ~/Developer/frankendom-* folder.
+LANE_WARN_TOKENS = {"lead-catalogue": 500_000, "lead": 500_000, "strategy": 500_000}
+URGENT_TOKENS = 600_000  # above every lane threshold, so "put this first" never fires at the first notice
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
 # the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
@@ -57,6 +58,39 @@ def lane_name(cwd: str) -> str:
     return m.group(1).lower() if m else "session"
 
 
+TITLE_RE = re.compile(r'"customTitle":\s*"([^"]*)"')
+
+
+def session_title(transcript_path: str) -> str:
+    """The session's desktop title ("Frankendom - Lead Developer"); '' when none was recorded.
+    Claude Code re-writes it through the transcript, so the tail usually has it; the head is the fallback."""
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as fh:
+            fh.seek(max(0, size - TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="ignore")
+            fh.seek(0)
+            head = fh.read(TAIL_BYTES).decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+    found = TITLE_RE.findall(tail) or TITLE_RE.findall(head)
+    return found[-1] if found else ""
+
+
+def session_lane(transcript_path: str, cwd: str) -> str:
+    """The lane from the folder, or else from the title. Since 2026-09-25 the lanes run in desktop worktrees
+    (.../frankendom/.claude/worktrees/funny-rhodes-...) whose folder names no lane, so only the title does."""
+    lane = lane_name(cwd)
+    if lane != "session":
+        return lane
+    lane = lane_name(session_title(transcript_path))
+    return TITLE_LANES.get(lane, lane)
+
+
+# A title's first word is not always the lane's key: "Multi Chars" keeps docs/state/multichar.md.
+TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish"}
+
+
 def warn_tokens(lane: str) -> int:
     return LANE_WARN_TOKENS.get(lane, WARN_TOKENS)
 
@@ -64,7 +98,7 @@ def warn_tokens(lane: str) -> int:
 def context_notice(transcript_path: str, cwd: str) -> tuple[str, bool]:
     """(line to inject, put_first). ('' , False) below the warn threshold."""
     tokens = context_tokens(transcript_path)
-    lane = lane_name(cwd)
+    lane = session_lane(transcript_path, cwd)
     warn = warn_tokens(lane)
     if tokens < warn:
         return "", False
