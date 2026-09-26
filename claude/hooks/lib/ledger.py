@@ -74,6 +74,11 @@ def apply_decisions(session_id: str, final_message: str) -> list[str]:
     return unanswered
 
 
+
+def rejected_texts(session_id: str) -> list[str]:
+    return [f["text"] for f in _state(session_id)["findings"] if f.get("status") == "rejected"]
+
+
 def register_findings(session_id: str, verdict_text: str) -> tuple[str, list[str]]:
     """Assign IDs to an ISSUES verdict's numbered lines; persist; drop over-argued ones.
 

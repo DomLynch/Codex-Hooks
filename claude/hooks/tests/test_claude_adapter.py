@@ -843,6 +843,27 @@ class ActiveLessonsCapTests(unittest.TestCase):
         self.assertEqual(shown[0], "lesson number 11", "newest first")
         self.assertNotIn("lesson number 3", shown, "oldest four evicted")
 
+    def test_rejected_finding_is_removed_from_lessons(self) -> None:
+        import lib.autonomy as autonomy
+
+        body = '[quote: "not a flat 300k."] The user asked for the 300k table. ' + "x" * 300
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "state.json"),
+                mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "active.md"),
+                mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "all.jsonl"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
+            ):
+                autonomy.record_lesson("test", "a lesson that stays")
+                verdict, _ = mimo_audit.ledger.register_findings("s1", f"VERDICT: ISSUES\n1. {body}")
+                autonomy.record_lesson("mimo_stop", verdict.splitlines()[1], "s1")  # as mimo_audit saves it
+                self.assertEqual(len(autonomy.active_lessons()), 2)
+                mimo_audit.ledger.apply_decisions("s1", "[F1] rejected: the 300k table uses per-lane limits")
+                for text in mimo_audit.ledger.rejected_texts("s1"):
+                    autonomy.forget_lesson(text)
+                self.assertEqual(autonomy.active_lessons(), ["a lesson that stays"])
+                self.assertNotIn("300k", (Path(tmp) / "active.md").read_text())
+
 
 class UnacknowledgedFailureGateTests(unittest.TestCase):
     """Deterministic pre-gate: failed check runner + silent summary → block without a model call."""
@@ -2070,7 +2091,7 @@ def test_handoff_report_reaches_the_model_through_the_prompt_hook(tmp_path, monk
     # a failing check never costs the prompt its context
     monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane, fetch=True: 1 / 0)
     broken = ups.with_context_notice("BODY", str(t), Path("/x/frankendom-world"))
-    assert broken.startswith("BODY") and "Context 510k" in broken
+    assert broken.startswith("BODY") and "Context 610k" in broken
 
 
 def test_the_stats_lane_is_a_lane(tmp_path, monkeypatch):

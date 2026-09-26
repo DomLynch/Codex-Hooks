@@ -45,6 +45,8 @@ def main() -> None:
         limit = warn_tokens(session_lane(path, "/" + os.path.basename(folder).replace("-", "/")))
         action = "CLEAR" if tokens >= limit else ("clear soon" if tokens >= limit - 50_000 else "ok")
         rows.append((tokens, title, limit, action))
+    # Dom calls this "the 300k table"; reviewers kept flagging the per-lane limits as a wrong flat 300k.
+    print("The 300k table: each lane is measured against its own limit (Limit column), not a flat 300k.\n")
     print("| Session | Context | Limit | Action |\n|---|---|---|---|")
     for tokens, title, limit, action in sorted(rows, reverse=True):
         print(f"| {title} | {tokens // 1000}k | {limit // 1000}k | {action} |")

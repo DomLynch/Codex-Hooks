@@ -241,11 +241,36 @@ def record_lesson(source: str, text: str, session_id: str = "") -> None:
         entries.insert(0, {"lesson": clean, "source": source, "ts": now})
         state["lessons"] = entries[:MAX_ACTIVE_LESSONS]
         state["updated_at"] = now
-        LESSONS_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
-        LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in state["lessons"]) + "\n")
+        _write_active(state["lessons"])
         return state
 
     update_json_locked(LESSONS_STATE, updater)
+
+
+def forget_lesson(finding_text: str) -> bool:
+    """Drop active lessons that quote a finding the lane rejected: a rejected finding is not a lesson."""
+    key = " ".join((finding_text or "").split())[:120]
+    removed = False
+    if not key:
+        return removed
+
+    def updater(state: dict) -> dict:
+        nonlocal removed
+        entries = _lesson_entries(state)
+        kept = [item for item in entries if key not in item["lesson"]]
+        if len(kept) != len(entries):
+            removed = True
+            state["lessons"] = kept
+            _write_active(kept)
+        return state
+
+    update_json_locked(LESSONS_STATE, updater)
+    return removed
+
+
+def _write_active(entries: list[dict[str, Any]]) -> None:
+    LESSONS_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
+    LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in entries) + "\n")
 
 
 def lesson_ttl_s() -> int:

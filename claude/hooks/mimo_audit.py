@@ -31,7 +31,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.autonomy import hook_env, record_lesson  # noqa: E402
+from lib.autonomy import forget_lesson, hook_env, record_lesson  # noqa: E402
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
@@ -924,6 +924,9 @@ def main() -> None:
     sensitive = sensitive_paths(entries)
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
+    # The lesson was saved when the finding blocked; once the lane rejects it, other lanes must not learn it.
+    for text in ledger.rejected_texts(session_id):
+        forget_lesson(text)
     pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
     if pre:
         log(f"LEDGER_UNANSWERED: {', '.join(unanswered)} — model call skipped")
