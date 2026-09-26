@@ -119,6 +119,59 @@ GATE_CACHE_PATH = Path.home() / ".claude" / "state" / "quality_gate_cache.json"
 GATE_CACHE_TTL_S = 6 * 3600
 GATE_CACHE_MAX = 200
 DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
+# Lead, 2026-09-26 18:11: gates stacked to load 386 while Deploy waited to launch. A gate does not start when
+# the Mac is overloaded, when Deploy holds the Mac before its lock exists, or when the same check already runs
+# in this folder (a lane's own run, or one a Stop deadline left behind).
+GATE_MAX_LOAD = float(os.environ.get("CLAUDE_GATE_MAX_LOAD") or 60)
+DEPLOY_HOLD_PATH = Path.home() / ".claude" / "state" / "deploy_hold"   # Deploy touches it while it waits to launch
+DEPLOY_HOLD_TTL_S = 30 * 60
+
+
+def deploy_hold() -> dict | None:
+    try:
+        age = time.time() - DEPLOY_HOLD_PATH.stat().st_mtime
+    except OSError:
+        return None
+    return {"reason": f"Deploy is holding the Mac ({DEPLOY_HOLD_PATH.name}, {age:.0f}s old)"} if age < DEPLOY_HOLD_TTL_S else None
+
+
+def _same_check_running(cwd: Path, command: list[str]) -> str:
+    """pid of a live process running `command` with cwd as its folder, or ""."""
+    argv = [a for a in command if not (command[0] == "env" and ("=" in a or a == "env"))]
+    def esc(text: str) -> str:  # pgrep takes a regex
+        return re.sub(r"([][.*+?(){}|^$\\])", r"\\\1", text)
+
+    # macOS may show argv[0] as a full path (python3 -> .../Python), so match the arguments, anchored at the end.
+    pattern = (" " + esc(" ".join(argv[1:])) if argv[1:] else "(^|/)" + esc(argv[0])) + "$"
+    rc, out, _ = safe_run(["pgrep", "-f", pattern], cwd=cwd, timeout=5)
+    for pid in out.split() if rc == 0 else []:
+        if pid == str(os.getpid()):
+            continue
+        _, where, _ = safe_run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], cwd=cwd, timeout=5)
+        if f"n{cwd.resolve()}" in where.splitlines():
+            return pid
+    return ""
+
+
+def gate_busy(cwd: Path) -> dict | None:
+    """Why the repository gate should wait instead of starting now, or None."""
+    load = os.getloadavg()[0]
+    if load > GATE_MAX_LOAD:
+        return {"reason": f"the Mac is overloaded (load {load:.0f}, limit {GATE_MAX_LOAD:.0f})"}
+    hold = deploy_hold()
+    if hold:
+        return hold
+    try:
+        contract = json.loads((cwd / ".quality-gate.json").read_text())
+        commands = list(contract.get("commands") or []) + list(contract.get("completion_commands") or [])
+    except Exception:
+        return None  # an unreadable contract fails closed in run_project_gate
+    for command in commands:
+        if isinstance(command, list) and command and all(isinstance(a, str) and a for a in command):
+            pid = _same_check_running(cwd, command)
+            if pid:
+                return {"reason": f"`{' '.join(command)}` is already running in this folder (pid {pid})"}
+    return None
 
 
 def _tree_key(cwd: Path, commands: list) -> str | None:
