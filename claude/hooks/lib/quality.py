@@ -118,6 +118,7 @@ def project_tool(name: str, cwd: Path) -> str:
 GATE_CACHE_PATH = Path.home() / ".claude" / "state" / "quality_gate_cache.json"
 GATE_CACHE_TTL_S = 6 * 3600
 GATE_CACHE_MAX = 200
+DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
 
 
 def _tree_key(cwd: Path, commands: list) -> str | None:
@@ -203,8 +204,11 @@ def ci_covered_commit(cwd: Path) -> str:
     return head.strip() if _open_pr_count(cwd, branch) > 0 else ""
 
 
-def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
-    """Run the repository-owned contract; missing or invalid checks fail closed."""
+def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> dict:
+    """Run the repository-owned contract; missing or invalid checks fail closed.
+
+    defer_to() returning a lock (a deploy started mid-gate) kills the running check's process group and returns
+    {"ok": True, "deferred": lock}: one deployer per Mac, the same as a gate that finds the lock at its start."""
     path = cwd / ".quality-gate.json"
     results = []
     try:
@@ -232,16 +236,28 @@ def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
                 raise _deadline(command, time.monotonic() - started, timeout)
-            # Kill the whole check process group on timeout, including npm/make children.
+            lock = defer_to() if defer_to else None
+            if lock:
+                return {"ok": True, "deferred": lock, "results": results}
+            # Kill the whole check process group on timeout or a deploy, including npm/node --test children.
             with subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, start_new_session=True) as proc:
-                try:
-                    out, err = proc.communicate(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    import signal
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.communicate()
-                    raise _deadline(command, time.monotonic() - started, timeout) from None
+                while True:
+                    remaining = timeout - (time.monotonic() - started)
+                    try:
+                        wait = min(remaining, DEFER_POLL_S) if defer_to else remaining
+                        out, err = proc.communicate(timeout=max(0.0, wait))
+                        break
+                    except subprocess.TimeoutExpired:
+                        lock = defer_to() if defer_to and remaining > 0 else None
+                        if remaining > 0 and not lock:
+                            continue
+                        import signal
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        proc.communicate()
+                        if lock:
+                            return {"ok": True, "deferred": lock, "results": results}
+                        raise _deadline(command, time.monotonic() - started, timeout) from None
                 rc = proc.returncode
             results.append(_result(path, " ".join(command), rc == 0, out + err))
             if rc != 0:
