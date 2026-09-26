@@ -16,11 +16,11 @@
       "HOOK_SENTRY_DSN=",
       "python3",
       "-m",
-      "unittest",
-      "discover",
-      "-s",
+      "pytest",
       "claude/hooks/tests",
-      "-q"
+      "-q",
+      "-p",
+      "no:cacheprovider"
     ],
     [
       "ruff",

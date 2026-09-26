@@ -2310,7 +2310,7 @@ def test_authorized_work_finding_survives_the_advisory_filter(monkeypatch):
 
 def test_session_start_emits_one_valid_json_object(monkeypatch, capsys):
     """Two concatenated JSON objects were rejected by Claude Code ("hook_non_blocking_error" in every lane
-    transcript until 2026-09-27), so the memory receipt and baseline never reached any session."""
+    transcript until 2026-09-26), so the memory receipt and baseline never reached any session."""
     import session_start as ss
     monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
     monkeypatch.setattr(ss, "load_handoff", lambda: {})

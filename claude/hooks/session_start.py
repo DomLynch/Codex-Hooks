@@ -64,7 +64,7 @@ BACKLOG_SKIP_PARTS = {
 }
 
 
-# Every part goes out in ONE JSON object. Until 2026-09-27 each part was written as its own object; Claude Code
+# Every part goes out in ONE JSON object. Until 2026-09-26 each part was written as its own object; Claude Code
 # rejected the concatenation as invalid JSON ("hook_non_blocking_error" in every lane transcript) and dropped all
 # of it, so no lane ever saw its memory receipt or state brief after a /clear.
 _CONTEXT: list[str] = []
@@ -385,7 +385,7 @@ def main() -> None:
             log(COMPONENT, f"session spec captured chars={len(prompt)}")
         remember_repo(cwd)
         # A lane in an app worktree gets its restart brief and the memory receipt of its real folder, not of the
-        # random worktree name (Dom pasted this by hand after every /clear until 2026-09-27).
+        # random worktree name (Dom pasted this by hand after every /clear until 2026-09-26).
         lane = worktree_lane(cwd, payload.get("transcript_path") or "")
         home = Path.home() / "Developer" / f"frankendom-{lane}"
         if lane:
