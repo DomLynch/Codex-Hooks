@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -1536,6 +1537,17 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             revert = ("TOOL CALL", 'Bash: [toolu_5] {"command": "git checkout -B lane/x origin/trunk && git revert abc123 && git reset --hard HEAD"}')
             self.assertEqual(gate([self.PEER, revert], tp), "", "revert/reset on a branch are ordinary edits; branch is unknowable here")
 
+    def test_keep_deploying_counts_as_owner_authorization(self) -> None:
+        # 2026-09-26: Deploy rejected ~4 findings/day quoting "ok keep deploying then continue".
+        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for words in ("ok keep deploying then continue", "carry on merging", "continue shipping"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
+            tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "keep an eye on the deploy log")])
+            self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "")
+
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
         import mimo_audit
 
@@ -1560,6 +1572,74 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
         self.assertEqual(out["decision"], "block")
         self.assertIn("started by a message from another Claude session", out["reason"])
         model.assert_not_called()
+
+
+class EarlierSessionEvidenceTests(unittest.TestCase):
+    """The answer cites a SHA / #PR / time / pass count from an earlier turn; the reviewer gets that line."""
+
+    def _transcript(self, tmp: str) -> str:
+        path = Path(tmp) / "t.jsonl"
+        rows = [
+            {"type": "user", "timestamp": "2026-09-26T10:00:00Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "a", "content": "noise\nMerged PR #21 as a6a4f4e\n412 passed in 9.1s"}]}},
+            {"type": "assistant", "timestamp": "2026-09-26T10:01:00Z", "message": {"content": [{"type": "text", "text": "I claim 3774da8 is live"}]}},
+            {"type": "user", "timestamp": "2026-09-26T10:02:00Z", "message": {"content": "Another Claude session sent a message:\n<cross-session-message>deployed 3774da8 at 10:02</cross-session-message>"}},
+            {"type": "user", "timestamp": "2026-09-26T10:03:00Z", "message": {"content": "my own note 3774da8"}},
+            {"type": "user", "timestamp": "2026-09-26T11:00:00Z", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "b", "content": [{"type": "text", "text": "this turn: a6a4f4e #21"}]}]}},
+        ]
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        return str(path)
+
+    def test_finds_cited_facts_the_slice_lacks_in_earlier_tool_output_and_peer_messages(self) -> None:
+        from lib.claude_adapter import earlier_session_evidence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = self._transcript(tmp)
+            answer = "#21 merged as a6a4f4e, 412 passed; 3774da8 went live."
+            got = earlier_session_evidence(tp, answer, "slice mentions nothing", "2026-09-26T11:00:00Z")
+        joined = "\n".join(got)
+        self.assertIn("Merged PR #21 as a6a4f4e", joined)
+        self.assertIn("412 passed in 9.1s", joined)
+        self.assertIn("deployed 3774da8 at 10:02", joined)
+        self.assertNotIn("noise", joined)
+        self.assertNotIn("I claim", joined, "the agent's own words are not evidence")
+        self.assertNotIn("my own note", joined, "only tool output and peer messages")
+        self.assertNotIn("this turn", joined, "the current turn is already in the slice")
+        self.assertTrue(joined.index("3774da8") < joined.index("a6a4f4e"), "newest first")
+
+    def test_nothing_when_the_slice_already_has_the_facts_or_the_answer_cites_none(self) -> None:
+        from lib.claude_adapter import earlier_session_evidence
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = self._transcript(tmp)
+            self.assertEqual(earlier_session_evidence(tp, "#21 is a6a4f4e", "#21 a6a4f4e", "2026-09-26T11:00:00Z"), [])
+            self.assertEqual(earlier_session_evidence(tp, "Added the deadline field.", "", "2026-09-26T11:00:00Z"), [])
+            self.assertEqual(earlier_session_evidence(tp, "#21", "", "2026-09-26T11:00:00Z", max_chars=10), [])
+
+    def test_main_feeds_the_section_and_rule_to_the_reviewer(self) -> None:
+        import mimo_audit
+
+        self.assertIn("EARLIER IN THIS SESSION lines", mimo_audit.AUDIT_PROMPT)
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = self._transcript(tmp)
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("USER", "status?")]),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+            ):
+                payload = {"session_id": "EE", "turn_id": "t", "transcript_path": tp, "cwd": tmp,
+                           "last_assistant_message": "PR #21 merged as a6a4f4e and 412 passed. " * 5}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), contextlib.suppress(SystemExit):
+                        mimo_audit.main()
+        sent = model.call_args[0][0]
+        self.assertIn("EARLIER IN THIS SESSION (tool output", sent)
+        self.assertIn("[10:00] Merged PR #21 as a6a4f4e", sent)
 
 
 class TurnDiffSinceTests(unittest.TestCase):
