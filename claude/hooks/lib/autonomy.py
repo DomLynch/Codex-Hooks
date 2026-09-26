@@ -18,14 +18,18 @@ SECRETS_ENV = Path.home() / ".claude" / "secrets" / "hook_env"
 SECRETS_ENV_FALLBACK = Path.home() / ".codex" / "secrets" / "hook_env"
 QUEUE_PATH = STATE_DIR / "autonomy_queue.json"
 REPOS_PATH = STATE_DIR / "autonomy_repos.json"
-LESSONS_JSONL = STATE_DIR / "lessons.jsonl"
-LESSONS_STATE = STATE_DIR / "lessons_active.json"
-LESSONS_ACTIVE = STATE_DIR / "lessons_active.md"
+# Claude's own lesson store: the shared ~/.codex copy let Codex's writer strip Claude's lane tags.
+LESSONS_JSONL = Path.home() / ".claude" / "state" / "lessons.jsonl"
+LESSONS_STATE = Path.home() / ".claude" / "state" / "lessons_active.json"
+LESSONS_ACTIVE = Path.home() / ".claude" / "state" / "lessons_active.md"
 STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
 MAX_QUEUE = 80
-MAX_ACTIVE_LESSONS = 8  # shared across all Claude sessions; ~60 tokens each per turn
+MAX_ACTIVE_LESSONS = 8  # per lane; ~60 tokens each per turn
+# 2026-09-26: 171 lessons a day across ~20 lanes meant each lane saw other lanes' one-off slips for about an hour.
+# A lesson now reaches only the lane that earned it; lane "" (the daemon watchdog) reaches every lane.
+MAX_STORED_LESSONS = 240
 DEFAULT_LESSON_TTL_DAYS = 14
 SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
 RISKY_TASK_RE = re.compile(
@@ -226,20 +230,34 @@ def recent_repos(limit: int = 5) -> list[Path]:
 FIXTURE_SESSION_RE = re.compile(r"^(e2e|test|fixture|probe)-", re.IGNORECASE)
 
 
-def record_lesson(source: str, text: str, session_id: str = "") -> None:
+def lesson_lane(transcript_path: str, cwd: str, session_id: str = "") -> str:
+    """Whose lessons these are: the Frankendom lane, else this one session."""
+    from .context_size import session_lane
+    lane = session_lane(transcript_path or "", cwd or "")
+    return lane if lane != "session" else f"session:{session_id}"
+
+
+def record_lesson(source: str, text: str, session_id: str = "", lane: str = "") -> None:
     clean = " ".join((text or "").split())[:240]
     if not clean or FIXTURE_SESSION_RE.match(session_id or ""):
         return  # synthetic test sessions must not teach real sessions about temp files
+    if source.startswith("mimo") and "[quote:" not in clean and "`" not in clean:
+        return  # "Fix the incomplete implementation." teaches nothing; a lesson names what went wrong
     now = time.time()
     LESSONS_JSONL.parent.mkdir(parents=True, exist_ok=True)
     with open(LESSONS_JSONL, "a") as f:
-        f.write(json.dumps({"ts": now, "source": source, "lesson": clean}) + "\n")
+        f.write(json.dumps({"ts": now, "source": source, "lesson": clean, "lane": lane}) + "\n")
 
     def updater(state: dict) -> dict:
-        entries = _fresh_lesson_entries(_lesson_entries(state), now)
+        entries = _fresh_lesson_entries(_lesson_entries(state), now, cap=MAX_STORED_LESSONS)
         entries = [item for item in entries if item["lesson"] != clean]
-        entries.insert(0, {"lesson": clean, "source": source, "ts": now})
-        state["lessons"] = entries[:MAX_ACTIVE_LESSONS]
+        entries.insert(0, {"lesson": clean, "source": source, "ts": now, "lane": lane})
+        kept, per_lane = [], {}
+        for item in entries:  # each lane keeps its newest MAX_ACTIVE_LESSONS
+            per_lane[item["lane"]] = per_lane.get(item["lane"], 0) + 1
+            if per_lane[item["lane"]] <= MAX_ACTIVE_LESSONS:
+                kept.append(item)
+        state["lessons"] = kept[:MAX_STORED_LESSONS]
         state["updated_at"] = now
         _write_active(state["lessons"])
         return state
@@ -292,35 +310,31 @@ def _lesson_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "lesson": lesson,
                     "source": str(item.get("source") or "unknown"),
                     "ts": float(item.get("ts") or updated_at or 0),
+                    # before lanes, review lessons were everyone's; park them where no lane reads them
+                    "lane": str(item.get("lane", "unscoped" if str(item.get("source", "")).startswith("mimo") else "")),
                 })
         else:
             lesson = str(item).strip()
             if lesson:
-                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at})
+                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at, "lane": "unscoped"})
     return entries
 
 
-def _fresh_lesson_entries(entries: list[dict[str, Any]], now: float | None = None) -> list[dict[str, Any]]:
+def _fresh_lesson_entries(entries: list[dict[str, Any]], now: float | None = None,
+                          cap: int = MAX_STORED_LESSONS) -> list[dict[str, Any]]:
     current = time.time() if now is None else now
     cutoff = current - lesson_ttl_s()
     fresh = [item for item in entries if float(item.get("ts") or 0) >= cutoff]
-    return fresh[:MAX_ACTIVE_LESSONS]
+    return fresh[:cap]
 
 
-def active_lessons(limit: int = MAX_ACTIVE_LESSONS) -> list[str]:
+def active_lessons(lane: str, limit: int = MAX_ACTIVE_LESSONS) -> list[str]:
+    """This lane's lessons plus the lane-less ones, newest first."""
     state = load_json_locked(LESSONS_STATE, {})
-    if isinstance(state, dict) and isinstance(state.get("lessons"), list):
-        return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))][:limit]
-    try:
-        if time.time() - LESSONS_ACTIVE.stat().st_mtime > lesson_ttl_s():
-            return []
-        return [
-            line[2:].strip()
-            for line in LESSONS_ACTIVE.read_text().splitlines()
-            if line.startswith("- ") and line[2:].strip()
-        ][:limit]
-    except Exception:
+    if not isinstance(state, dict) or not isinstance(state.get("lessons"), list):
         return []
+    return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))
+            if item["lane"] in (lane, "")][:limit]
 
 
 def autonomy_level() -> str:

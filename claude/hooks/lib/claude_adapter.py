@@ -209,6 +209,22 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
     return out
 
 
+# A force-push that names a lane branch (`origin weapons/witch-staff`, `HEAD:char/rank-tint`) only rebases the lane's
+# own PR: 2026-09-26 lanes rejected every such finding. It stays consequential with no named branch, or onto a trunk
+# (Frankendom's is codex/01a09a76/task-1).
+_TRUNK_RE = re.compile(r"^(?:main|master|trunk|develop|HEAD|codex/.*)$")
+
+
+def _force_push_to_lane_branch(segment: str) -> bool:
+    args = segment.split()[segment.split().index("push") + 1:]
+    positional = [a for a in args if not a.startswith("-") and a not in ("2>", "2>&1", ">") and not a.startswith(("2>", ">"))]
+    refspecs = positional[1:]
+    if not refspecs:
+        return False
+    targets = [r.lstrip("+").split(":")[-1].removeprefix("refs/heads/") for r in refspecs]
+    return all(t and not _TRUNK_RE.match(t) for t in targets)
+
+
 def executed_consequential_commands(entries: list[tuple[str, str]]) -> list[str]:
     """Merge / deploy / revert / force-push commands this turn actually ran (Bash tool calls)."""
     found: list[str] = []
@@ -225,6 +241,8 @@ def executed_consequential_commands(entries: list[tuple[str, str]]) -> list[str]
         for segment in re.split(r"&&|\|\||;|\n|\|", command):
             seg = segment.strip()
             hit = _CONSEQUENTIAL_RE.match(seg)
+            if hit and hit.group(0).startswith("git push") and _force_push_to_lane_branch(seg):
+                continue
             if hit and hit.group(0) not in found:
                 found.append(hit.group(0).strip())
     return found
