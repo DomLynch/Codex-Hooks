@@ -32,7 +32,7 @@ from lib.git import (
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.rehome import is_rehome_turn
-from lib.quality import ci_covered_commit, pending_quality, run_project_gate, run_quality_checks
+from lib.quality import ci_covered_commit, deploy_hold, gate_busy, pending_quality, run_project_gate, run_quality_checks
 from lib.state import load_handoff, read_session_spec, write_handoff
 from lib.transcript import edited_paths
 from deploy_guard import active_lock as active_deploy_lock
@@ -211,15 +211,18 @@ def milestone_detected(text: str) -> bool:
 def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> bool:
     # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
     # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
+    # Also waits (never fails) for an overloaded Mac, a Deploy hold, or the same check already running here.
     revision = str(deploying.get('revision', ''))[:7]
     when = "stopped mid-gate" if mid_gate else "in flight"
-    log(COMPONENT, f"repository quality gate deferred: deploy {revision} {when} ({deploying.get('age_s')}s)")
-    if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == revision:
+    why = deploying.get("reason") or f"deploy {revision} is in flight on this Mac (one-deployer rule)"
+    log(COMPONENT, f"repository quality gate deferred ({when}): {why}")
+    key = revision or why.split(" (")[0]
+    if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == key:
         return True
-    update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: revision})
+    update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: key})
     sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
-        f"[Repository Quality Gate] deferred: deploy {revision} is in flight on this Mac (one-deployer rule); "
-        "the gate runs on the next Stop after FREE, and the PR's CI still covers this change."}}))
+        f"[Repository Quality Gate] deferred: {why}; "
+        "the gate runs on a later Stop, and the PR's CI still covers this change."}}))
     return True
 
 
@@ -231,11 +234,11 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
             # an open PR). Running the contract here would only duplicate CI and load the machine.
             log(COMPONENT, f"repository quality gate skipped: clean tree at CI-covered {covered}")
             return True
-        deploying = active_deploy_lock()
+        deploying = active_deploy_lock() or gate_busy(cwd)
         if deploying:
             return defer_gate(deploying, session_id)
-        # A deploy that starts mid-gate stops it too, so a gate begun on a free Mac does not load the release rows.
-        result = run_project_gate(cwd, timeout=timeout, defer_to=active_deploy_lock)
+        # A deploy (or Deploy's hold) that starts mid-gate stops it too, so the release rows get the Mac.
+        result = run_project_gate(cwd, timeout=timeout, defer_to=lambda: active_deploy_lock() or deploy_hold())
         if result.get("deferred"):
             return defer_gate(result["deferred"], session_id, mid_gate=True)
         log(COMPONENT, f"repository quality gate ok={result['ok']}")

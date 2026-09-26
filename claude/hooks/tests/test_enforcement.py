@@ -27,6 +27,11 @@ class EnforcementTests(unittest.TestCase):
         lock = patch.object(stop_orchestrator, 'active_deploy_lock', return_value=None)
         lock.start()
         self.addCleanup(lock.stop)
+        # Nor on this Mac's load, a Deploy hold, or a lane's gate running at the same time.
+        for name in ('gate_busy', 'deploy_hold'):
+            quiet = patch.object(stop_orchestrator, name, return_value=None)
+            quiet.start()
+            self.addCleanup(quiet.stop)
 
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
@@ -271,6 +276,39 @@ class EnforcementTests(unittest.TestCase):
             self.assertIn('deferred: deploy dfed995', out.getvalue(), 'a new deploy is announced again')
             run_gate.assert_not_called()
 
+    def test_gate_waits_for_load_hold_or_a_run_already_in_this_folder(self):
+        # Lead, 2026-09-26: gates stacked to load 386, two in one worktree, while Deploy waited to launch.
+        self.contract([[sys.executable, '-c', 'import time; time.sleep(30)']])
+        hold = self.root / 'deploy_hold'
+        with patch.object(quality, 'DEPLOY_HOLD_PATH', hold), patch.object(quality.os, 'getloadavg', return_value=(5, 5, 5)):
+            self.assertIsNone(quality.gate_busy(self.root))
+            with patch.object(quality.os, 'getloadavg', return_value=(386, 200, 100)):
+                self.assertIn('load 386', quality.gate_busy(self.root)['reason'])
+            hold.touch()
+            self.assertIn('Deploy is holding', quality.gate_busy(self.root)['reason'])
+            os.utime(hold, (time.time() - 3600, time.time() - 3600))
+            self.assertIsNone(quality.gate_busy(self.root), 'a forgotten hold expires')
+            running = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], cwd=self.root)
+            self.addCleanup(running.kill)
+            time.sleep(0.3)
+            self.assertIn(f'pid {running.pid}', quality.gate_busy(self.root)['reason'])
+            elsewhere = self.root / 'other'
+            elsewhere.mkdir()
+            (elsewhere / '.quality-gate.json').write_text((self.root / '.quality-gate.json').read_text())
+            self.assertIsNone(quality.gate_busy(elsewhere), 'the same check in another folder does not count')
+
+    def test_busy_gate_defers_with_a_note_instead_of_failing(self):
+        self.contract([['true']])
+        with patch.object(stop_orchestrator, 'gate_busy', return_value={'reason': 'the Mac is overloaded (load 386, limit 60)'}), \
+                patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'), \
+                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=''), \
+                patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
+                patch.object(stop_orchestrator, 'log'), \
+                patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
+            self.assertIn('deferred: the Mac is overloaded (load 386', out.getvalue())
+            run_gate.assert_not_called()
+
     def test_failures_are_never_cached(self):
         repo = self.root / 'repo'
         repo.mkdir()
@@ -347,7 +385,8 @@ class EnforcementTests(unittest.TestCase):
             (state/'mimo_last_verdict.json').write_text(json.dumps({
                 'gate-test': {'turn_id': 't1', 'verdict': 'PASS', 'updated_at': time.time()}
             }))
-        env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0', CODEX_HOOK_CLAUDE_AUDIT='0')
+        env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0', CODEX_HOOK_CLAUDE_AUDIT='0',
+                   CLAUDE_GATE_MAX_LOAD='100000')  # this Mac's load must not defer the gate under test
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Checked the project.'})
         for code in (1, 0):
