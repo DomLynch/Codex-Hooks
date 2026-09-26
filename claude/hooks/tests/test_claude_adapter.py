@@ -2306,3 +2306,56 @@ def test_authorized_work_finding_survives_the_advisory_filter(monkeypatch):
     filtered, voided = m.filter_void_findings(anchored)
     assert unanchored == [] and voided == []
     assert filtered == verdict
+
+
+def test_session_start_emits_one_valid_json_object(monkeypatch, capsys):
+    """Two concatenated JSON objects were rejected by Claude Code ("hook_non_blocking_error" in every lane
+    transcript until 2026-09-27), so the memory receipt and baseline never reached any session."""
+    import session_start as ss
+    monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
+    monkeypatch.setattr(ss, "load_handoff", lambda: {})
+    monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
+    monkeypatch.setattr(ss, "remember_repo", lambda p: None)
+    monkeypatch.setattr(ss, "write_session_spec", lambda *a: None)
+    monkeypatch.setattr(ss, "log", lambda *a: None)
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere", "prompt": "hi"})))
+    ss.main()
+    out = json.loads(capsys.readouterr().out)      # raises on two objects
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert ctx.startswith("RECEIPT") and ss.SESSION_BASELINE.strip()[:40] in ctx
+
+
+def test_worktree_lane_comes_from_the_title_even_right_after_a_clear(tmp_path):
+    """After /clear the new transcript has no title when SessionStart runs; the lane's earlier one in the same
+    app-worktree folder does. Title words map to the ~/Developer/frankendom-<key> folder."""
+    import session_start as ss
+    wt = Path("/Users/x/Desktop/Business/frankendom/.claude/worktrees/funny-rhodes-f0eaa1")
+    cases = {"Frankendom - Lead Developer": "lead-catalogue", "Frankendom - Character Main": "char",
+             "Frankendom - Auditer + fixer - Fable 5.1": "code-quality", "Frankendom - Hero Look": "herolook",
+             "Frankendom - Veteran": "veteran-polish", "Frankendom - Finishers & Gore": "finishers",
+             "Frankendom - Backend/Accounts": "backend", "Frankendom - Multi Chars": "multichar",
+             "Frankendom - Visuals / World": "world", "Frankendom - Strategy - Fable 5.1": "strategy"}
+    for i, (title, key) in enumerate(cases.items()):
+        folder = tmp_path / str(i)
+        folder.mkdir()
+        (folder / "old.jsonl").write_text(json.dumps({"type": "custom-title", "customTitle": title}) + "\n")
+        assert ss.worktree_lane(wt, str(folder / "new-not-written-yet.jsonl")) == key, title
+    assert ss.worktree_lane(Path("/Users/x/Developer/frankendom-char"), str(tmp_path / "0" / "n.jsonl")) == ""
+    assert ss.worktree_lane(Path("/Users/x/Codex Hooks/.claude/worktrees/a"), str(tmp_path / "0" / "n.jsonl")) == ""
+
+
+def test_restart_note_names_memory_state_doc_and_folder_rule(tmp_path, monkeypatch):
+    import session_start as ss
+    monkeypatch.setattr(ss.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / "Developer" / "frankendom-char").mkdir(parents=True)
+    runs = []
+    monkeypatch.setattr("subprocess.run", lambda args, **k: runs.append(args) or
+                        type("R", (), {"stdout": "abc1234 2026-09-26 origin/char/state\n"})())
+    note = ss.restart_note(Path("/wt/funny"), "char")
+    assert "Developer-frankendom-char/memory/" in note and "NOT the memory path in your system prompt" in note
+    assert "docs/state/character.md" in note and "git show abc1234:docs/state/character.md" in note
+    assert "do NOT write a new one" in note and runs[0][:3] == ["git", "log", "--remotes"]
+    assert "git switch -c char/<task> origin/codex/01a09a76/task-1" in note and "do NOT wait" in note
+    monkeypatch.setattr("subprocess.run", lambda args, **k: type("R", (), {"stdout": ""})())
+    assert "ask Lead" in ss.restart_note(Path("/wt/funny"), "char")
+    assert "ls -d ~/Developer/frankendom-*" in ss.restart_note(Path("/wt/funny"), "nosuchlane")
