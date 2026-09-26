@@ -1957,6 +1957,8 @@ def test_worktree_lanes_are_named_by_their_title(tmp_path):
     assert cs.context_notice(str(t), wt) == ("", False)          # under Lead's 600k
     write("Frankendom - Strategy - Fable 5.1", 550_000)
     assert cs.context_notice(str(t), wt) == ("", False)          # under Strategy's 600k
+    write("Frankendom - Hero Look", 100_000)                      # 2026-09-26: its folder is frankendom-herolook
+    assert cs.session_lane(str(t), wt) == "herolook"
     write("Frankendom - Deploy", 450_000)
     assert cs.session_lane(str(t), wt) == "deploy" and cs.context_notice(str(t), wt) == ("", False)  # under 500k
     write("Frankendom - Weapons", 450_000)
