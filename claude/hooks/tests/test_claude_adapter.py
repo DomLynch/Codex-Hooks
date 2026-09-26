@@ -1858,21 +1858,25 @@ def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
     assert "Current-Prompt Discipline" in u.context_for("hello", Path("/tmp"), "s1")
 
 
-def test_coordinating_lanes_warn_at_500k(tmp_path):
-    """Dom, 2026-09-25: Lead and Strategy clear at 500k; every other lane, Deploy included, at 400k."""
+def test_coordinating_lanes_warn_later(tmp_path):
+    """Dom, 2026-09-26: Lead and Strategy clear at 600k, Deploy at 500k; every other lane at 400k."""
     from lib import context_size as cs
     from lib import handoff_check as hc
     t = tmp_path / "t.jsonl"
     t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 420_000}}}) + "\n")
-    for lane in ("lead-catalogue", "strategy"):
+    for lane in ("lead-catalogue", "strategy", "deploy"):
         assert cs.context_notice(str(t), f"/x/frankendom-{lane}") == ("", False)
         assert hc.handoff_notice(str(t), Path(f"/x/frankendom-{lane}"), "PR merged") == ""
-    for lane in ("weapons", "deploy"):
-        line, _ = cs.context_notice(str(t), f"/x/frankendom-{lane}")
-        assert "420k" in line and "400k one" in line
-    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 510_000}}}) + "\n")
+    line, _ = cs.context_notice(str(t), "/x/frankendom-weapons")
+    assert "420k" in line and "400k one" in line
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 520_000}}}) + "\n")
+    line, _ = cs.context_notice(str(t), "/x/frankendom-deploy")
+    assert "520k" in line and "500k one" in line
+    for lane in ("lead-catalogue", "strategy"):
+        assert cs.context_notice(str(t), f"/x/frankendom-{lane}") == ("", False)
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 610_000}}}) + "\n")
     line, first = cs.context_notice(str(t), "/x/frankendom-strategy")
-    assert "510k" in line and "500k one" in line and first is False
+    assert "610k" in line and "600k one" in line and first is False
 
 
 def test_worktree_lanes_are_named_by_their_title(tmp_path):
@@ -1887,11 +1891,13 @@ def test_worktree_lanes_are_named_by_their_title(tmp_path):
         rows.append({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": tokens}}})
         t.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
-    write("Frankendom - Lead Developer", 450_000)
+    write("Frankendom - Lead Developer", 550_000)
     assert cs.session_lane(str(t), wt) == "lead"
-    assert cs.context_notice(str(t), wt) == ("", False)          # under Lead's 500k
-    write("Frankendom - Strategy - Fable 5.1", 450_000)
-    assert cs.context_notice(str(t), wt) == ("", False)          # under Strategy's 500k
+    assert cs.context_notice(str(t), wt) == ("", False)          # under Lead's 600k
+    write("Frankendom - Strategy - Fable 5.1", 550_000)
+    assert cs.context_notice(str(t), wt) == ("", False)          # under Strategy's 600k
+    write("Frankendom - Deploy", 450_000)
+    assert cs.session_lane(str(t), wt) == "deploy" and cs.context_notice(str(t), wt) == ("", False)  # under 500k
     write("Frankendom - Weapons", 450_000)
     line, _ = cs.context_notice(str(t), wt)
     assert "400k one" in line and "docs/state/weapons.md" in line
@@ -1908,7 +1914,7 @@ def test_worktree_lanes_are_named_by_their_title(tmp_path):
 
 def test_context_notice_thresholds(tmp_path, monkeypatch):
     """2026-09-22: lanes ran to the 966k ceiling; capping at 200k would have cut the lane bill 64%.
-    Warn at 400k (appended; Dom, 2026-09-25), make it the first line at 600k. Below that, silence."""
+    Warn at 400k (appended; Dom, 2026-09-25), make it the first line at 700k (above Lead's 600k). Below, silence."""
     from lib import context_size as cs
     t = tmp_path / "t.jsonl"
 
@@ -1927,14 +1933,16 @@ def test_context_notice_thresholds(tmp_path, monkeypatch):
     write(520_000)
     assert cs.context_notice(str(t), "/x/frankendom-audio")[1] is False  # still appended, not first
     write(620_000)
+    assert cs.context_notice(str(t), "/x/frankendom-audio")[1] is False  # under URGENT: still appended
+    write(720_000)
     line, first = cs.context_notice(str(t), "/x/frankendom-audio")
     assert first is True and "docs/state/audio.md" in line
     assert cs.context_notice(str(tmp_path / "missing.jsonl"), "/x") == ("", False)
     # placement in the injected context
     import user_prompt_submit as u
-    write(620_000)
+    write(720_000)
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
-    assert out.startswith("# Context 620k") and out.rstrip().endswith("BODY")
+    assert out.startswith("# Context 720k") and out.rstrip().endswith("BODY")
     write(410_000)   # over WARN, under URGENT: appended after the body
     out = u.with_context_notice("BODY", str(t), Path("/x/frankendom-combat"))
     assert out.startswith("BODY") and "# Context 410k" in out
@@ -2051,7 +2059,7 @@ def test_handoff_report_reaches_the_model_through_the_prompt_hook(tmp_path, monk
     assert "Handoff check" not in ups.with_context_notice("BODY", str(t), Path("/x/other"))
     # a missing backup names the aliased doc and withholds the tool
     monkeypatch.setattr(hc, "memory_written_today", lambda cwd: (False, "no memory file written today"))
-    write(510_000)
+    write(610_000)   # over Lead's 600k (Dom, 2026-09-26)
     half = ups.with_context_notice("BODY", str(t), Path("/x/frankendom-lead-catalogue"))
     assert "NOT ready" in half and "docs/state/lead.md" in half and "clear_session" not in half
     # the prompt hook has a 10 s budget, so its copy reads the last-fetched trunk and never fetches
