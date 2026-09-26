@@ -18,7 +18,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.autonomy import active_lessons
+from lib.autonomy import active_lessons, lesson_lane
 from lib.json_state import update_json_locked
 from lib.context_size import context_notice
 from lib.handoff_check import prompt_handoff_notice
@@ -151,8 +151,8 @@ def with_context_notice(context: str, transcript_path: str, cwd: Path) -> str:
     return f"{line}\n\n{context}" if put_first else f"{context}\n\n{line}"
 
 
-def context_for(prompt: str, cwd: Path, session_id: str = "") -> str:
-    lessons = active_lessons()
+def context_for(prompt: str, cwd: Path, session_id: str = "", transcript_path: str = "") -> str:
+    lessons = active_lessons(lesson_lane(transcript_path, str(cwd), session_id))
     lessons_context = ""
     if lessons:
         lessons_context = "\n\n# Active Lessons\n" + "\n".join(f"- {lesson}" for lesson in lessons)
@@ -225,7 +225,7 @@ def main() -> None:
         cwd = Path(payload.get("cwd") or ".").resolve()
         mode = "project" if is_project_work(prompt) else "simple"
         log(COMPONENT, f"context injected mode={mode} prompt_chars={len(prompt)} cwd={cwd}")
-        context = context_for(prompt, cwd, str(payload.get("session_id") or ""))
+        context = context_for(prompt, cwd, str(payload.get("session_id") or ""), str(payload.get("transcript_path") or ""))
         emit_context(with_inbox(with_context_notice(context, str(payload.get("transcript_path") or ""), cwd), cwd))
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")

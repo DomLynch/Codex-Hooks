@@ -838,8 +838,8 @@ class ActiveLessonsCapTests(unittest.TestCase):
             ):
                 for i in range(12):
                     autonomy.record_lesson("test", f"lesson number {i}")
-                shown = autonomy.active_lessons()
-        self.assertEqual(len(shown), 8, "read cap must match storage cap")
+                shown = autonomy.active_lessons("any-lane")
+        self.assertEqual(len(shown), 8, "read cap is eight per lane")
         self.assertEqual(shown[0], "lesson number 11", "newest first")
         self.assertNotIn("lesson number 3", shown, "oldest four evicted")
 
@@ -857,11 +857,11 @@ class ActiveLessonsCapTests(unittest.TestCase):
                 autonomy.record_lesson("test", "a lesson that stays")
                 verdict, _ = mimo_audit.ledger.register_findings("s1", f"VERDICT: ISSUES\n1. {body}")
                 autonomy.record_lesson("mimo_stop", verdict.splitlines()[1], "s1")  # as mimo_audit saves it
-                self.assertEqual(len(autonomy.active_lessons()), 2)
+                self.assertEqual(len(autonomy.active_lessons("")), 2)
                 mimo_audit.ledger.apply_decisions("s1", "[F1] rejected: the 300k table uses per-lane limits")
                 for text in mimo_audit.ledger.rejected_texts("s1"):
                     autonomy.forget_lesson(text)
-                self.assertEqual(autonomy.active_lessons(), ["a lesson that stays"])
+                self.assertEqual(autonomy.active_lessons(""), ["a lesson that stays"])
                 self.assertNotIn("300k", (Path(tmp) / "active.md").read_text())
 
 
@@ -1027,10 +1027,42 @@ class FixtureLessonGuardTests(unittest.TestCase):
              mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
              mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
              mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"):
-            autonomy.record_lesson("mimo_stop", "temp file has markers", "e2e-conf")
-            autonomy.record_lesson("mimo_stop", "real finding", "abc123-real")
-            shown = autonomy.active_lessons()
-        self.assertEqual(shown, ["real finding"])
+            autonomy.record_lesson("mimo_stop", "temp file has `markers`", "e2e-conf")
+            autonomy.record_lesson("mimo_stop", "real `finding`", "abc123-real")
+            shown = autonomy.active_lessons("")
+        self.assertEqual(shown, ["real `finding`"])
+
+    def test_lessons_reach_only_their_lane_and_must_name_the_slip(self) -> None:
+        # 2026-09-26: 171 lessons a day, eight shown to every lane, so each lane read other lanes' one-off slips.
+        import lib.autonomy as autonomy
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
+             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
+             mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"):
+            autonomy.record_lesson("watchdog", "daemon idle 6h", lane="")
+            autonomy.record_lesson("mimo_stop", '[quote: "Options ready around 22:00"] no source', "s1", "strategy")
+            autonomy.record_lesson("mimo_stop", "1. Fix the incomplete implementation.", "s2", "armour")
+            for i in range(10):
+                autonomy.record_lesson("mimo_stop", f"lead slip `{i}`", "s3", "lead-catalogue")
+            self.assertEqual(autonomy.active_lessons("strategy"), ['[quote: "Options ready around 22:00"] no source', "daemon idle 6h"])
+            self.assertEqual(autonomy.active_lessons("armour"), ["daemon idle 6h"], "a lesson that names nothing is not saved")
+            lead = autonomy.active_lessons("lead-catalogue")
+            self.assertEqual(lead[0], "lead slip `9`")
+            self.assertEqual(len(lead), 8, "eight per lane")
+            self.assertIn("strategy", [e["lane"] for e in json.loads((Path(tmp) / "s.json").read_text())["lessons"]],
+                          "one busy lane does not evict another lane's lessons")
+            # lessons saved before lanes existed were everyone's; they are parked, not shown
+            state = json.loads((Path(tmp) / "s.json").read_text())
+            state["lessons"].insert(0, {"lesson": "old shared `slip`", "source": "mimo_stop", "ts": time.time()})
+            (Path(tmp) / "s.json").write_text(json.dumps(state))
+            self.assertNotIn("old shared `slip`", autonomy.active_lessons("strategy"))
+
+    def test_session_lane_is_the_frankendom_lane_else_the_session(self) -> None:
+        import lib.autonomy as autonomy
+
+        self.assertEqual(autonomy.lesson_lane("", "/Users/x/Developer/frankendom-armour", "s1"), "armour")
+        self.assertEqual(autonomy.lesson_lane("", "/Users/x/Desktop/Business/Codex Hooks", "s1"), "session:s1")
 
 
 class FindingLedgerTests(unittest.TestCase):
@@ -1493,6 +1525,14 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             self.assertEqual(gate([self.PEER, push], tp), "", "pushing a lane branch / flipping to ready is reversible")
             force = ("TOOL CALL", 'Bash: [toolu_4] {"command": "git push --force origin trunk"}')
             self.assertIn("git push", gate([self.PEER, force], tp))
+            # 2026-09-26: every force-push lanes were flagged for rebased their own PR branch
+            for own in ("git push -q --force-with-lease origin weapons/witch-staff 2>&1",
+                        "git push -q --force-with-lease=char/rank-tint:7b264c40 origin HEAD:char/rank-tint 2>/dev/null"):
+                lane_push = ("TOOL CALL", 'Bash: [toolu_6] ' + json.dumps({"command": own}))
+                self.assertEqual(gate([self.PEER, lane_push], tp), "", own)
+            for risky in ("git push --force-with-lease", "git push -f origin HEAD:codex/01a09a76/task-1",
+                          "git push --force origin main", "git push --force origin +lane/a:refs/heads/master"):
+                self.assertIn("git push", gate([self.PEER, ("TOOL CALL", 'Bash: [toolu_7] ' + json.dumps({"command": risky}))], tp), risky)
             revert = ("TOOL CALL", 'Bash: [toolu_5] {"command": "git checkout -B lane/x origin/trunk && git revert abc123 && git reset --hard HEAD"}')
             self.assertEqual(gate([self.PEER, revert], tp), "", "revert/reset on a branch are ordinary edits; branch is unknowable here")
 
@@ -1864,7 +1904,7 @@ def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
     import user_prompt_submit as u
     from pathlib import Path
     monkeypatch.setattr(u, "POLICY_STATE", tmp_path / "policy.json")
-    monkeypatch.setattr(u, "active_lessons", lambda: ["a lesson"])
+    monkeypatch.setattr(u, "active_lessons", lambda lane: ["a lesson"])
     first = u.context_for("fix src/a.ts", Path("/tmp"), "s1")
     assert "Apply before acting." in first and "a lesson" in first
     for _ in range(u.REFRESH_EVERY - 1):

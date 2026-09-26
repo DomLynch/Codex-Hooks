@@ -31,7 +31,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.autonomy import forget_lesson, hook_env, record_lesson  # noqa: E402
+from lib.autonomy import forget_lesson, hook_env, lesson_lane, record_lesson  # noqa: E402
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
@@ -1039,7 +1039,8 @@ def main() -> None:
         if consecutive_blocks == 1:
             # Only the first block in a chain is a review of the work. Later rounds
             # re-litigate a rebuttal and would pollute Active Lessons for every future turn.
-            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text, session_id)
+            record_lesson("mimo_stop", verdict_text.splitlines()[1] if len(verdict_text.splitlines()) > 1 else verdict_text, session_id,
+                          lesson_lane(transcript_path, payload.get("cwd") or "", session_id))
         if consecutive_blocks >= MAX_CONSECUTIVE_BLOCKS:
             log(f"BLOCK_CHAIN_DAMPER: session={session_id} blocks={consecutive_blocks}")
             save_verdict(session_id, turn_id, "DAMPER_ALLOW", verdict_text)

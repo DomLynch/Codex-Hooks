@@ -12,7 +12,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child
-from lib.autonomy import hook_env, record_lesson, remember_repo
+from lib.autonomy import hook_env, lesson_lane, record_lesson, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
@@ -194,7 +194,8 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
     update_audit_state(session_id, audited=True, verdict=verdict, preview=normalized)
     log(COMPONENT, f"mimo checkpoint verdict={verdict} transcript={len(transcript)}")
     if verdict == "ISSUES":
-        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized)
+        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized, session_id,
+                      lesson_lane(payload.get("transcript_path") or "", str(cwd), session_id))
         block(
             f"[{AUDITOR_NAME} checkpoint audit]\n\n"
             f"A fresh {AUDITOR_NAME} session reviewed this in-progress task checkpoint and found concrete issues. "
