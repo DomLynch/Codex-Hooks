@@ -162,6 +162,7 @@ _NOT_OWNER_PREFIXES = ("Another Claude session sent", "<", "Stop hook feedback",
                        "[Repository Quality", "[SYSTEM NOTIFICATION", "[Cross-session", "[MiniMax")
 _AUTHORIZATION_RE = re.compile(
     r"\b(go live|get (it|us|them|this) (all )?(merged|deployed|live)|push (it )?live|(deploy|merge|ship|release) (it|this|them|now)|"
+    r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
@@ -278,6 +279,49 @@ def latest_turn_started_at(transcript_path: str) -> str:
         if is_turn_start(entry):
             return str(entry.get("timestamp") or "")
     return ""
+
+
+# Checkable facts the final answer cites: commit SHAs (hex with a digit and a letter), #PR numbers, HH:MM times and
+# "N passed" counts. 2026-09-26: ~10 rejections/day were the reviewer missing evidence from earlier in the session.
+_EVIDENCE_TOKEN_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|#\d{1,6}\b|\b\d{1,2}:\d{2}\b|\b\d+ passed\b")
+
+
+def _tool_result_text(content: object) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts = [_content_text(item.get("content")) for item in content if isinstance(item, dict) and item.get("type") == "tool_result"]
+    return "\n".join(p for p in parts if p)
+
+
+def earlier_session_evidence(transcript_path: str, last_msg: str, slice_text: str, before: str, max_chars: int = 1500) -> list[str]:
+    """Lines of earlier tool output or peer messages (before `before`, the current turn's start) that contain a
+    SHA / #PR / HH:MM / "N passed" the final answer cites but the reviewed slice does not. Newest first, each
+    "[HH:MM] line". The agent's own earlier words are never included: only what a tool or a peer printed."""
+    tokens = [t for t in dict.fromkeys(_EVIDENCE_TOKEN_RE.findall(last_msg or "")) if t not in (slice_text or "")][:20]
+    if not tokens or not before:
+        return []
+    try:
+        lines = read_claude_transcript_lines(transcript_path)
+    except Exception:
+        return []
+    out: list[str] = []
+    used = 0
+    for entry in reversed(lines):
+        ts = str(entry.get("timestamp") or "")
+        if entry.get("type") != "user" or not ts or ts >= before:
+            continue
+        content = (entry.get("message") or {}).get("content")
+        text = content if isinstance(content, str) and _PEER_START_RE.search(content[:300]) else _tool_result_text(content)
+        for line in text.splitlines():
+            line = " ".join(line.split())[:200]
+            if not line or not any(t in line for t in tokens):
+                continue
+            row = f"[{ts[11:16]}] {line}"
+            if row in out or used + len(row) > max_chars:
+                continue
+            out.append(row)
+            used += len(row) + 1
+    return out
 
 
 def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:
