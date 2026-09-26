@@ -230,6 +230,16 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("not proven", mimo_audit.AUDIT_PROMPT)
         self.assertIn("internal pipeline success alone", mimo_audit.AUDIT_PROMPT)
 
+    def test_claude_mimo_prompt_flags_overclaimed_plan_items(self) -> None:
+        # 2026-09-26: "special move done" passed review when 2 of 10 moves existed, and
+        # "being built as of now" passed when the only support was the lane's own order.
+        self.assertIn("Plan-item and progress claims", mimo_audit.AUDIT_PROMPT)
+        self.assertIn('"2 of 10 done"', mimo_audit.AUDIT_PROMPT)
+        self.assertIn("The agent's own list of parts is not the definition", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("overrides the follow-up\n  and earlier-turn evidence exceptions", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("own outgoing order", mimo_audit.AUDIT_PROMPT)
+        self.assertIn('"Ordered", "asked X to", "target Sunday" are honest', mimo_audit.AUDIT_PROMPT)
+
     def test_claude_mimo_prompt_constrains_executable_demands(self) -> None:
         self.assertIn("Conversation turns are immutable", mimo_audit.AUDIT_PROMPT)
         self.assertIn("audit-only/review-only mode", mimo_audit.AUDIT_PROMPT)

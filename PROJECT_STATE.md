@@ -40,3 +40,8 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 - VPS Claude install is current (hook_env Opus 5.5 low, CLI 2.1.282, backup `/root/hooks-backup-20260925/`), but its CLI is still on the old account. Dom: no VPS reviewer needed; Claude Code runs on the Mac.
 - Reviewer since the account switch: 93.5% pass, 5% model flags, 0 timeouts, 5 s median; lanes fixed 6 of 11 findings. Re-run `scripts/reviewer_scorecard.py` with a day of data.
 - Frankendom deploys (logs `~/Developer/deploy-<sha>.log`, success = `Published <sha>`): ~10 min each on a quiet Mac; batching took the cost from ~4.6 to ~2.1 min per PR. Slowness past ~15 min is load from other lanes' browser runs, not a hang; the 50-min ceiling catches real hangs.
+
+## Reviewer: plan-item and progress claims — 2026-09-26
+- Strategy's 06:07 list called SCOPE item 8 "done and live" with 2 of 10 moves built, and 06:23 said three moves were "being built" on the strength of its own order to Lead; the reviewer passed both. It sees one ~4k-char turn and had no view of the scope doc.
+- `AUDIT_PROMPT` (Claude only) now flags: a numbered plan item called done/live unless the turn reads its definition and checks every part; and "being built"/firm dates backed only by the lane's own outgoing order.
+- Replay on the real turns: "being built" flagged 3/3, "special move done" 3 of 5 runs after adding a checklist pointer (0/4 without). Eight other lanes' latest turns: no new blocks against the old prompt. Findings survive the void/anchor filters.
