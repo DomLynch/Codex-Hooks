@@ -23,8 +23,9 @@ STALE_S = 45 * 60
 # git, gh, curl, greps and edits are not on this list on purpose.
 HEAVY_RE = re.compile(
     r"(?:^|[\s;&|(])(?:"
-    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
-    r"|npm\s+run\s+(?:test:all|test:slow|quality(?::\w+)?|build|release-checks?)\b|node\s+scripts/release-checks\.mjs"
+    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
+    r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
+    r"|node\s+scripts/release-checks\.mjs"
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test\s+[^\s]+\s+[^\s]+"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"

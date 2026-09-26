@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -120,6 +121,43 @@ class EnforcementTests(unittest.TestCase):
         for commands in ([], 'echo pass', [[]], [['definitely-missing-quality-tool']]):
             self.contract(commands)
             self.assertFalse(quality.run_project_gate(self.root)['ok'])
+
+    def test_deploy_starting_mid_check_kills_the_check_tree_and_defers(self):
+        # 2026-09-26: a gate begun at 06:54 on a free Mac kept spawning node --test through deploy 0325a0b.
+        pidfile = self.root / 'grandchild.pid'
+        spawn = (f'import subprocess, sys, time; p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]); '
+                 f'open({str(pidfile)!r}, "w").write(str(p.pid)); time.sleep(60)')
+        self.contract([[sys.executable, '-c', spawn]])
+        calls = []
+        def lock_after_start():
+            calls.append(1)
+            return {'revision': 'abc1234'} if len(calls) > 1 and pidfile.exists() else None
+        started = time.monotonic()
+        with patch.object(quality, 'DEFER_POLL_S', 0.1):
+            result = quality.run_project_gate(self.root, defer_to=lock_after_start)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['deferred'], {'revision': 'abc1234'})
+        grandchild = int(pidfile.read_text())
+        for _ in range(50):   # SIGKILL of the group is async; give the kernel a moment to reap
+            try:
+                os.kill(grandchild, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            os.kill(grandchild, 9)
+            self.fail('the check process group outlived the deferral')
+
+    def test_deploy_starting_between_checks_stops_before_the_next_and_caches_nothing(self):
+        marker = self.root / 'second-ran'
+        self.contract([[sys.executable, '-c', 'pass'], [sys.executable, '-c', f'open({str(marker)!r}, "w")']])
+        answers = iter([None, {'revision': 'abc1234'}])
+        result = quality.run_project_gate(self.root, defer_to=lambda: next(answers))
+        self.assertEqual(result['deferred'], {'revision': 'abc1234'})
+        self.assertFalse(marker.exists())
+        self.assertTrue(quality.run_project_gate(self.root)['ok'])   # no cached pass: the full contract runs
+        self.assertTrue(marker.exists())
 
     def test_deadline_blocks_and_says_it_is_a_time_limit(self):
         self.contract([[sys.executable, '-c', 'import time; time.sleep(5)']])

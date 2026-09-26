@@ -208,6 +208,21 @@ def milestone_detected(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
+def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> bool:
+    # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
+    # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
+    revision = str(deploying.get('revision', ''))[:7]
+    when = "stopped mid-gate" if mid_gate else "in flight"
+    log(COMPONENT, f"repository quality gate deferred: deploy {revision} {when} ({deploying.get('age_s')}s)")
+    if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == revision:
+        return True
+    update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: revision})
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
+        f"[Repository Quality Gate] deferred: deploy {revision} is in flight on this Mac (one-deployer rule); "
+        "the gate runs on the next Stop after FREE, and the PR's CI still covers this change."}}))
+    return True
+
+
 def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool:
     if (cwd / ".quality-gate.json").exists():
         covered = ci_covered_commit(cwd)
@@ -218,18 +233,11 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
             return True
         deploying = active_deploy_lock()
         if deploying:
-            # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
-            # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
-            revision = str(deploying.get('revision', ''))[:7]
-            log(COMPONENT, f"repository quality gate deferred: deploy {revision} in flight ({deploying['age_s']}s)")
-            if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == revision:
-                return True
-            update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: revision})
-            sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
-                f"[Repository Quality Gate] deferred: deploy {str(deploying.get('revision', ''))[:7]} is in flight on this Mac (one-deployer rule); "
-                "the gate runs on the next Stop after FREE, and the PR's CI still covers this change."}}))
-            return True
-        result = run_project_gate(cwd, timeout=timeout)
+            return defer_gate(deploying, session_id)
+        # A deploy that starts mid-gate stops it too, so a gate begun on a free Mac does not load the release rows.
+        result = run_project_gate(cwd, timeout=timeout, defer_to=active_deploy_lock)
+        if result.get("deferred"):
+            return defer_gate(result["deferred"], session_id, mid_gate=True)
         log(COMPONENT, f"repository quality gate ok={result['ok']}")
         if not result["ok"]:
             block("[Repository Quality Gate]\n\n" + "\n".join(

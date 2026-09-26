@@ -37,7 +37,11 @@ class DeployGuardTests(unittest.TestCase):
         for cmd in ("npx playwright test", "node scripts/quiet-one-browser-check.mjs --opponent goblin",
                     "cd ~/Developer/frankendom-audio && node artifacts/audio/fatal-crowd/browser.mjs",
                     "npm run test:all", "npm run quality:stop", "npm run build", "node --test tests/*.test.ts",
-                    "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend", "node scripts/finisher-preview.mjs --only opened"):
+                    "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend", "node scripts/finisher-preview.mjs --only opened",
+                    # 2026-09-26: these ran straight through deploy 0325a0b.
+                    "cd ~/Developer/frankendom-code-quality && node scripts/quality-stop-targeted.mjs", "npm test",
+                    "npm run test", "npm test -- --test-name-pattern=x", "npm run test:browser",
+                    "node scripts/pommel-battery.mjs"):
             reason = deploy_guard.decide(cmd, active)
             self.assertIn("Deploy abc1234 is in flight", reason, cmd)
             self.assertIn("one-deployer rule", reason)
@@ -46,7 +50,8 @@ class DeployGuardTests(unittest.TestCase):
         self.path.write_text(json.dumps(lock()))
         active = deploy_guard.active_lock()
         for cmd in ("git status", "gh pr view 326", "grep -rn foo src", "node --test tests/record.test.ts",
-                    "curl -s https://frankendom.com/release.json", "npm run typecheck", "ls -la"):
+                    "curl -s https://frankendom.com/release.json", "npm run typecheck", "ls -la",
+                    "npm run typecheck:tests", "grep -n test package.json"):
             self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
 
     def test_deploy_script_itself_and_the_deployers_tree_are_never_blocked(self):
