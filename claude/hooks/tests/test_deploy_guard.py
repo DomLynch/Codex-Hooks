@@ -54,6 +54,31 @@ class DeployGuardTests(unittest.TestCase):
                     "npm run typecheck:tests", "grep -n test package.json"):
             self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
 
+    def test_text_that_is_only_data_is_not_a_command(self):
+        # 2026-09-26: a commit message mentioning "node --test through deploy" was refused mid-deploy.
+        self.path.write_text(json.dumps(lock()))
+        active = deploy_guard.active_lock()
+        for cmd in ('git commit -m "fix: gate kept spawning node --test through deploy 0325a0b"',
+                    "gh pr create --title 'guard blocks npm test' --body 'npm run test:browser and npx playwright'",
+                    "git commit -F - <<'EOF'\nguard: npm test and node scripts/quality-stop-targeted.mjs\nEOF",
+                    "python3 - <<'EOF'\n# node --test a b\nprint('npm test')\nEOF\necho done",
+                    'echo "run npm test after FREE"',
+                    "cat > $SP/tables.sh <<'EOF'\n(cd wt && npm run build)\nEOF\nchmod +x $SP/tables.sh",
+                    './deploy-notes.sh -c "npm test"',
+                    'gh pr create --body "Checks: \\`npm test\\` 661/0/2, \\$(not run) either"'):
+            self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
+
+    def test_quoted_text_a_shell_runs_is_still_a_command(self):
+        self.path.write_text(json.dumps(lock()))
+        active = deploy_guard.active_lock()
+        for cmd in ('bash -c "npm test"', "zsh -lc 'node scripts/quality-stop-targeted.mjs'", "eval 'npm run test:all'",
+                    'git commit -m "wip" && npm test', "bash <<'EOF'\nnpx playwright test\nEOF",
+                    "/bin/zsh -c 'npm test'", "ssh vps 'x' ; sh <<EOF\nnpm run build\nEOF",
+                    'echo "result: $(npm test 2>&1 | tail -1)"', 'X="`npx playwright test`"',
+                    'git commit -m "note: scripts/deploy.sh owns the lock" && npm run test:all',
+                    'cd "/Users/x/Developer/frankendom-world" && npm run test:browser'):
+            self.assertIn("is in flight", deploy_guard.decide(cmd, active), cmd)
+
     def test_deploy_script_itself_and_the_deployers_tree_are_never_blocked(self):
         self.path.write_text(json.dumps(lock()))
         active = deploy_guard.active_lock()
