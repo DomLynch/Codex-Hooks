@@ -76,9 +76,36 @@ def active_lock(now: datetime | None = None) -> dict | None:
     return data
 
 
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)", re.DOTALL)
+QUOTED_RE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+SUBSTITUTION_RE = re.compile(r"(?<!\\)\$\(([^)]*)\)|(?<!\\)`((?:[^`\\]|\\.)*)`")   # \` and \$( are literal text
+SHELL = r"(?:^|[\s;&|(/])(?:ba|z)?sh"   # a shell command, not a file named x.sh
+RUNS_ITS_ARGUMENT_RE = re.compile(rf"(?:{SHELL}\s+-\w*c|(?:^|[\s;&|(])eval)\s*$")   # bash -c "...", zsh -lc '...', eval '...'
+SHELL_STDIN_RE = re.compile(rf"{SHELL}\s*$")                                         # bash <<EOF: the body is run
+
+
+def executable_text(command: str) -> str:
+    """The parts of a shell line that run: commit messages, PR bodies and script heredocs are data, not commands."""
+    def heredoc(m: re.Match) -> str:
+        return m.group(0) if SHELL_STDIN_RE.search(command[:m.start()].rstrip()) else ""
+
+    def quoted(m: re.Match) -> str:
+        inner = m.group(0)[1:-1]
+        if RUNS_ITS_ARGUMENT_RE.search(stripped[:m.start()]):
+            return f" {inner} "
+        # "$(npm test)" and "`npm test`" run even inside double quotes; single quotes run nothing.
+        if m.group(0)[0] == "'":
+            return '""'
+        return '"" ' + " ; ".join(a or b for a, b in SUBSTITUTION_RE.findall(inner))
+
+    stripped = HEREDOC_RE.sub(heredoc, command)
+    return QUOTED_RE.sub(quoted, stripped)
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
-    if not lock or not command or ALLOW_RE.search(command) or not HEAVY_RE.search(command):
+    runs = executable_text(command) if lock and command else ""
+    if not runs or ALLOW_RE.search(runs) or not HEAVY_RE.search(runs):
         return ""
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
