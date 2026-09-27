@@ -775,3 +775,25 @@ class UnreceiptedLiveClaimTests(unittest.TestCase):
         self.assertEqual(out["decision"], "block")
         self.assertIn("Unreceipted: frankendom.com", out["reason"])
         model.assert_not_called()
+
+
+class GateOutputExcerptTests(unittest.TestCase):
+    """Veteran lane, 2026-09-28: the gate kept only the last 4000 chars of `node --test`, so six real
+    graphics.test failures printed early in a long run were cut off and the lane only saw them in test:all.
+    The block must name every failing test, whatever the run's length."""
+
+    def test_failing_test_lines_from_the_cut_front_are_kept(self) -> None:
+        from lib import quality
+
+        front = "\n".join(f"✖ graphics.test renders frame {i} (12ms)\n  AssertionError: expected 1 to be 0" for i in range(6))
+        noise = "\n".join(f"✔ combat.test case {i} (3ms)" for i in range(600))
+        tail = "ℹ tests 606\nℹ pass 600\nℹ fail 6"
+        out = quality._result(Path("x"), "node --test", False, front + "\n" + noise + "\n" + tail)["output"]
+        self.assertLessEqual(len(out), 4000)
+        for i in range(6):
+            self.assertIn(f"graphics.test renders frame {i}", out, i)
+        self.assertIn("fail 6", out, "the tail summary still lands")
+        short = quality._result(Path("x"), "node --test", False, "✖ one\nℹ fail 1")["output"]
+        self.assertEqual(short, "✖ one\nℹ fail 1", "short output is untouched")
+        tap = quality._result(Path("x"), "node --test", False, "not ok 1 - early\n" + "ok 2 - fine\n" * 500)["output"]
+        self.assertIn("not ok 1 - early", tap)
