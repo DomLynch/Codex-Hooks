@@ -75,6 +75,22 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertIn("AssertionError", gate([("TOOL OUTPUT", whole), ("TOOL OUTPUT", same)], "Done."),
                       "one file passing does not clear a whole-suite failure")
 
+    def test_one_passing_test_node_does_not_clear_its_whole_file(self) -> None:
+        # Reviewer F1 2026-09-27: `::` was not allowed in a target, so `pytest tests/test_payment.py::test_one`
+        # had no targets, counted as a whole-suite rerun and cleared the failed file.
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        file_failed = "[c1] Bash: pytest tests/test_payment.py\n\nFAILED tests/test_payment.py::test_two - AssertionError: 1 != 2"
+        node_passed = "[c2] Bash: pytest tests/test_payment.py::test_one -q\n\n1 passed in 0.1s"
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), ("TOOL OUTPUT", node_passed)], "Done."))
+        node_failed = "[c3] Bash: pytest tests/test_payment.py::test_two\n\nFAILED tests/test_payment.py::test_two - AssertionError"
+        node_reran = "[c4] Bash: pytest tests/test_payment.py::test_two\n\n1 passed in 0.1s"
+        file_reran = "[c5] Bash: pytest tests/test_payment.py\n\n2 passed in 0.1s"
+        other_node = "[c6] Bash: pytest tests/test_payment.py::test_one\n\n1 passed in 0.1s"
+        self.assertEqual(gate([("TOOL OUTPUT", node_failed), ("TOOL OUTPUT", node_reran)], "Done."), "")
+        self.assertEqual(gate([("TOOL OUTPUT", node_failed), ("TOOL OUTPUT", file_reran)], "Done."), "", "the file covers its node")
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", node_failed), ("TOOL OUTPUT", other_node)], "Done."))
+
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 

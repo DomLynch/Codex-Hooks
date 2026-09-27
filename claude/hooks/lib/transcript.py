@@ -136,7 +136,7 @@ FAILURE_ACK_RE = re.compile(
 
 
 _COMMAND_JSON_RE = re.compile(r'\{\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)')   # first line may be cut mid-JSON
-_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~-]*$")   # a path-like token: tests/, tests/x.py, ., src
+_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:-]*$")   # a path-like token: tests/, tests/x.py, x.py::test_a, .
 
 
 def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
@@ -159,7 +159,7 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
     """A whole-suite rerun (no targets, or `.`) covers anything; a whole-suite failure needs a whole-suite rerun."""
     if not rerun or "." in rerun:
         return True
-    return bool(failed) and all(any(t == r or t.startswith(r.rstrip("/") + "/") for r in rerun) for t in failed)
+    return bool(failed) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in failed)
 
 
 def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:
