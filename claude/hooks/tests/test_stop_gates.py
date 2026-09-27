@@ -466,6 +466,25 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
                 self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
 
+    def test_withheld_permission_after_i_am_not_is_a_refusal(self) -> None:
+        # Recheck 2 (2026-09-27): the "I'm not technical" exemption swallowed every "I'm not ...", so
+        # "I'm not approving this deployment." was nothing and "I'm not giving approval to deploy it." was an OK.
+        # Rule: a descriptive-language exception cannot turn withheld permission into approval.
+        from lib.claude_adapter import authorization_signal, peer_triggered_unauthorized_action as gate
+
+        withheld = ("I'm not approving this deployment.", "I'm not giving approval to deploy it.", "I'm not saying go ahead.",
+                    "I am not authorising this", "I'm not happy for you to deploy it")
+        for words in withheld:
+            self.assertEqual(authorization_signal(words), "refusal", words)
+        for words in ("I'm not technical, do it yourself", "im not sure, go ahead", "I'm not a developer, you decide",
+                      "I'm not around today, deploy it", "I am not an expert, use your judgement"):
+            self.assertEqual(authorization_signal(words), "ok", words)
+        with tempfile.TemporaryDirectory() as tmp:
+            ok = ("2026-09-20T10:00:00Z", "Go ahead and deploy it.")
+            for later in withheld:
+                tp = self._transcript(Path(tmp), [ok, ("2026-09-20T11:00:00Z", later)])
+                self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", later)
+
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
 
         with tempfile.TemporaryDirectory() as tmp:
