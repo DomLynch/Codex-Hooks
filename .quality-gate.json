@@ -1,4 +1,8 @@
 {
+  "codex_commands": [
+    ["env", "HOOK_SENTRY_DSN=", "python3", "-m", "pytest", "hooks/tests", "-q", "-p", "no:cacheprovider"],
+    ["ruff", "check", "hooks"]
+  ],
   "commands": [
     [
       "env",
