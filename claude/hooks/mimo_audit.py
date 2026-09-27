@@ -36,7 +36,7 @@ from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
-from lib.transcript import compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_diff  # noqa: E402
+from lib.transcript import DIFF_CAP, compact_task_entries, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_commits, turn_commits_diff, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd  # noqa: E402
 from lib.rehome import is_rehome_turn  # noqa: E402
@@ -261,6 +261,12 @@ Auditor constraints - demands must be executable:
   has NO tool call whose command would produce that evidence (gh pr view, git log, curl,
   a test command, a log grep). If such a call exists, its output is the receipt, elided
   or not; if the claim was answered by that output, it is verified.
+- For each matcher the WORKING TREE DIFF adds or changes (a regex, path or
+  prefix check, parser of hook/tool input), try one input it should NOT match
+  and one malformed input (wrong type, missing field). If you can name one that
+  gets a wrong result, or an uncaught exception in code that must fail open
+  (hooks), that is a finding: quote the line and give the input. Do not raise
+  it when you cannot name a concrete input.
 - If a WORKING TREE DIFF section is present it is the ground truth for what
   changed. Findings about the code must cite it; do not infer code from prose.
 - Tool-call arguments in this slice are MECHANICALLY TRUNCATED by the slice
@@ -970,7 +976,14 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
-        diff = turn_diff(repo_cwd, edited_paths(entries), since=latest_turn_started_at(transcript_path))
+        since = latest_turn_started_at(transcript_path)
+        committed = turn_commits_diff(repo_cwd, since)
+        if committed:
+            # What the turn committed, however it was edited, plus Edit-tool edits not yet committed.
+            diff = "\n\n".join(x for x in (committed, turn_diff(repo_cwd, edited_paths(entries))) if x)[:DIFF_CAP + 2_000]
+            log(f"TURN_COMMITS: {len(turn_commits(repo_cwd, since))} commit(s), {len(committed)} chars")
+        else:
+            diff = turn_diff(repo_cwd, edited_paths(entries), since=since)
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "

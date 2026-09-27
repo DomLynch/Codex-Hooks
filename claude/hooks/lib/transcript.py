@@ -241,7 +241,7 @@ def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverabl
     return not deliverable_re.search(final_message or "")
 
 
-DIFF_CAP = 2500
+DIFF_CAP = 6000   # 2500 cut a 3.5k new hook in half; the reviewer judged the rest from the agent's words
 
 
 def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP, since: str = "") -> str:
@@ -294,6 +294,52 @@ def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP, since: str = "") 
         return ""
     return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
 
+
+
+def turn_commits(cwd: str, since: str, limit: int = 5) -> list[str]:
+    """SHAs committed in THIS worktree since `since` (ISO, the turn's start), oldest first.
+
+    Read from the worktree's own HEAD reflog, so it sees commits however they were made (Edit tool, a Bash
+    script, `git commit` after a python heredoc) and never another worktree's. 2026-09-27: the hooks lane and
+    the Auditer edit through Bash, so edited_paths() was empty and the reviewer judged 7 code turns from prose."""
+    if not cwd or not since:
+        return []
+    import subprocess
+    from datetime import datetime
+
+    try:
+        start = datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
+        out = subprocess.run(["git", "-C", cwd, "reflog", "-200", "--date=unix", "--format=%H %gd %gs", "HEAD"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return []
+    shas: list[str] = []
+    for line in out.splitlines():
+        m = re.match(r"([0-9a-f]{40}) HEAD@\{(\d+)\} (\S+)", line)
+        if not m or int(m.group(2)) < start:
+            continue
+        if m.group(3).startswith("commit") and m.group(1) not in shas:
+            shas.append(m.group(1))
+    return list(reversed(shas))[-limit:]
+
+
+def turn_commits_diff(cwd: str, since: str, cap: int = DIFF_CAP) -> str:
+    """The code this turn committed: per commit its file list, then the patch of non-test files (tests are
+    named in the list; the code is what the reviewer must read). "" when the turn committed nothing."""
+    import subprocess
+
+    parts = []
+    try:
+        for sha in turn_commits(cwd, since):
+            stat = subprocess.run(["git", "-C", cwd, "show", "--stat", "--format==== commit %h %s ===", sha],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+            code = subprocess.run(["git", "-C", cwd, "show", "--format=", "--patch", sha, "--", ".",
+                                   ":(exclude,glob)**/tests/**", ":(exclude,glob)**/test_*"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+            parts.append("\n".join(x for x in (stat, code) if x))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
 
 # Narrow by design: an explicit HTTP status claim about a named host is the only live/deploy
 # claim shape a regex can separate from narrative. Broad "is live / shipped / deployed" matching
