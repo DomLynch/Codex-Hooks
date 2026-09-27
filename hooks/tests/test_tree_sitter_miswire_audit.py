@@ -21,6 +21,11 @@ def test_resolves_allowlisted_repo_alias() -> None:
     assert target == ROOT
 
 
+def test_installed_copy_keeps_canonical_alias(tmp_path: Path) -> None:
+    with mock.patch.object(tree_sitter_miswire_audit, "__file__", str(tmp_path / "scripts" / "audit.py")):
+        assert tree_sitter_miswire_audit.resolve_target("hooks") == tree_sitter_miswire_audit.ALLOWLIST["hooks"].resolve()
+
+
 def test_build_cmd_uses_uvx_miswire_audit() -> None:
     with mock.patch("shutil.which", return_value="/bin/uvx"):
         cmd = tree_sitter_miswire_audit.build_cmd(ROOT)
