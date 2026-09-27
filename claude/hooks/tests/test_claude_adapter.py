@@ -1672,6 +1672,87 @@ class TurnDiffSinceTests(unittest.TestCase):
             self.assertEqual(turn_diff(str(repo), ["app.py"], since="not-a-date"), "", "unresolvable timestamp falls back to the plain HEAD diff")
 
 
+class TurnCommitsDiffTests(unittest.TestCase):
+    """The reviewer gets the code the turn COMMITTED, however it was edited (2026-09-27: the hooks lane and the
+    Auditer edit via Bash, so edited_paths() was empty and 7 code turns were judged from prose alone)."""
+
+    def _repo(self, tmp: str):
+        import subprocess
+        repo = Path(tmp)
+
+        def git(*a):
+            return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=repo, check=True,
+                                  capture_output=True, text=True).stdout
+
+        git("init", "-q", "-b", "main")
+        (repo / "hook.py").write_text("OLD = 1\n")
+        git("add", ".")
+        git("commit", "-qm", "base")
+        return repo, git
+
+    def test_only_this_turns_commits_code_patch_and_test_names(self) -> None:
+        import time
+        from lib.transcript import turn_commits, turn_commits_diff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, git = self._repo(tmp)
+            time.sleep(1.1)
+            started = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            time.sleep(1.1)
+            git("switch", "-q", "-c", "lane/fix")                      # a checkout is not a commit
+            (repo / "hook.py").write_text("OLD = 1\nMATCH = 'buggy line'\n")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_hook.py").write_text("def test_x():\n    assert 'SECRET_TEST_BODY'\n")
+            git("add", ".")
+            git("commit", "-qm", "feat: new matcher")               # made by a Bash script, not the Edit tool
+            shas = turn_commits(str(repo), started)
+            self.assertEqual(len(shas), 1)
+            diff = turn_commits_diff(str(repo), started)
+            self.assertIn("=== commit", diff)
+            self.assertIn("+MATCH = 'buggy line'", diff)
+            self.assertIn("tests/test_hook.py", diff, "test files are named in the file list")
+            self.assertNotIn("SECRET_TEST_BODY", diff, "but their bodies do not use the reviewer's budget")
+            self.assertNotIn("OLD = 1\n+", diff.split("=== commit")[0])
+            self.assertEqual(turn_commits(str(repo), "2099-01-01T00:00:00Z"), [], "nothing after a future start")
+            self.assertEqual(turn_commits(str(repo), "not-a-date"), [])
+            self.assertEqual(turn_commits_diff(str(Path(tmp) / "nope"), started), "")
+
+    def test_main_sends_a_bash_only_turns_committed_code_to_the_reviewer(self) -> None:
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, git = self._repo(tmp)
+            time.sleep(1.1)
+            started = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+            tp = Path(tmp) / "t.jsonl"
+            tp.write_text(json.dumps({"type": "user", "timestamp": started, "message": {"content": "add the guard"}}) + "\n")
+            time.sleep(1.1)
+            (repo / "hook.py").write_text("OLD = 1\nGUARD = 'committed via bash'\n")
+            git("commit", "-qam", "feat: guard")
+            bash = ("TOOL CALL", 'Bash: [toolu_1] {"command": "python3 - <<EOF ... write_text ... EOF && git commit -qam guard"}')
+            with (
+                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("USER", "add the guard"), bash]),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+            ):
+                payload = {"session_id": "TC", "turn_id": "t", "transcript_path": str(tp), "cwd": str(repo),
+                           "last_assistant_message": "Added the guard and committed it. " * 5}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), contextlib.suppress(SystemExit):
+                        mimo_audit.main()
+        sent = model.call_args[0][0]
+        self.assertIn("WORKING TREE DIFF", sent)
+        self.assertIn("+GUARD = 'committed via bash'", sent)
+
+    def test_prompt_asks_for_a_concrete_wrong_input_on_new_matchers(self) -> None:
+        self.assertIn("try one input it should NOT match", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Do not raise\n  it when you cannot name a concrete input.", mimo_audit.AUDIT_PROMPT)
+
+
 class RepoCwdResolutionTests(unittest.TestCase):
     """Regression: session cwd is a non-git parent; the diff must still reach the reviewer."""
 
