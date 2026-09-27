@@ -26,6 +26,10 @@ READS = [
     "cp ~/.claude/hooks/deploy_guard.py claude/hooks/deploy_guard.py",
     "sed -n 74,95p ~/.claude/hooks/deploy_guard.py 2>/dev/null",
     "python3 -c \"import sys; sys.path.insert(0, '/Users/x/.claude/hooks'); import deploy_guard\"",
+    # a repo's own project hooks are not the live install (audit 2026-09-27: these warned before)
+    "cp scripts/pre.sh .claude/hooks/pre.sh",
+    "echo hi > ./.claude/hooks/x.sh",
+    "cd ~/Developer/frankendom-web/.claude/hooks && python3 -c \"open('a.sh','w')\"",
 ]
 
 
@@ -34,7 +38,9 @@ def test_flags_real_write_shapes_and_passes_reads():
         assert g.live_write("Bash", {"command": cmd}), cmd
     for cmd in READS:
         assert g.live_write("Bash", {"command": cmd}) == "", cmd
-    assert g.live_write("Edit", {"file_path": "/Users/x/.claude/hooks/post_tool.py"})
+    assert g.live_write("Edit", {"file_path": str(Path.home() / ".claude" / "hooks" / "post_tool.py")})
+    assert g.live_write("Edit", {"file_path": "~/.claude/hooks/lib/api.py"})
+    assert g.live_write("Edit", {"file_path": "/Users/x/Developer/frankendom-web/.claude/hooks/pre.sh"}) == ""
     assert g.live_write("Write", {"file_path": "/Users/x/Developer/frankendom-web/src/app.ts"}) == ""
 
 
@@ -54,3 +60,11 @@ def test_main_warns_without_blocking_and_skips_the_hooks_lane():
     hooks_lane = dict(lane, cwd="/Users/x/Desktop/Business/Codex Hooks/.claude/worktrees/cool-goldberg")
     assert _run(hooks_lane) == ""
     assert _run(dict(lane, tool_input={"command": READS[0]})) == ""
+
+
+def test_odd_payloads_say_nothing_and_never_fail():
+    for raw in ('{"tool_name": "Bash", "tool_input": "not a dict"}', '[]', 'not json', '{"tool_name": "Edit", "tool_input": null}'):
+        buf = io.StringIO()
+        with mock.patch.object(g.sys, "stdin", io.StringIO(raw)), mock.patch.object(g, "log"), redirect_stdout(buf):
+            g.main()                                   # no exception
+        assert buf.getvalue() == "", raw
