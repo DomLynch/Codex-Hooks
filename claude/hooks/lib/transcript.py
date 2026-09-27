@@ -152,8 +152,16 @@ _VALUE_FLAGS = {
 _NEUTRAL_FLAGS = {"-q", "-v", "-x", "-s", "-l", "--quiet", "--verbose", "--exitfirst", "--no-header", "--no-summary",
                   "--disable-warnings", "--strict-markers", "--strict", "--fix", "--noEmit", "--pretty", "--no-cov", "--"}
 _NEUTRAL_CLUSTER_RE = re.compile(r"^-[qvxsl]+$|^-r[a-zA-Z]*$")   # -qx, -vv, -rA
+# Selection under UNCHANGED configuration: a known subset of what the same paths collect, so a broader run of those
+# paths covers it (`pytest tests/x.py` covers `pytest tests/x.py -k t`). Anything else opaque is config-dependent
+# (-o/-c/-p/--rootdir, an unknown flag): neither adding nor removing it proves equivalent coverage (recheck 5), so
+# only the identical command clears it.
+_SUBSET_VALUE_FLAGS = {"-k", "-m", "--deselect", "--ignore", "--ignore-glob", "--grep", "-t", "--testNamePattern",
+                       "--testPathPattern", "-run"}
+_SUBSET_FLAGS = {"--lf", "--last-failed", "--sw", "--stepwise"}
 _SUBCOMMANDS = {"run", "discover", "exec", "check"}
-_OPAQUE = "\x00"   # prefix of a target that stands for "this exact command and nothing else"
+_OPAQUE = "\x00"          # prefix of a target that stands for "this exact command": a known subset of its paths
+_OPAQUE_CONFIG = "\x00!"  # same, but config-dependent: covered by nothing except the identical command
 
 
 def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
@@ -173,31 +181,35 @@ def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     tail = re.split(r"\s(?:&&|\|\||;|\||>|2>)\s|\n", tail)[0]
     tokens = tail.split()
     value_flags = _VALUE_FLAGS["*"] | _VALUE_FLAGS.get(runner, set())
-    targets, opaque, skip = set(), False, False
+    targets, opaque, skip = set(), "", False
     for tok in tokens:
         if skip:
             skip = False
             continue
         flag = tok.split("=", 1)[0]
-        if flag in value_flags:
+        if flag in value_flags or flag in _SUBSET_VALUE_FLAGS:
             skip = "=" not in tok
+            opaque = opaque or (_OPAQUE if flag in _SUBSET_VALUE_FLAGS else "")
+        elif tok in _SUBSET_FLAGS or (runner == "pytest" and tok[:2] in {"-k", "-m"} and len(tok) > 2):   # --lf, -ktest_one
+            opaque = opaque or _OPAQUE
         elif tok in _NEUTRAL_FLAGS or _NEUTRAL_CLUSTER_RE.match(tok) or tok in _SUBCOMMANDS:
             continue
         elif not tok.startswith("-") and _TARGET_RE.match(tok):
             targets.add(tok)
         else:
-            opaque = True   # -k/-m/--ignore/--deselect, -ktest_one, --anything-unknown, a non-path word
+            opaque = _OPAQUE_CONFIG   # -o/-c/-p/--rootdir, --anything-unknown, a non-path word: coverage unknown
     if opaque:
-        targets.add(_OPAQUE + " ".join(tokens))   # keeps its paths too, so a broader path rerun can still cover it
+        targets.add(opaque + " ".join(tokens))   # keeps its paths too, so a broader path rerun can cover a subset
     return runner, frozenset(targets)
 
 
 def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
-    """A whole-suite rerun (no targets, or `.`) covers anything. An opaque rerun covers only the identical check.
-    A path rerun covers a failure whose paths all sit under it (a file covers its nodes and its own filtered
-    runs); it never covers a whole-suite failure or an opaque failure without paths."""
-    if any(r.startswith(_OPAQUE) for r in rerun):   # before `.`: `pytest . -k x` is filtered, not everything
-        return failed == rerun
+    """A whole-suite rerun (no targets, or `.`) covers anything except a config-dependent failure. An opaque rerun,
+    or a config-dependent failure, matches only the identical check. A path rerun covers a failure whose paths all
+    sit under it (a file covers its nodes and its own subset runs); it never covers a whole-suite failure or an
+    opaque failure without paths."""
+    if any(r.startswith(_OPAQUE) for r in rerun) or any(t.startswith(_OPAQUE_CONFIG) for t in failed):
+        return failed == rerun   # before `.`: `pytest . -k x` is filtered, not everything
     if not rerun or "." in rerun:
         return True
     paths = {t for t in failed if not t.startswith(_OPAQUE)}   # an opaque failure with no paths is never covered
