@@ -137,21 +137,24 @@ FAILURE_ACK_RE = re.compile(
 
 _COMMAND_JSON_RE = re.compile(r'\{\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)')   # first line may be cut mid-JSON
 _TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:\[\]-]*$")   # a path-like token: tests/, x.py, x.py::t[1-2], .
-# Flags that select a subset of tests: the run is narrower than its paths say.
-_SELECT_FLAGS = {"-k", "-m", "--deselect", "--lf", "--last-failed", "--sw", "--stepwise", "--co", "--collect-only",
-                 "--grep", "-g", "-t", "--testNamePattern", "--test-name-pattern", "--filter", "--match"}
+# Options that do not change which tests are collected. Anything else on the command line (a selection flag, an
+# attached value like -ktest_one, --ignore=..., an option we do not know) makes the run opaque: it is the same
+# check as itself and covers nothing else. Allow-list, not block-list (recheck 3, 2026-09-27).
 _VALUE_FLAGS = {"-p", "-o", "-W", "-c", "-n", "--tb", "--durations", "--maxfail", "--timeout", "--cov", "--cov-report",
-                "--reporter", "--test-reporter", "--root", "-C"}   # take the next token as their value
-# Not "-s": pytest's -s is boolean (no capture); unittest's `-s dir` names a path, which is a target anyway.
+                "--color", "--capture", "--reporter", "--test-reporter", "--root", "--rootdir", "--basetemp", "-C"}
+_NEUTRAL_FLAGS = {"-q", "-v", "-x", "-s", "-l", "--quiet", "--verbose", "--exitfirst", "--no-header", "--no-summary",
+                  "--disable-warnings", "--strict-markers", "--strict", "--fix", "--noEmit", "--pretty", "--no-cov", "--"}
+_NEUTRAL_CLUSTER_RE = re.compile(r"^-[qvxsl]+$|^-r[a-zA-Z]*$")   # -qx, -vv, -rA
 _SUBCOMMANDS = {"run", "discover", "exec", "check"}
 _OPAQUE = "\x00"   # prefix of a target that stands for "this exact command and nothing else"
 
 
 def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     """(runner, targets) of the check a TOOL OUTPUT line ran, or None. The runner is the test/lint tool named on
-    the line. Targets are its path-like arguments (empty = the whole suite). A run with a selection flag, or any
-    argument that is not a recognizable path, gets one opaque target: the exact command. It is the same check as
-    itself and covers nothing else, because "I could not tell what ran" must never mean "everything ran"."""
+    the line. Targets are its path-like arguments (empty = the whole suite). A run with any option that is not on
+    the coverage-neutral allow-list, or any argument that is not a recognizable path, gets an opaque target: the
+    exact command. It is the same check as itself and covers nothing else, because "I could not tell what ran"
+    must never mean "everything ran"."""
     m = TEST_RUNNER_RE.search(first_line)
     if not m:
         return None
@@ -168,16 +171,14 @@ def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
             skip = False
             continue
         flag = tok.split("=", 1)[0]
-        if flag in _SELECT_FLAGS:
-            opaque = True
-        elif flag in _VALUE_FLAGS:
+        if flag in _VALUE_FLAGS:
             skip = "=" not in tok
-        elif tok.startswith("-") or tok in _SUBCOMMANDS:
+        elif tok in _NEUTRAL_FLAGS or _NEUTRAL_CLUSTER_RE.match(tok) or tok in _SUBCOMMANDS:
             continue
-        elif _TARGET_RE.match(tok):
+        elif not tok.startswith("-") and _TARGET_RE.match(tok):
             targets.add(tok)
         else:
-            opaque = True
+            opaque = True   # -k/-m/--ignore/--deselect, -ktest_one, --anything-unknown, a non-path word
     if opaque:
         targets.add(_OPAQUE + " ".join(tokens))   # keeps its paths too, so a broader path rerun can still cover it
     return runner, frozenset(targets)
@@ -187,10 +188,10 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
     """A whole-suite rerun (no targets, or `.`) covers anything. An opaque rerun covers only the identical check.
     A path rerun covers a failure whose paths all sit under it (a file covers its nodes and its own filtered
     runs); it never covers a whole-suite failure or an opaque failure without paths."""
+    if any(r.startswith(_OPAQUE) for r in rerun):   # before `.`: `pytest . -k x` is filtered, not everything
+        return failed == rerun
     if not rerun or "." in rerun:
         return True
-    if any(r.startswith(_OPAQUE) for r in rerun):
-        return failed == rerun
     paths = {t for t in failed if not t.startswith(_OPAQUE)}   # an opaque failure with no paths is never covered
     return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
 

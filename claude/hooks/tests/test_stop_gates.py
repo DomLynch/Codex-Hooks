@@ -133,6 +133,28 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         b_green = "[c4] Bash: pytest -s tests/test_b.py\n\n2 passed in 0.1s"
         self.assertEqual(gate([("TOOL OUTPUT", b_failed), ("TOOL OUTPUT", b_green)], "Done."), "")
 
+    def test_filtered_dot_runs_attached_values_and_unknown_flags_never_clear(self) -> None:
+        # Recheck 3 (2026-09-27), real pytest: `pytest . -k test_one -q`, `pytest tests/test_payment.py -ktest_one -q`
+        # and `pytest --ignore=tests/test_payment.py -q` all cleared the failed payment file. `.` was checked
+        # before "opaque", and unknown flags (attached values, --ignore) were ignored instead of making the run opaque.
+        from lib.transcript import _check_identity, _OPAQUE, unacknowledged_check_failure as gate
+
+        file_failed = "[c1] Bash: pytest tests/test_payment.py\n\nFAILED tests/test_payment.py::test_two - AssertionError: 1 != 2"
+        for cmd in ("pytest . -k test_one -q", "pytest tests/test_payment.py -ktest_one -q", "pytest --ignore=tests/test_payment.py -q",
+                    "pytest . --deselect=tests/test_payment.py::test_two", "pytest . --unknown-flag", "pytest . -X", "pytest . -qk test_one"):
+            out = ("TOOL OUTPUT", f"[c2] Bash: {cmd}\n\n1 passed, 2 deselected in 0.1s")
+            self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), out], "Done."), cmd)
+            self.assertTrue(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} must be opaque")
+        for cmd in ("pytest . -q -x -v -s -rA --tb=short -p no:cacheprovider -n 2 --timeout 30 --no-header --disable-warnings",
+                    "pytest -qx tests/test_payment.py", "pytest tests/test_payment.py -vv --color=no"):
+            self.assertFalse(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} is coverage-neutral")
+            out = ("TOOL OUTPUT", f"[c3] Bash: {cmd}\n\n3 passed in 0.1s")
+            self.assertEqual(gate([("TOOL OUTPUT", file_failed), out], "Done."), "", cmd)
+        dot_filtered = "[c4] Bash: pytest . -k test_two\n\nFAILED tests/test_payment.py::test_two - AssertionError"
+        self.assertEqual(gate([("TOOL OUTPUT", dot_filtered), ("TOOL OUTPUT", "[c5] Bash: pytest .\n\n3 passed in 0.1s")], "Done."), "",
+                         "a full `.` run covers a filtered `.` run")
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", dot_filtered), ("TOOL OUTPUT", "[c6] Bash: pytest . -k test_one\n\n1 passed")], "Done."))
+
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 
