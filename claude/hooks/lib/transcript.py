@@ -136,12 +136,21 @@ FAILURE_ACK_RE = re.compile(
 
 
 _COMMAND_JSON_RE = re.compile(r'\{\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)')   # first line may be cut mid-JSON
-_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:-]*$")   # a path-like token: tests/, tests/x.py, x.py::test_a, .
+_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:\[\]-]*$")   # a path-like token: tests/, x.py, x.py::t[1-2], .
+# Flags that select a subset of tests: the run is narrower than its paths say.
+_SELECT_FLAGS = {"-k", "-m", "--deselect", "--lf", "--last-failed", "--sw", "--stepwise", "--co", "--collect-only",
+                 "--grep", "-g", "-t", "--testNamePattern", "--test-name-pattern", "--filter", "--match"}
+_VALUE_FLAGS = {"-p", "-o", "-W", "-c", "-n", "--tb", "--durations", "--maxfail", "--timeout", "--cov", "--cov-report",
+                "--reporter", "--test-reporter", "-s", "--root", "-C"}   # take the next token as their value
+_SUBCOMMANDS = {"run", "discover", "exec", "check"}
+_OPAQUE = "\x00"   # prefix of a target that stands for "this exact command and nothing else"
 
 
 def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     """(runner, targets) of the check a TOOL OUTPUT line ran, or None. The runner is the test/lint tool named on
-    the line; targets are its path-like arguments (empty = the whole suite). Same identity = same check."""
+    the line. Targets are its path-like arguments (empty = the whole suite). A run with a selection flag, or any
+    argument that is not a recognizable path, gets one opaque target: the exact command. It is the same check as
+    itself and covers nothing else, because "I could not tell what ran" must never mean "everything ran"."""
     m = TEST_RUNNER_RE.search(first_line)
     if not m:
         return None
@@ -151,15 +160,38 @@ def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     runner = " ".join(m.group(1).lower().split())
     tail = command[command.lower().find(runner.split()[0]) + len(runner):]
     tail = re.split(r"\s(?:&&|\|\||;|\||>|2>)\s|\n", tail)[0]
-    targets = frozenset(tok for tok in tail.split() if _TARGET_RE.match(tok))
-    return runner, targets
+    tokens = tail.split()
+    targets, opaque, skip = set(), False, False
+    for tok in tokens:
+        if skip:
+            skip = False
+            continue
+        flag = tok.split("=", 1)[0]
+        if flag in _SELECT_FLAGS:
+            opaque = True
+        elif flag in _VALUE_FLAGS:
+            skip = "=" not in tok
+        elif tok.startswith("-") or tok in _SUBCOMMANDS:
+            continue
+        elif _TARGET_RE.match(tok):
+            targets.add(tok)
+        else:
+            opaque = True
+    if opaque:
+        targets.add(_OPAQUE + " ".join(tokens))   # keeps its paths too, so a broader path rerun can still cover it
+    return runner, frozenset(targets)
 
 
 def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
-    """A whole-suite rerun (no targets, or `.`) covers anything; a whole-suite failure needs a whole-suite rerun."""
+    """A whole-suite rerun (no targets, or `.`) covers anything. An opaque rerun covers only the identical check.
+    A path rerun covers a failure whose paths all sit under it (a file covers its nodes and its own filtered
+    runs); it never covers a whole-suite failure or an opaque failure without paths."""
     if not rerun or "." in rerun:
         return True
-    return bool(failed) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in failed)
+    if any(r.startswith(_OPAQUE) for r in rerun):
+        return failed == rerun
+    paths = {t for t in failed if not t.startswith(_OPAQUE)}   # an opaque failure with no paths is never covered
+    return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
 
 
 def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:

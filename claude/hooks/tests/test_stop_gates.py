@@ -91,6 +91,33 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertEqual(gate([("TOOL OUTPUT", node_failed), ("TOOL OUTPUT", file_reran)], "Done."), "", "the file covers its node")
         self.assertIn("AssertionError", gate([("TOOL OUTPUT", node_failed), ("TOOL OUTPUT", other_node)], "Done."))
 
+    def test_narrower_or_unidentifiable_runs_never_clear_a_broader_failure(self) -> None:
+        # Recheck 2 (2026-09-27): `pytest tests/test_payment.py -k test_one` (1 passed, 1 deselected) cleared the
+        # failed file; so did a marker filter, a parametrized id and a quoted path (unrecognized -> "no targets"
+        # -> "whole suite"). Rule: unknown or narrower coverage cannot clear a broader failure.
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        file_failed = "[c1] Bash: pytest tests/test_payment.py\n\nFAILED tests/test_payment.py::test_two - AssertionError: 1 != 2"
+        narrower = [
+            "pytest tests/test_payment.py -k test_one", "pytest -k test_one tests/test_payment.py",
+            "pytest tests/test_payment.py -m smoke", "pytest --lf", "pytest tests/test_payment.py --deselect tests/test_payment.py::test_two",
+            "pytest tests/test_payment.py::test_one[1-2]", 'pytest "tests/test other.py"', "pytest something", "pytest --foo bar",
+        ]
+        for cmd in narrower:
+            out = ("TOOL OUTPUT", f"[c2] Bash: {cmd}\n\n1 passed, 1 deselected in 0.1s")
+            self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), out], "Done."), cmd)
+        for cmd in ("pytest tests/test_payment.py", "pytest tests/", "pytest", "python -m pytest -q -p no:cacheprovider",
+                    "pytest tests/test_payment.py -x --tb=short -n 2 --timeout 30"):
+            out = ("TOOL OUTPUT", f"[c3] Bash: {cmd}\n\n2 passed in 0.1s")
+            self.assertEqual(gate([("TOOL OUTPUT", file_failed), out], "Done."), "", cmd)
+        narrow_failed = "[c4] Bash: pytest tests/test_payment.py -k test_two\n\nFAILED tests/test_payment.py::test_two - AssertionError"
+        same_narrow = "[c5] Bash: pytest tests/test_payment.py -k test_two\n\n1 passed, 1 deselected in 0.1s"
+        other_narrow = "[c6] Bash: pytest tests/test_payment.py -k test_one\n\n1 passed, 1 deselected in 0.1s"
+        whole_file = "[c7] Bash: pytest tests/test_payment.py\n\n2 passed in 0.1s"
+        self.assertEqual(gate([("TOOL OUTPUT", narrow_failed), ("TOOL OUTPUT", same_narrow)], "Done."), "", "identical narrow rerun clears")
+        self.assertEqual(gate([("TOOL OUTPUT", narrow_failed), ("TOOL OUTPUT", whole_file)], "Done."), "", "the whole file covers a filtered run of it")
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", narrow_failed), ("TOOL OUTPUT", other_narrow)], "Done."))
+
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 
