@@ -165,6 +165,14 @@ _AUTHORIZATION_RE = re.compile(
     r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
+# "don't keep deploying" is not an OK (2026-09-27 review): a match right after a negation does not count.
+_NEGATED_RE = re.compile(r"\b(?:don['’]?t|do not|never|stop|no longer|not)\W*$", re.IGNORECASE)
+
+
+def _authorizes(text: str) -> bool:
+    return any(not _NEGATED_RE.search(text[:m.start()]) for m in _AUTHORIZATION_RE.finditer(text))
+
+
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
 _COMMAND_ARG_RE = re.compile(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Hard-to-reverse shared-state actions: merge into the base branch, deploy, rewrite a pushed
@@ -203,7 +211,7 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
         # that are mostly questions, and scheduled/monitor prompts quoting the owner, are not instructions either.
         if len(text) > 400 or text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
-        if _AUTHORIZATION_RE.search(text[:240]):
+        if _authorizes(text[:240]):
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
             if len(out) >= limit:
                 break
