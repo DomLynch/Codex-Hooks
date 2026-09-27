@@ -168,16 +168,22 @@ _AUTHORIZATION_RE = re.compile(
 # One rule grants and revokes (recheck 2026-09-27: separate patterns let "Nothing is approved." slip past both). A
 # negation earlier in the same SENTENCE makes the phrase a refusal; commas do not end it ("Do not ever, under any
 # circumstances, deploy it"). A negation that only negates hesitation ("don't stop", "no worries", "not sure") is
-# not a refusal, nor is the owner describing themselves ("I'm not technical, do it yourself"), and "stop" counts
-# only directly before the phrase ("stop asking, you decide" is an OK).
+# not a refusal, nor is the owner describing themselves ("I'm not technical, do it yourself"): only those words are
+# exempt, so "I'm not approving / not giving approval / not saying go ahead" stay refusals (recheck 2, 2026-09-27).
+# "stop" counts only directly before the phrase ("stop asking, you decide" is an OK).
 _NEGATION_RE = re.compile(
-    r"(?<!\bim )(?<!\bi'm )(?<!\bi’m )(?<!\bi am )\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b"
-    r"(?!\s+(?:stop|wait|worry|worries|hesitate|problem|sure|panic|bother|rush)\b)|\bstop\s*$", re.IGNORECASE)
+    r"\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b"
+    r"(?!\s+(?:stop|wait|worry|worries|hesitate|problem|sure|certain|clear|panic|bother|rush|technical|techy|familiar|"
+    r"able|around|here|available|good|great|an?\s+(?:expert|dev\w*|coder|programmer|engineer|techie))\b)|\bstop\s*$",
+    re.IGNORECASE)
 # Refusing a consequential action ("do not deploy", "hold off on merging") is a refusal whatever else the message says.
 _REFUSAL_RE = re.compile(
     r"\b(?:don['’]?t|do not|never|stop|hold off(?: on)?|no more)[\s,]+(?:ever[\s,]+|yet[\s,]+)?"
     r"(?:deploy|merg|ship|releas|push|go(?:ing)? live)", re.IGNORECASE)
-_APPROVAL_WORD_RE = re.compile(r"\bapprov\w*\b", re.IGNORECASE)   # "not an approval" revokes; bare "approval" grants nothing
+# Negated, these withhold permission ("not an approval", "not authorising this"): a refusal. Bare, they grant
+# nothing. Deliberately not "deploy"/"merge"/"ok": replay showed "nothing to deploy?" and "i dont want to
+# micro manage each deploy" would become refusals.
+_APPROVAL_WORD_RE = re.compile(r"\b(?:approv\w*|authori[sz]\w*)\b", re.IGNORECASE)
 
 
 def authorization_signal(text: str) -> str:
