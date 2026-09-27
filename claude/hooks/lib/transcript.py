@@ -135,23 +135,114 @@ FAILURE_ACK_RE = re.compile(
 )
 
 
+_COMMAND_JSON_RE = re.compile(r'\{\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)')   # first line may be cut mid-JSON
+_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:\[\]-]*$")   # a path-like token: tests/, x.py, x.py::t[1-2], .
+# Options that do not change which tests are collected. Anything else on the command line (a selection flag, an
+# attached value like -ktest_one, --ignore=..., an option we do not know) makes the run opaque: it is the same
+# check as itself and covers nothing else. Allow-list, not block-list (recheck 3, 2026-09-27).
+# "Takes a value" is not "cannot change coverage" (recheck 4): an ini override (-o), a config file (-c), a plugin
+# (-p) or a directory switch (--rootdir, -C) can deselect tests, so they are NOT listed and make the run opaque.
+# Value flags are per runner because one letter means different things (-n is xdist workers in pytest; -p is a
+# plugin in pytest but the file PATTERN in `unittest discover`).
+_VALUE_FLAGS = {
+    "*": {"-W", "--tb", "--durations", "--maxfail", "--timeout", "--cov-report", "--color", "--capture", "--reporter",
+          "--test-reporter", "--basetemp"},
+    "pytest": {"-n", "--cov"},
+}
+_NEUTRAL_FLAGS = {"-q", "-v", "-x", "-s", "-l", "--quiet", "--verbose", "--exitfirst", "--no-header", "--no-summary",
+                  "--disable-warnings", "--strict-markers", "--strict", "--fix", "--noEmit", "--pretty", "--no-cov", "--"}
+_NEUTRAL_CLUSTER_RE = re.compile(r"^-[qvxsl]+$|^-r[a-zA-Z]*$")   # -qx, -vv, -rA
+# Selection under UNCHANGED configuration: a known subset of what the same paths collect, so a broader run of those
+# paths covers it (`pytest tests/x.py` covers `pytest tests/x.py -k t`). Anything else opaque is config-dependent
+# (-o/-c/-p/--rootdir, an unknown flag): neither adding nor removing it proves equivalent coverage (recheck 5), so
+# only the identical command clears it.
+_SUBSET_VALUE_FLAGS = {"-k", "-m", "--deselect", "--ignore", "--ignore-glob", "--grep", "-t", "--testNamePattern",
+                       "--testPathPattern", "-run"}
+_SUBSET_FLAGS = {"--lf", "--last-failed", "--sw", "--stepwise"}
+_SUBCOMMANDS = {"run", "discover", "exec", "check"}
+_OPAQUE = "\x00"          # prefix of a target that stands for "this exact command": a known subset of its paths
+_OPAQUE_CONFIG = "\x00!"  # same, but config-dependent: covered by nothing except the identical command
+
+
+def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
+    """(runner, targets) of the check a TOOL OUTPUT line ran, or None. The runner is the test/lint tool named on
+    the line. Targets are its path-like arguments (empty = the whole suite). A run with any option that is not on
+    the coverage-neutral allow-list, or any argument that is not a recognizable path, gets an opaque target: the
+    exact command. It is the same check as itself and covers nothing else, because "I could not tell what ran"
+    must never mean "everything ran"."""
+    m = TEST_RUNNER_RE.search(first_line)
+    if not m:
+        return None
+    text = first_line.split(":", 1)[-1] if first_line.startswith("[") else first_line
+    j = _COMMAND_JSON_RE.search(text)
+    command = j.group(1).encode().decode("unicode_escape", "ignore") if j else text
+    runner = " ".join(m.group(1).lower().split())
+    tail = command[command.lower().find(runner.split()[0]) + len(runner):]
+    tail = re.split(r"\s(?:&&|\|\||;|\||>|2>)\s|\n", tail)[0]
+    tokens = tail.split()
+    value_flags = _VALUE_FLAGS["*"] | _VALUE_FLAGS.get(runner, set())
+    targets, opaque, skip = set(), "", False
+    for tok in tokens:
+        if skip:
+            skip = False
+            continue
+        flag = tok.split("=", 1)[0]
+        if flag in value_flags or flag in _SUBSET_VALUE_FLAGS:
+            skip = "=" not in tok
+            opaque = opaque or (_OPAQUE if flag in _SUBSET_VALUE_FLAGS else "")
+        elif tok in _SUBSET_FLAGS or (runner == "pytest" and tok[:2] in {"-k", "-m"} and len(tok) > 2):   # --lf, -ktest_one
+            opaque = opaque or _OPAQUE
+        elif tok in _NEUTRAL_FLAGS or _NEUTRAL_CLUSTER_RE.match(tok) or tok in _SUBCOMMANDS:
+            continue
+        elif not tok.startswith("-") and _TARGET_RE.match(tok):
+            targets.add(tok)
+        else:
+            opaque = _OPAQUE_CONFIG   # -o/-c/-p/--rootdir, --anything-unknown, a non-path word: coverage unknown
+    if opaque:
+        targets.add(opaque + " ".join(tokens))   # keeps its paths too, so a broader path rerun can cover a subset
+    return runner, frozenset(targets)
+
+
+def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
+    """A whole-suite rerun (no targets, or `.`) covers anything except a config-dependent failure. An opaque rerun,
+    or a config-dependent failure, matches only the identical check. A path rerun covers a failure whose paths all
+    sit under it (a file covers its nodes and its own subset runs); it never covers a whole-suite failure or an
+    opaque failure without paths."""
+    if any(r.startswith(_OPAQUE) for r in rerun) or any(t.startswith(_OPAQUE_CONFIG) for t in failed):
+        return failed == rerun   # before `.`: `pytest . -k x` is filtered, not everything
+    if not rerun or "." in rerun:
+        return True
+    paths = {t for t in failed if not t.startswith(_OPAQUE)}   # an opaque failure with no paths is never covered
+    return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
+
+
 def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:
     """Deterministic gate for the most common audit finding: a test/check runner failed
     this turn and the final message says nothing about it.
 
-    Only the LAST test-runner output counts (a later green rerun supersedes an earlier
-    red one). Returns the failure excerpt to quote back, or "" when nothing to flag.
+    A failure is identified by its check (runner + targets). Only a later run of the same runner that covers
+    those targets AND shows a pass receipt clears it: `pytest tests/test_logging.py` does not clear a failed
+    `pytest tests/test_payment.py`, `pytest --help` clears nothing, and `ruff` never clears `pytest`.
+    Returns the unresolved failure excerpt(s) to quote back, or "" when nothing to flag.
     """
-    last = ""
+    failed: dict[tuple[str, frozenset[str]], str] = {}
     for role, body in entries:
-        if role == "TOOL OUTPUT" and TEST_RUNNER_RE.search(body.split("\n", 1)[0]):
-            last = body
-    if not last:
+        if role != "TOOL OUTPUT":
+            continue
+        first = body.split("\n", 1)[0]
+        identity = _check_identity(first)
+        if not identity:
+            continue
+        excerpt = _failure_excerpt(body, 300)
+        if excerpt:
+            failed[identity] = excerpt
+            continue
+        if _RECEIPT_LINE_RE.search(body):
+            runner, targets = identity
+            failed = {k: v for k, v in failed.items() if not (k[0] == runner and _rerun_covers(k[1], targets))}
+    if not failed or FAILURE_ACK_RE.search(final_message or ""):
         return ""
-    excerpt = _failure_excerpt(last, 300)
-    if not excerpt or FAILURE_ACK_RE.search(final_message or ""):
-        return ""
-    return excerpt
+    return _bounded_compact("\n".join(failed.values()), 600)
 
 
 EDIT_TOOL_RE = re.compile(r"^(Edit|Write|MultiEdit|NotebookEdit):", re.IGNORECASE)
@@ -241,7 +332,7 @@ def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverabl
     return not deliverable_re.search(final_message or "")
 
 
-DIFF_CAP = 2500
+DIFF_CAP = 6000   # 2500 cut a 3.5k new hook in half; the reviewer judged the rest from the agent's words
 
 
 def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP, since: str = "") -> str:
@@ -294,6 +385,52 @@ def turn_diff(cwd: str, paths: list[str], cap: int = DIFF_CAP, since: str = "") 
         return ""
     return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
 
+
+
+def turn_commits(cwd: str, since: str, limit: int = 5) -> list[str]:
+    """SHAs committed in THIS worktree since `since` (ISO, the turn's start), oldest first.
+
+    Read from the worktree's own HEAD reflog, so it sees commits however they were made (Edit tool, a Bash
+    script, `git commit` after a python heredoc) and never another worktree's. 2026-09-27: the hooks lane and
+    the Auditer edit through Bash, so edited_paths() was empty and the reviewer judged 7 code turns from prose."""
+    if not cwd or not since:
+        return []
+    import subprocess
+    from datetime import datetime
+
+    try:
+        start = datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
+        out = subprocess.run(["git", "-C", cwd, "reflog", "-200", "--date=unix", "--format=%H %gd %gs", "HEAD"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return []
+    shas: list[str] = []
+    for line in out.splitlines():
+        m = re.match(r"([0-9a-f]{40}) HEAD@\{(\d+)\} (\S+)", line)
+        if not m or int(m.group(2)) < start:
+            continue
+        if m.group(3).startswith("commit") and m.group(1) not in shas:
+            shas.append(m.group(1))
+    return list(reversed(shas))[-limit:]
+
+
+def turn_commits_diff(cwd: str, since: str, cap: int = DIFF_CAP) -> str:
+    """The code this turn committed: per commit its file list, then the patch of non-test files (tests are
+    named in the list; the code is what the reviewer must read). "" when the turn committed nothing."""
+    import subprocess
+
+    parts = []
+    try:
+        for sha in turn_commits(cwd, since):
+            stat = subprocess.run(["git", "-C", cwd, "show", "--stat", "--format==== commit %h %s ===", sha],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+            code = subprocess.run(["git", "-C", cwd, "show", "--format=", "--patch", sha, "--", ".",
+                                   ":(exclude,glob)**/tests/**", ":(exclude,glob)**/test_*"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+            parts.append("\n".join(x for x in (stat, code) if x))
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return _bounded_compact("\n\n".join(parts), cap, "\n...[diff elided to fit]...\n") if parts else ""
 
 # Narrow by design: an explicit HTTP status claim about a named host is the only live/deploy
 # claim shape a regex can separate from narrative. Broad "is live / shipped / deployed" matching

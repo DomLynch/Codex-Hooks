@@ -18,7 +18,8 @@ from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 from lib.handoff_check import project_slug
-from user_prompt_submit import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
+from lib.context_size import TITLE_LANES, lane_name, session_title
+from lib.policies import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
 
 
 COMPONENT = "session_start"
@@ -63,13 +64,25 @@ BACKLOG_SKIP_PARTS = {
 }
 
 
+# Every part goes out in ONE JSON object. Until 2026-09-26 each part was written as its own object; Claude Code
+# rejected the concatenation as invalid JSON ("hook_non_blocking_error" in every lane transcript) and dropped all
+# of it, so no lane ever saw its memory receipt or state brief after a /clear.
+_CONTEXT: list[str] = []
+
+
 def additional_context(context: str) -> None:
-    sys.stdout.write(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": context,
-        }
-    }))
+    _CONTEXT.append(context)
+
+
+def emit_context() -> None:
+    if _CONTEXT:
+        sys.stdout.write(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "\n\n".join(_CONTEXT),
+            }
+        }))
+        _CONTEXT.clear()
 
 
 def format_briefing(handoff: dict, mined: list[dict]) -> str:
@@ -267,6 +280,68 @@ def memory_receipt(cwd: Path, session_id: str = "") -> str:
             "and hooks/lib/export_transcript.py turns its .jsonl into readable markdown.")
 
 
+# Title words that are not the lane's ~/Developer/frankendom-<key> folder (the rest are in TITLE_LANES or match).
+# Kept out of TITLE_LANES because the per-lane lessons and context limits there are keyed "lead" / "character".
+FOLDER_KEYS = {"lead": "lead-catalogue", "character": "char"}
+
+
+def lane_title(transcript_path: str) -> str:
+    """This session's title, else the newest earlier transcript's in the same folder. Right after a /clear the new
+    transcript has no title yet (it lands ~20 lines in, after this hook), and one app worktree holds one lane."""
+    title = session_title(transcript_path) if transcript_path else ""
+    if title or not transcript_path:
+        return title
+    try:
+        others = sorted(Path(transcript_path).parent.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        return ""
+    for other in others[:10]:
+        if str(other) != transcript_path and (title := session_title(str(other))):
+            return title
+    return ""
+
+
+def worktree_lane(cwd: Path, transcript_path: str) -> str:
+    """The Frankendom lane key of a session the app runs in .../frankendom/.claude/worktrees/<random>, from its
+    title ("Frankendom - Lead Developer" -> lead-catalogue); '' for any other session."""
+    if "/frankendom/.claude/worktrees/" not in str(cwd).lower():
+        return ""
+    first = lane_name(lane_title(transcript_path))
+    return "" if first == "session" else FOLDER_KEYS.get(first, TITLE_LANES.get(first, first))
+
+
+def restart_note(cwd: Path, key: str) -> str:
+    """What Dom used to paste after every /clear (2026-09-26 restart text), worked out for this lane: its key,
+    memory folder, newest state doc on any branch, and the worktree folder rule."""
+    import subprocess
+    home = Path.home() / "Developer" / f"frankendom-{key}"
+    if not home.is_dir():
+        return (f"# Lane restart\nThis session's title names lane `{key}`, but ~/Developer/frankendom-{key} does not "
+                "exist. Find yours with: ls -d ~/Developer/frankendom-*")
+    doc = f"docs/state/{STATE_DOC_ALIASES.get(key, key)}.md"
+    try:
+        newest = subprocess.run(["git", "log", "--remotes", "-1", "--format=%h %cs %D", "--", doc], cwd=str(cwd),
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        newest = ""
+    state = (f"newest copy {newest}; read it with: git show {newest.split()[0]}:{doc}\n"
+             "  It exists: do NOT write a new one or open another PR." if newest else
+             "not on any branch. Do not go looking for it; ask Lead.")
+    memory = Path.home() / ".claude" / "projects" / ("-" + project_slug(home)) / "memory"
+    return (f"# Lane restart — you are `{key}` (from this session's title)\n"
+            f"MEMORY: {memory}/ — NOT the memory path in your system prompt. Read MEMORY.md and today's files. "
+            "Do not delete anything there; it is current.\n"
+            f"STATE DOC: {doc}, {state}\n"
+            f"FOLDER: this session runs in an app worktree ({cwd}), a full checkout of the same repo. Do your edits "
+            f"HERE; the app refuses edits in {home}, and never write into it with shell commands.\n"
+            f"  New branch: git fetch -q origin && git switch -c {key}/<task> origin/codex/01a09a76/task-1\n"
+            f"  If tests need packages: ln -s {home}/node_modules node_modules\n"
+            f"  Tell Dom once, and do NOT wait for it: \"when you're home, reopen me on ~/Developer/frankendom-{key} "
+            "with the worktree switch off\".\n"
+            "Read your memory and your state doc, then say in one line what you are picking up. "
+            "Do not rewrite the state doc.")
+
+
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:
     if not handoff:
         return {}
@@ -309,7 +384,13 @@ def main() -> None:
             write_session_spec(session_id, prompt)
             log(COMPONENT, f"session spec captured chars={len(prompt)}")
         remember_repo(cwd)
-        additional_context(memory_receipt(cwd, session_id))
+        # A lane in an app worktree gets its restart brief and the memory receipt of its real folder, not of the
+        # random worktree name (Dom pasted this by hand after every /clear until 2026-09-26).
+        lane = worktree_lane(cwd, payload.get("transcript_path") or "")
+        home = Path.home() / "Developer" / f"frankendom-{lane}"
+        if lane:
+            additional_context(restart_note(cwd, lane))
+        additional_context(memory_receipt(home if lane and home.is_dir() else cwd, session_id))
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])
@@ -338,6 +419,7 @@ def main() -> None:
             additional_context(SESSION_BASELINE if not codegraph else f"{SESSION_BASELINE.rstrip()}\n\n{codegraph}")
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
+    emit_context()
 
 
 if __name__ == "__main__":

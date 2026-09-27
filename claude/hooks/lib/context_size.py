@@ -20,10 +20,11 @@ import re
 
 WARN_TOKENS = 400_000   # Dom, 2026-09-25: raised from 300k (itself raised from 200k on 2026-09-22)
 # The coordinating lanes refill fastest and lose the most working state on a restart (the PR merge order,
-# the lane briefs), so they get headroom (Dom, 2026-09-25: Lead and Strategy at 500k; Deploy is back with the rest).
+# the lane briefs), so they get headroom (Dom, 2026-09-26: Lead and Strategy at 600k, Deploy at 500k; Lead filled
+# fastest and restarted unnoticed at 500k, losing time).
 # "lead" is the Lead lane when it is named from its session title rather than its ~/Developer/frankendom-* folder.
-LANE_WARN_TOKENS = {"lead-catalogue": 500_000, "lead": 500_000, "strategy": 500_000}
-URGENT_TOKENS = 600_000  # above every lane threshold, so "put this first" never fires at the first notice
+LANE_WARN_TOKENS = {"lead-catalogue": 600_000, "lead": 600_000, "strategy": 600_000, "deploy": 500_000}
+URGENT_TOKENS = 700_000  # above every lane threshold, so "put this first" never fires at the first notice
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
 # the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
@@ -88,7 +89,8 @@ def session_lane(transcript_path: str, cwd: str) -> str:
 
 
 # A title's first word is not always the lane's key: "Multi Chars" keeps docs/state/multichar.md.
-TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish"}
+TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish",
+               "hero": "herolook"}
 
 
 def warn_tokens(lane: str) -> int:

@@ -12,6 +12,7 @@ from unittest import mock
 HOOKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS))
 import mimo_audit  # noqa: E402
+from lib import audit_state  # noqa: E402
 from lib.transcript import compact_latest_task, compact_task_entries, latest_task_slice  # noqa: E402
 
 
@@ -44,9 +45,9 @@ class ReviewEvidenceTests(unittest.TestCase):
                 root = Path(tmp)
                 payload = {"session_id": "short", "last_assistant_message": message}
                 with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()), \
-                     mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"), \
+                     mock.patch.object(audit_state, "STATE_FILE", root / "iterations.json"), \
                      mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"), \
-                     mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"), \
+                     mock.patch.object(audit_state, "VERDICT_FILE", root / "verdict.json"), \
                      mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"), \
                      mock.patch.object(mimo_audit, "record_lesson"), \
                      mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. No deployment evidence") as audit:

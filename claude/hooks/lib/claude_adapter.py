@@ -162,8 +162,48 @@ _NOT_OWNER_PREFIXES = ("Another Claude session sent", "<", "Stop hook feedback",
                        "[Repository Quality", "[SYSTEM NOTIFICATION", "[Cross-session", "[MiniMax")
 _AUTHORIZATION_RE = re.compile(
     r"\b(go live|get (it|us|them|this) (all )?(merged|deployed|live)|push (it )?live|(deploy|merge|ship|release) (it|this|them|now)|"
+    r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
+# One rule grants and revokes (recheck 2026-09-27: separate patterns let "Nothing is approved." slip past both). A
+# negation earlier in the same SENTENCE makes the phrase a refusal; commas do not end it ("Do not ever, under any
+# circumstances, deploy it"). A negation that only negates hesitation ("don't stop", "no worries", "not sure") is
+# not a refusal, nor is the owner describing themselves ("I'm not technical, do it yourself"): only those words are
+# exempt, so "I'm not approving / not giving approval / not saying go ahead" stay refusals (recheck 2, 2026-09-27).
+# "stop" counts only directly before the phrase ("stop asking, you decide" is an OK).
+_NEGATION_RE = re.compile(
+    r"\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b"
+    r"(?!\s+(?:stop|wait|worry|worries|hesitate|problem|sure|certain|clear|panic|bother|rush|technical|techy|familiar|"
+    r"able|around|here|available|good|great|an?\s+(?:expert|dev\w*|coder|programmer|engineer|techie))\b)|\bstop\s*$",
+    re.IGNORECASE)
+# Refusing a consequential action ("do not deploy", "hold off on merging") is a refusal whatever else the message says.
+_REFUSAL_RE = re.compile(
+    r"\b(?:don['’]?t|do not|never|stop|hold off(?: on)?|no more)[\s,]+(?:ever[\s,]+|yet[\s,]+)?"
+    r"(?:deploy|merg|ship|releas|push|go(?:ing)? live)", re.IGNORECASE)
+# Negated, these withhold permission ("not an approval", "not authorising this"): a refusal. Bare, they grant
+# nothing. Deliberately not "deploy"/"merge"/"ok": replay showed "nothing to deploy?" and "i dont want to
+# micro manage each deploy" would become refusals.
+_APPROVAL_WORD_RE = re.compile(r"\b(?:approv\w*|authori[sz]\w*)\b", re.IGNORECASE)
+
+
+def authorization_signal(text: str) -> str:
+    """'ok' when the owner's message grants a merge/deploy, 'refusal' when it refuses or withdraws one
+    (which revokes every earlier OK), '' when it is neither. A refusal anywhere in the message wins."""
+    if _REFUSAL_RE.search(text):
+        return "refusal"
+    signal = ""
+    for m in sorted([*_AUTHORIZATION_RE.finditer(text), *_APPROVAL_WORD_RE.finditer(text)], key=lambda m: m.start()):
+        if _NEGATION_RE.search(re.split(r"[.;:!?\n]", text[:m.start()])[-1]):
+            return "refusal"
+        if m.re is _AUTHORIZATION_RE:
+            signal = "ok"
+    return signal
+
+
+def _authorizes(text: str) -> bool:
+    return authorization_signal(text) == "ok"
+
+
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
 _COMMAND_ARG_RE = re.compile(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Hard-to-reverse shared-state actions: merge into the base branch, deploy, rewrite a pushed
@@ -177,7 +217,7 @@ _CONSEQUENTIAL_RE = re.compile(
 
 def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, max_chars: int = 240) -> list[tuple[str, str]]:
     """The user's own messages in this session that read like an authorization (deploy, merge, ship,
-    go live ...), newest first, each (timestamp, text). Peer-session messages, hook feedback, monitor
+    go live ...), newest first, each (timestamp, text), stopping at the newest refusal (it revokes older OKs). Peer-session messages, hook feedback, monitor
     events and tool results are excluded by prefix, so a peer can never appear here as the owner.
     `before` (ISO) limits to messages sent before the current turn started."""
     try:
@@ -202,11 +242,30 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
         # that are mostly questions, and scheduled/monitor prompts quoting the owner, are not instructions either.
         if len(text) > 400 or text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
-        if _AUTHORIZATION_RE.search(text[:240]):
+        signal = authorization_signal(text[:240])
+        if signal == "refusal":
+            break  # the owner's latest word on merging/deploying is "no": earlier OKs are revoked
+        if signal == "ok":
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
             if len(out) >= limit:
                 break
     return out
+
+
+# A force-push that names a lane branch (`origin weapons/witch-staff`, `HEAD:char/rank-tint`) only rebases the lane's
+# own PR: 2026-09-26 lanes rejected every such finding. It stays consequential with no named branch, or onto a trunk
+# (Frankendom's is codex/01a09a76/task-1).
+_TRUNK_RE = re.compile(r"^(?:main|master|trunk|develop|HEAD|codex/.*)$")
+
+
+def _force_push_to_lane_branch(segment: str) -> bool:
+    args = segment.split()[segment.split().index("push") + 1:]
+    positional = [a for a in args if not a.startswith("-") and a not in ("2>", "2>&1", ">") and not a.startswith(("2>", ">"))]
+    refspecs = positional[1:]
+    if not refspecs:
+        return False
+    targets = [r.lstrip("+").split(":")[-1].removeprefix("refs/heads/") for r in refspecs]
+    return all(t and not _TRUNK_RE.match(t) for t in targets)
 
 
 def executed_consequential_commands(entries: list[tuple[str, str]]) -> list[str]:
@@ -225,6 +284,8 @@ def executed_consequential_commands(entries: list[tuple[str, str]]) -> list[str]
         for segment in re.split(r"&&|\|\||;|\n|\|", command):
             seg = segment.strip()
             hit = _CONSEQUENTIAL_RE.match(seg)
+            if hit and hit.group(0).startswith("git push") and _force_push_to_lane_branch(seg):
+                continue
             if hit and hit.group(0) not in found:
                 found.append(hit.group(0).strip())
     return found
@@ -260,6 +321,49 @@ def latest_turn_started_at(transcript_path: str) -> str:
         if is_turn_start(entry):
             return str(entry.get("timestamp") or "")
     return ""
+
+
+# Checkable facts the final answer cites: commit SHAs (hex with a digit and a letter), #PR numbers, HH:MM times and
+# "N passed" counts. 2026-09-26: ~10 rejections/day were the reviewer missing evidence from earlier in the session.
+_EVIDENCE_TOKEN_RE = re.compile(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|#\d{1,6}\b|\b\d{1,2}:\d{2}\b|\b\d+ passed\b")
+
+
+def _tool_result_text(content: object) -> str:
+    if not isinstance(content, list):
+        return ""
+    parts = [_content_text(item.get("content")) for item in content if isinstance(item, dict) and item.get("type") == "tool_result"]
+    return "\n".join(p for p in parts if p)
+
+
+def earlier_session_evidence(transcript_path: str, last_msg: str, slice_text: str, before: str, max_chars: int = 1500) -> list[str]:
+    """Lines of earlier tool output or peer messages (before `before`, the current turn's start) that contain a
+    SHA / #PR / HH:MM / "N passed" the final answer cites but the reviewed slice does not. Newest first, each
+    "[HH:MM] line". The agent's own earlier words are never included: only what a tool or a peer printed."""
+    tokens = [t for t in dict.fromkeys(_EVIDENCE_TOKEN_RE.findall(last_msg or "")) if t not in (slice_text or "")][:20]
+    if not tokens or not before:
+        return []
+    try:
+        lines = read_claude_transcript_lines(transcript_path)
+    except Exception:
+        return []
+    out: list[str] = []
+    used = 0
+    for entry in reversed(lines):
+        ts = str(entry.get("timestamp") or "")
+        if entry.get("type") != "user" or not ts or ts >= before:
+            continue
+        content = (entry.get("message") or {}).get("content")
+        text = content if isinstance(content, str) and _PEER_START_RE.search(content[:300]) else _tool_result_text(content)
+        for line in text.splitlines():
+            line = " ".join(line.split())[:200]
+            if not line or not any(t in line for t in tokens):
+                continue
+            row = f"[{ts[11:16]}] {line}"
+            if row in out or used + len(row) > max_chars:
+                continue
+            out.append(row)
+            used += len(row) + 1
+    return out
 
 
 def latest_task_entries_claude(transcript_path: str, include_previous: bool = False) -> list[tuple[str, str]]:

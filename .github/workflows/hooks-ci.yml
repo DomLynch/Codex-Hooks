@@ -20,6 +20,8 @@ jobs:
             python3 -m pip install --user ruff
           fi
           ruff --version
+          python3 -m pytest --version >/dev/null 2>&1 || python3 -m pip install --user pytest
+          python3 -m pytest --version
 
       - name: Install isolated telemetry SDK for contract tests
         run: sh scripts/install-telemetry.sh
@@ -28,7 +30,8 @@ jobs:
         run: python3 -m pytest hooks/tests -q -p no:cacheprovider
 
       - name: Run Claude hook tests
-        run: python3 -m unittest discover -s claude/hooks/tests
+        # pytest, not unittest: unittest skips the plain test_ functions (a stale assertion slipped through that way)
+        run: python3 -m pytest claude/hooks/tests -q -p no:cacheprovider
 
       - name: Compile hook Python
         run: python3 -m py_compile $(find hooks claude/hooks -name '*.py' -not -path '*/__pycache__/*')

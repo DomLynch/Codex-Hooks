@@ -19,17 +19,33 @@ from pathlib import Path
 
 LOCK_PATH = Path(os.environ.get("DEPLOY_LOCK") or Path.home() / ".claude" / "state" / "deploy_in_flight.json")
 STALE_S = 45 * 60
-# What competes with a deploy for the Mac: real browsers, whole test suites, builds and bakes. Unit tests of one file,
+# What competes with a deploy for the Mac: real browsers, whole test suites, builds and bakes.
+# 2026-09-26: herolook-game-stills / herolook-stills (Playwright + Vite), herolook-kill-record (the sim) and build-creatures
+# (spawns blender) ran through the a981f7a5 lock: the name list needs stills, record and build-.
+# armour-contact-sheet (Playwright) and any herolook-*.mjs render are heavy too; the python herolook_*.py helpers are light and
+# never match here (python, .py). Unit tests of one file,
 # git, gh, curl, greps and edits are not on this list on purpose.
 HEAVY_RE = re.compile(
     r"(?:^|[\s;&|(])(?:"
-    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
-    r"|npm\s+run\s+(?:test:all|test:slow|quality(?::\w+)?|build|release-checks?)\b|node\s+scripts/release-checks\.mjs"
+    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
+    r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
+    r"|node\s+scripts/release-checks\.mjs"
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test\s+[^\s]+\s+[^\s]+"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
 )
 ALLOW_RE = re.compile(r"scripts/deploy\.sh\b")
+# Pixelmator Pro (Hero Look's headless texture step, 2026-09-26: ML super resolution + export via osascript) is heavy. The app is
+# named inside the osascript argument's quotes, which executable_text() strips as data, so this looks at the RAW command: a real
+# osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
+# a .scpt/.applescript path, a heredoc or `open -a`. Plain osascript (notifications) and a commit message naming Pixelmator pass.
+APP_HOST_RE = re.compile(r"(?:^|[\s;&|(])(?:osascript\b|open\s+-[ab]\b)")
+# Same line and segment (a newline or single | ends the command: 2026-09-27 review found `osascript -e notify` then
+# `git commit -m pixelmator` on the next line was blocked), or inside the osascript heredoc's own body.
+PIXELMATOR_RE = re.compile(
+    r"(?:osascript\b|open\s+-[ab]\b)[^\n;|&]*?pixelmator"
+    r"|osascript\b[^\n;|&]*<<-?\s*['\"]?(\w+)\b['\"]?[^\n]*\n(?:(?!\n\s*\1\s*(?:\n|$)).)*?pixelmator",
+    re.IGNORECASE | re.DOTALL)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -75,9 +91,37 @@ def active_lock(now: datetime | None = None) -> dict | None:
     return data
 
 
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)", re.DOTALL)
+QUOTED_RE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+SUBSTITUTION_RE = re.compile(r"(?<!\\)\$\(([^)]*)\)|(?<!\\)`((?:[^`\\]|\\.)*)`")   # \` and \$( are literal text
+SHELL = r"(?:^|[\s;&|(/])(?:ba|z)?sh"   # a shell command, not a file named x.sh
+RUNS_ITS_ARGUMENT_RE = re.compile(rf"(?:{SHELL}\s+-\w*c|(?:^|[\s;&|(])eval)\s*$")   # bash -c "...", zsh -lc '...', eval '...'
+SHELL_STDIN_RE = re.compile(rf"{SHELL}\s*$")                                         # bash <<EOF: the body is run
+
+
+def executable_text(command: str) -> str:
+    """The parts of a shell line that run: commit messages, PR bodies and script heredocs are data, not commands."""
+    def heredoc(m: re.Match) -> str:
+        return m.group(0) if SHELL_STDIN_RE.search(command[:m.start()].rstrip()) else ""
+
+    def quoted(m: re.Match) -> str:
+        inner = m.group(0)[1:-1]
+        if RUNS_ITS_ARGUMENT_RE.search(stripped[:m.start()]):
+            return f" {inner} "
+        # "$(npm test)" and "`npm test`" run even inside double quotes; single quotes run nothing.
+        if m.group(0)[0] == "'":
+            return '""'
+        return '"" ' + " ; ".join(a or b for a, b in SUBSTITUTION_RE.findall(inner))
+
+    stripped = HEREDOC_RE.sub(heredoc, command)
+    return QUOTED_RE.sub(quoted, stripped)
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
-    if not lock or not command or ALLOW_RE.search(command) or not HEAVY_RE.search(command):
+    runs = executable_text(command) if lock and command else ""
+    pixelmator = bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
+    if not runs or ALLOW_RE.search(runs) or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""

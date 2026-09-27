@@ -82,6 +82,9 @@ def test_the_prompt_hook_delivers_and_never_blocks(tmp_path, monkeypatch):
     """End to end on the Claude side: a queued message comes out of the real hook, labelled, then is gone."""
     import user_prompt_submit as u
     monkeypatch.setattr(inbox, "INBOX", tmp_path)
+    # the fake "disk gone" and delivery must not land in the real ~/.claude/logs (they read as live errors, 2026-09-27)
+    logged: list[str] = []
+    monkeypatch.setattr(u, "log", lambda component, msg: logged.append(msg))
     inbox.send(str(tmp_path), "Hook scripts - codex", "CI is green on 4427b84", inbox=tmp_path)
     out = u.with_inbox("BASE CONTEXT", tmp_path)
     assert out.startswith("# Inbox — messages from OTHER AGENTS")
@@ -89,6 +92,7 @@ def test_the_prompt_hook_delivers_and_never_blocks(tmp_path, monkeypatch):
     assert u.with_inbox("BASE CONTEXT", tmp_path) == "BASE CONTEXT"      # delivered once
     with mock.patch.object(u, "claim_for", side_effect=OSError("disk gone")):
         assert u.with_inbox("BASE CONTEXT", tmp_path) == "BASE CONTEXT"  # fail-open
+    assert "inbox fail-open: disk gone" in logged[-1]
 
 
 def test_the_codex_send_cli_writes_what_the_claude_hook_reads(tmp_path):
