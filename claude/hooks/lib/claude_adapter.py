@@ -165,13 +165,22 @@ _AUTHORIZATION_RE = re.compile(
     r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
-# "don't keep deploying" is not an OK (2026-09-27 review): a match right after a negation does not count. Only
-# directly before it (whitespace): "don't stop, keep deploying" is an OK, and \W* made it a refusal (same-day audit).
-_NEGATED_RE = re.compile(r"\b(?:don['’]?t|do not|never|stop|no longer|not)\s*$", re.IGNORECASE)
+# A negation anywhere earlier in the same clause cancels the OK ("Do not ever deploy it", "Nothing is approved",
+# audit D 2026-09-27). A comma or sentence end starts a new clause, so "don't stop, keep deploying" stays an OK;
+# "stop" counts only directly before the match ("stop asking, you decide" is an OK).
+_CLAUSE_NEGATION_RE = re.compile(r"\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b|\bstop\s*$", re.IGNORECASE)
+# Refusing a consequential action ("do not deploy", "hold off on merging") cancels any OK in the same message and
+# revokes every earlier one: "Go ahead only with the tests; do not deploy" is not a deploy OK.
+_REFUSAL_RE = re.compile(
+    r"\b(?:don['’]?t|do not|never|stop|hold off(?: on)?|no more)[\s,]+(?:ever[\s,]+|yet[\s,]+)?"
+    r"(?:deploy|merg|ship|releas|push|go(?:ing)? live)", re.IGNORECASE)
 
 
 def _authorizes(text: str) -> bool:
-    return any(not _NEGATED_RE.search(text[:m.start()]) for m in _AUTHORIZATION_RE.finditer(text))
+    if _REFUSAL_RE.search(text):
+        return False
+    return any(not _CLAUSE_NEGATION_RE.search(re.split(r"[,.;:!?\n]", text[:m.start()])[-1])
+               for m in _AUTHORIZATION_RE.finditer(text))
 
 
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
@@ -187,7 +196,7 @@ _CONSEQUENTIAL_RE = re.compile(
 
 def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, max_chars: int = 240) -> list[tuple[str, str]]:
     """The user's own messages in this session that read like an authorization (deploy, merge, ship,
-    go live ...), newest first, each (timestamp, text). Peer-session messages, hook feedback, monitor
+    go live ...), newest first, each (timestamp, text), stopping at the newest refusal (it revokes older OKs). Peer-session messages, hook feedback, monitor
     events and tool results are excluded by prefix, so a peer can never appear here as the owner.
     `before` (ISO) limits to messages sent before the current turn started."""
     try:
@@ -212,6 +221,8 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
         # that are mostly questions, and scheduled/monitor prompts quoting the owner, are not instructions either.
         if len(text) > 400 or text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
+        if _REFUSAL_RE.search(text[:240]):
+            break  # the owner's latest word on merging/deploying is "no": earlier OKs are revoked
         if _authorizes(text[:240]):
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
             if len(out) >= limit:
