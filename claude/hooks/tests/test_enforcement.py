@@ -274,34 +274,50 @@ class EnforcementTests(unittest.TestCase):
         g('remote', 'set-head', 'origin', 'main')
         return repo, g
 
-    def test_gate_is_skipped_only_for_a_clean_tree_that_ci_already_covers(self):
+    def test_gate_is_skipped_only_when_ci_passed_on_this_exact_commit(self):
+        # Audit A (2026-09-27): "on the default branch" or "has an open PR" was taken as CI passing; a workflows
+        # dir holding only a README was enough. Now GitHub Actions must have succeeded on the exact HEAD SHA.
         repo, g = self._repo_with_origin()
-        self.assertTrue(quality.ci_covered_commit(repo), 'clean, on the remote default branch -> covered')
-        (repo / 'a.txt').write_text('2\n')
-        self.assertEqual(quality.ci_covered_commit(repo), '', 'modified file -> gate runs')
-        g('checkout', '-q', '-b', 'lane/x')
-        g('commit', '-qam', 'lane edit')
-        self.assertEqual(quality.ci_covered_commit(repo), '', 'unpushed lane commit -> gate runs')
-        g('push', '-q', '-u', 'origin', 'lane/x')
-        with patch.object(quality, '_open_pr_count', return_value=0):
-            self.assertEqual(quality.ci_covered_commit(repo), '', 'pushed but no PR -> CI never runs -> gate runs')
-        with patch.object(quality, '_open_pr_count', return_value=1):
-            self.assertTrue(quality.ci_covered_commit(repo), 'pushed with an open PR -> covered')
-        (repo / 'new.txt').write_text('untracked\n')
-        with patch.object(quality, '_open_pr_count', return_value=1):
-            self.assertEqual(quality.ci_covered_commit(repo), '', 'untracked file -> gate runs')
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
+        cases = [
+            (None, ('', ''), 'gh failed -> gate runs'),
+            ([], ('', ''), 'no Actions run on this commit (a README-only workflows dir, no PR) -> gate runs'),
+            ([('completed', 'success'), ('completed', 'skipped')], (head[:7], 'passed'), 'every run green -> covered'),
+            ([('completed', 'success'), ('in_progress', '')], (head[:7], 'pending'), 'still running -> deferred'),
+            ([('completed', 'failure'), ('queued', '')], ('', ''), 'a failed run -> gate runs'),
+            ([('completed', 'cancelled')], ('', ''), 'cancelled is not a pass'),
+        ]
+        for runs, expected, why in cases:
+            with patch.object(quality, '_actions_runs', return_value=runs) as actions:
+                self.assertEqual(quality.ci_covered_commit(repo), expected, why)
+                actions.assert_called_once_with(repo, head)
+        with patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]):
+            (repo / 'a.txt').write_text('2\n')
+            self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'modified file -> gate runs')
+            g('checkout', '-q', 'a.txt')
+            (repo / 'new.txt').write_text('untracked\n')
+            self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'untracked file -> gate runs')
 
     def test_gate_skip_needs_a_ci_workflow_and_orchestrator_honours_it(self):
         repo, g = self._repo_with_origin(workflow=False)
-        self.assertEqual(quality.ci_covered_commit(repo), '', 'no CI in the repo -> nothing else verifies it -> gate runs')
+        with patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]):
+            self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'no CI in the repo -> nothing else verifies it -> gate runs')
         (repo / '.github' / 'workflows').mkdir(parents=True)
         (repo / '.github' / 'workflows' / 'ci.yml').write_text('on: push\n')
         g('add', '.')
         g('commit', '-qm', 'ci')
         g('push', '-q', 'origin', 'main')
-        with patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'):
-            self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
+        with (patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]),
+              patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log')):
+            self.assertIs(stop_orchestrator.run_aaa_gate(repo, 'transcript'), True)
             run_gate.assert_not_called()
+        with (patch.object(quality, '_actions_runs', return_value=[('in_progress', '')]),
+              patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'),
+              patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'),
+              patch('sys.stdout', new_callable=io.StringIO) as out):
+            self.assertEqual(stop_orchestrator.run_aaa_gate(repo, 'transcript', session_id='s1'), stop_orchestrator.DEFERRED)
+            run_gate.assert_not_called()
+            self.assertIn('CI is still running', out.getvalue())
         (repo / 'a.txt').write_text('dirty\n')
         with patch.object(stop_orchestrator, 'run_project_gate', return_value={'ok': True, 'results': []}) as run_gate, patch.object(stop_orchestrator, 'log'):
             self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
@@ -313,7 +329,7 @@ class EnforcementTests(unittest.TestCase):
         lock = {'revision': 'c0b321c7f8', 'age_s': 60}
         with patch.object(stop_orchestrator, 'active_deploy_lock', return_value=lock), \
                 patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'), \
-                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=''), \
+                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=('', '')), \
                 patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
                 patch.object(stop_orchestrator, 'log'), \
                 patch('sys.stdout', new_callable=io.StringIO) as out:
@@ -355,7 +371,7 @@ class EnforcementTests(unittest.TestCase):
         self.contract([['true']])
         with patch.object(stop_orchestrator, 'gate_busy', return_value={'reason': 'the Mac is overloaded (load 386, limit 60)'}), \
                 patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'), \
-                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=''), \
+                patch.object(stop_orchestrator, 'ci_covered_commit', return_value=('', '')), \
                 patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
                 patch.object(stop_orchestrator, 'log'), \
                 patch('sys.stdout', new_callable=io.StringIO) as out:

@@ -234,12 +234,14 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
 
 def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool | str:
     if (cwd / ".quality-gate.json").exists():
-        covered = ci_covered_commit(cwd)
-        if covered:
-            # Nothing local to verify: clean tree at a commit CI already checks (default branch or
-            # an open PR). Running the contract here would only duplicate CI and load the machine.
-            log(COMPONENT, f"repository quality gate skipped: clean tree at CI-covered {covered}")
+        sha, ci = ci_covered_commit(cwd)
+        if ci == "passed":
+            # Nothing local to verify: clean tree at a commit GitHub Actions already passed.
+            # Running the contract here would only duplicate CI and load the machine.
+            log(COMPONENT, f"repository quality gate skipped: clean tree, CI passed on {sha}")
             return True
+        if ci == "pending":
+            return defer_gate({"reason": f"CI is still running on {sha} (clean tree, nothing local to check)"}, session_id)
         deploying = active_deploy_lock() or gate_busy(cwd)
         if deploying:
             return defer_gate(deploying, session_id)
