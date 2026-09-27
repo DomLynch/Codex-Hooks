@@ -28,5 +28,8 @@
       "hooks",
       "claude/hooks"
     ]
+  ],
+  "ci_checks": [
+    "python-hooks"
   ]
 }

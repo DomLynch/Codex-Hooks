@@ -274,44 +274,69 @@ class EnforcementTests(unittest.TestCase):
         g('remote', 'set-head', 'origin', 'main')
         return repo, g
 
-    def test_gate_is_skipped_only_when_ci_passed_on_this_exact_commit(self):
-        # Audit A (2026-09-27): "on the default branch" or "has an open PR" was taken as CI passing; a workflows
-        # dir holding only a README was enough. Now GitHub Actions must have succeeded on the exact HEAD SHA.
+    def test_gate_is_skipped_only_when_every_named_ci_check_passed_on_this_exact_commit(self):
+        # Audit A (2026-09-27) + recheck: "some green Actions runs" is not "the checks that replace this gate".
+        # The contract names them (ci_checks); each must be present and green on the exact HEAD SHA.
         repo, g = self._repo_with_origin()
         head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
+        with patch.object(quality, '_check_runs', return_value=[('python-hooks', 'completed', 'success')]) as runs:
+            self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'no ci_checks in the contract -> gate runs')
+            runs.assert_not_called()
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [['true']], 'ci_checks': ['python-hooks', 'lint']}))
+        g('commit', '-qam', 'name the checks')
+        g('push', '-q', 'origin', 'main')
+        head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
+        ok, lint = ('python-hooks', 'completed', 'success'), ('lint', 'completed', 'success')
         cases = [
             (None, ('', ''), 'gh failed -> gate runs'),
-            ([], ('', ''), 'no Actions run on this commit (a README-only workflows dir, no PR) -> gate runs'),
-            ([('completed', 'success'), ('completed', 'skipped')], (head[:7], 'passed'), 'every run green -> covered'),
-            ([('completed', 'success'), ('in_progress', '')], (head[:7], 'pending'), 'still running -> deferred'),
-            ([('completed', 'failure'), ('queued', '')], ('', ''), 'a failed run -> gate runs'),
-            ([('completed', 'cancelled')], ('', ''), 'cancelled is not a pass'),
+            ([], ('', ''), 'no runs on this commit -> gate runs'),
+            ([ok, ('docs', 'completed', 'success')], ('', ''), 'a named check is missing; an unrelated green one does not stand in'),
+            ([ok, lint, ('docs', 'completed', 'failure')], (head[:7], 'passed'), 'every named check green; other checks are ignored'),
+            ([ok, ('lint', 'in_progress', '')], (head[:7], 'pending'), 'a named check still running -> deferred'),
+            ([ok, ('lint', 'completed', 'failure')], ('', ''), 'a named check failed -> gate runs'),
+            ([ok, ('lint', 'completed', 'cancelled')], ('', ''), 'cancelled is not a pass'),
+            ([ok, ('lint', 'completed', 'skipped')], (head[:7], 'passed'), 'skipped counts as not failed'),
         ]
         for runs, expected, why in cases:
-            with patch.object(quality, '_actions_runs', return_value=runs) as actions:
+            with patch.object(quality, '_check_runs', return_value=runs) as check_runs:
                 self.assertEqual(quality.ci_covered_commit(repo), expected, why)
-                actions.assert_called_once_with(repo, head)
-        with patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]):
+                check_runs.assert_called_once_with(repo, head)
+        for bad in ('python-hooks', [], [1], {'a': 1}):
+            (repo / '.quality-gate.json').write_text(json.dumps({'commands': [['true']], 'ci_checks': bad}))
+            with patch.object(quality, '_check_runs', return_value=[ok, lint]):
+                self.assertEqual(quality.ci_covered_commit(repo), ('', ''), f'invalid ci_checks {bad!r} -> gate runs')
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [['true']], 'ci_checks': ['python-hooks', 'lint']}))
+        with patch.object(quality, '_check_runs', return_value=[ok, lint]):
             (repo / 'a.txt').write_text('2\n')
             self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'modified file -> gate runs')
             g('checkout', '-q', 'a.txt')
             (repo / 'new.txt').write_text('untracked\n')
             self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'untracked file -> gate runs')
 
+    def test_this_repo_names_its_ci_check(self):
+        contract = json.loads((Path(__file__).resolve().parents[3] / '.quality-gate.json').read_text())
+        workflow = (Path(__file__).resolve().parents[3] / '.github' / 'workflows' / 'hooks-ci.yml').read_text()
+        for name in contract['ci_checks']:
+            self.assertIn(f'\n  {name}:', workflow, f'ci_checks names a job that is not in hooks-ci.yml: {name}')
+
     def test_gate_skip_needs_a_ci_workflow_and_orchestrator_honours_it(self):
         repo, g = self._repo_with_origin(workflow=False)
-        with patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]):
+        (repo / '.quality-gate.json').write_text(json.dumps({'commands': [['true']], 'ci_checks': ['python-hooks']}))
+        g('commit', '-qam', 'name the check')
+        g('push', '-q', 'origin', 'main')
+        green = [('python-hooks', 'completed', 'success')]
+        with patch.object(quality, '_check_runs', return_value=green):
             self.assertEqual(quality.ci_covered_commit(repo), ('', ''), 'no CI in the repo -> nothing else verifies it -> gate runs')
         (repo / '.github' / 'workflows').mkdir(parents=True)
         (repo / '.github' / 'workflows' / 'ci.yml').write_text('on: push\n')
         g('add', '.')
         g('commit', '-qm', 'ci')
         g('push', '-q', 'origin', 'main')
-        with (patch.object(quality, '_actions_runs', return_value=[('completed', 'success')]),
+        with (patch.object(quality, '_check_runs', return_value=green),
               patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log')):
             self.assertIs(stop_orchestrator.run_aaa_gate(repo, 'transcript'), True)
             run_gate.assert_not_called()
-        with (patch.object(quality, '_actions_runs', return_value=[('in_progress', '')]),
+        with (patch.object(quality, '_check_runs', return_value=[('python-hooks', 'in_progress', '')]),
               patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'),
               patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'),
               patch('sys.stdout', new_callable=io.StringIO) as out):
