@@ -165,8 +165,9 @@ _AUTHORIZATION_RE = re.compile(
     r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
-# "don't keep deploying" is not an OK (2026-09-27 review): a match right after a negation does not count.
-_NEGATED_RE = re.compile(r"\b(?:don['’]?t|do not|never|stop|no longer|not)\W*$", re.IGNORECASE)
+# "don't keep deploying" is not an OK (2026-09-27 review): a match right after a negation does not count. Only
+# directly before it (whitespace): "don't stop, keep deploying" is an OK, and \W* made it a refusal (same-day audit).
+_NEGATED_RE = re.compile(r"\b(?:don['’]?t|do not|never|stop|no longer|not)\s*$", re.IGNORECASE)
 
 
 def _authorizes(text: str) -> bool:

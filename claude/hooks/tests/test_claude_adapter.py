@@ -1551,8 +1551,9 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             for words in ("don't keep deploying", "do not continue merging", "stop, don't keep shipping", "not approved"):
                 tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
                 self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
-            tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "don't wait, go ahead")])
-            self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "")
+            for words in ("don't wait, go ahead", "don't stop, keep deploying"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
 
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
         import mimo_audit
