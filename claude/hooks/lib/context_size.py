@@ -18,13 +18,13 @@ import json
 import os
 import re
 
-WARN_TOKENS = 400_000   # Dom, 2026-09-25: raised from 300k (itself raised from 200k on 2026-09-22)
+WARN_TOKENS = 500_000   # Dom, 2026-09-27: raised from 400k (300k on 09-25, 200k on 09-22)
 # The coordinating lanes refill fastest and lose the most working state on a restart (the PR merge order,
-# the lane briefs), so they get headroom (Dom, 2026-09-26: Lead and Strategy at 600k, Deploy at 500k; Lead filled
-# fastest and restarted unnoticed at 500k, losing time).
+# the lane briefs), so they get headroom (Dom, 2026-09-27: Lead 750k, Strategy 700k, Deploy 600k; before that Lead and Strategy
+# 600k, Deploy 500k from 09-26, when Lead filled fastest and restarted unnoticed at 500k, losing time).
 # "lead" is the Lead lane when it is named from its session title rather than its ~/Developer/frankendom-* folder.
-LANE_WARN_TOKENS = {"lead-catalogue": 600_000, "lead": 600_000, "strategy": 600_000, "deploy": 500_000}
-URGENT_TOKENS = 700_000  # above every lane threshold, so "put this first" never fires at the first notice
+LANE_WARN_TOKENS = {"lead-catalogue": 750_000, "lead": 750_000, "strategy": 700_000, "deploy": 600_000}
+URGENT_TOKENS = 800_000  # above every lane threshold, so "put this first" never fires at the first notice
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
 # the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
