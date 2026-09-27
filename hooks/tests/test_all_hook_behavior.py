@@ -22,6 +22,7 @@ import user_prompt_submit  # noqa: E402
 import autonomy_daemon  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
+from lib import git as gitlib  # noqa: E402
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -117,6 +118,8 @@ class AllHookBehaviorTests(unittest.TestCase):
         completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
         with (
             mock.patch.object(api, "codex_binary", return_value="/app/codex"),
+            mock.patch.object(api, "CODEX_AUDIT_MODEL", "gpt-6-sol"),
+            mock.patch.object(api, "CODEX_AUDIT_EFFORT", "low"),
             mock.patch.object(api.subprocess, "run", return_value=completed) as run,
             mock.patch.object(api, "log") as audit_log,
         ):
@@ -428,7 +431,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             with (
                 mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
                 mock.patch.object(post_tool, "call_mimo", return_value="VERDICT: ISSUES\n1. Fix the incomplete implementation."),
-                mock.patch.object(post_tool, "maybe_checkpoint") as checkpoint,
+                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
                 mock.patch.object(post_tool, "log"),
             ):
                 rc, out = run_main_with_stdin(post_tool.main, payload)
@@ -467,13 +470,13 @@ class AllHookBehaviorTests(unittest.TestCase):
             with (
                 mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
                 mock.patch.object(post_tool, "call_mimo", return_value="VERDICT: PASS"),
-                mock.patch.object(post_tool, "maybe_checkpoint") as checkpoint,
+                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
                 mock.patch.object(post_tool, "log"),
             ):
                 rc, out = run_main_with_stdin(post_tool.main, payload)
 
             state = json.loads(state_path.read_text())["session-midrun"]
-            checkpoint.assert_called_once()
+            checkpoint.assert_not_called()
 
         self.assertIsNone(rc)
         self.assertEqual(out, "")
@@ -503,7 +506,7 @@ class AllHookBehaviorTests(unittest.TestCase):
             with (
                 mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
                 mock.patch.object(post_tool, "call_mimo") as call_mimo,
-                mock.patch.object(post_tool, "maybe_checkpoint"),
+                mock.patch.object(post_tool, "maybe_checkpoint", create=True),
                 mock.patch.object(post_tool, "log"),
             ):
                 rc, out = run_main_with_stdin(post_tool.main, payload)
@@ -535,57 +538,18 @@ class AllHookBehaviorTests(unittest.TestCase):
             with (
                 mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
                 mock.patch.object(post_tool, "call_mimo", side_effect=TimeoutError("timeout")),
-                mock.patch.object(post_tool, "maybe_checkpoint") as checkpoint,
+                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
                 mock.patch.object(post_tool, "log"),
             ):
                 rc, out = run_main_with_stdin(post_tool.main, payload)
 
             state = json.loads(state_path.read_text())["session-midrun"]
-            checkpoint.assert_called_once()
+            checkpoint.assert_not_called()
 
         self.assertIsNone(rc)
         self.assertEqual(out, "")
         self.assertEqual(state["last_verdict"], "ERROR")
 
-    def test_checkpoint_branch_failure_backs_off_per_session(self) -> None:
-        self.assertEqual(post_tool.CHECKPOINT_BRANCH_RETRY_S, 1800)
-        due = {"edits_since_last_commit": 5, "last_commit_at": ""}
-        with (
-            mock.patch.object(post_tool, "is_git_repo", return_value=True),
-            mock.patch.object(post_tool, "checkpoint_state", return_value=due),
-            mock.patch.object(post_tool, "current_session_branch", return_value="codex/session/main"),
-            mock.patch.object(post_tool, "ensure_branch", return_value=False) as ensure_branch,
-            mock.patch.object(post_tool, "update_checkpoint_state") as update_state,
-            mock.patch.object(post_tool, "log"),
-        ):
-            post_tool.maybe_checkpoint("session", Path("/tmp"))
-
-        ensure_branch.assert_called_once()
-        update_state.assert_called_once_with("session", branch_failed=True)
-
-        backed_off = {**due, "last_branch_failure_at": post_tool.now_iso()}
-        with (
-            mock.patch.object(post_tool, "is_git_repo", return_value=True),
-            mock.patch.object(post_tool, "checkpoint_state", return_value=backed_off),
-            mock.patch.object(post_tool, "seconds_since", return_value=1799),
-            mock.patch.object(post_tool, "ensure_branch") as ensure_branch,
-        ):
-            post_tool.maybe_checkpoint("session", Path("/tmp"))
-
-        ensure_branch.assert_not_called()
-
-        with (
-            mock.patch.object(post_tool, "is_git_repo", return_value=True),
-            mock.patch.object(post_tool, "checkpoint_state", return_value=backed_off),
-            mock.patch.object(post_tool, "seconds_since", return_value=1800),
-            mock.patch.object(post_tool, "current_session_branch", return_value="codex/session/main"),
-            mock.patch.object(post_tool, "ensure_branch", return_value=False) as ensure_branch,
-            mock.patch.object(post_tool, "update_checkpoint_state"),
-            mock.patch.object(post_tool, "log"),
-        ):
-            post_tool.maybe_checkpoint("session", Path("/tmp"))
-
-        ensure_branch.assert_called_once()
 
     def test_mimo_audit_pass_path_saves_pass_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -934,17 +898,6 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("launchctl bootstrap", script)
         self.assertIn("AUTONOMY_STOP", script)
 
-    def test_stop_next_task_prefers_shared_queue(self) -> None:
-        with mock.patch.object(
-            stop_orchestrator,
-            "pop_next_task",
-            return_value={"title": "Queued fix", "body": "Patch app.py and run tests.", "source_file": "app.py"},
-        ):
-            task = stop_orchestrator.next_task("s1", Path("/tmp/repo"), "", "")
-
-        self.assertIn("Queued fix", task)
-        self.assertIn("Patch app.py", task)
-        self.assertIn("Source: app.py", task)
 
     def test_aaa_milestone_gate_blocks_on_project_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1048,224 +1001,17 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(failures, [])
         safe_run.assert_called_once_with(["pnpm", "test", "--", "--watch=false"], cwd=repo, timeout=120)
 
-    def test_auto_pr_commits_with_mimo_only_auditor_when_claude_disabled(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            init_git_repo(repo)
-            (repo / "README.md").write_text("initial\n")
-            git(repo, "add", "README.md")
-            git(repo, "commit", "-m", "initial")
-            (repo / "README.md").write_text("changed\n")
-            handoff: dict = {}
-
-            with (
-                mock.patch.object(stop_orchestrator, "AUTO_PR_ENABLED", True),
-                mock.patch.object(stop_orchestrator, "CLAUDE_AUDIT_ENABLED", False),
-                mock.patch.object(stop_orchestrator, "github_pr_preflight", return_value=(True, "ok")),
-                mock.patch.object(stop_orchestrator, "push", return_value=True),
-                mock.patch.object(stop_orchestrator, "open_pr", return_value="https://example.test/pr/1"),
-                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: handoff.update(data)),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                branch, sha, pr_url, status = stop_orchestrator.commit_push_pr(
-                    "session-auto-pr",
-                    repo,
-                    "Summary line\nMore detail",
-                )
-            message = git(repo, "log", "-1", "--pretty=%B").stdout
-
-        self.assertEqual(branch, "codex/session-/task-1")
-        self.assertTrue(sha)
-        self.assertEqual(pr_url, "https://example.test/pr/1")
-        self.assertEqual(status, "created")
-        self.assertIn("Audited-by: GPT-6-Sol", message)
-        self.assertNotIn("Claude", message)
-        self.assertEqual(handoff["cwd"], str(repo))
-        self.assertEqual(handoff["last_task"]["status"], "created")
-        self.assertEqual(handoff["last_task"]["sha"], sha)
-
-    def test_auto_pr_preflight_failure_skips_commit_and_push(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            init_git_repo(repo)
-            (repo / "README.md").write_text("initial\n")
-            git(repo, "add", "README.md")
-            git(repo, "commit", "-m", "initial")
-            before = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
-            (repo / "README.md").write_text("changed\n")
-            handoff: dict = {}
-
-            with (
-                mock.patch.object(stop_orchestrator, "AUTO_PR_ENABLED", True),
-                mock.patch.object(stop_orchestrator, "github_pr_preflight", return_value=(False, "gh auth unavailable")),
-                mock.patch.object(stop_orchestrator, "push") as push,
-                mock.patch.object(stop_orchestrator, "open_pr") as open_pr,
-                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: handoff.update(data)),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                branch, sha, pr_url, status = stop_orchestrator.commit_push_pr(
-                    "session-auto-pr",
-                    repo,
-                    "Summary line\nMore detail",
-                )
-            after = git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
-
-        self.assertEqual((branch, sha, pr_url, status), ("", "", "", "preflight_failed"))
-        self.assertEqual(after, before)
-        self.assertEqual(handoff, {})
-        push.assert_not_called()
-        open_pr.assert_not_called()
-
-    def test_auto_pr_push_recovers_after_transient_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            init_git_repo(repo)
-            (repo / "README.md").write_text("initial\n")
-            git(repo, "add", "README.md")
-            git(repo, "commit", "-m", "initial")
-            (repo / "README.md").write_text("changed\n")
-            handoff: dict = {}
-
-            with (
-                mock.patch.object(stop_orchestrator, "AUTO_PR_ENABLED", True),
-                mock.patch.object(stop_orchestrator, "CLAUDE_AUDIT_ENABLED", False),
-                mock.patch.object(stop_orchestrator, "AUTO_PR_RETRY_DELAY_S", 0),
-                mock.patch.object(stop_orchestrator, "github_pr_preflight", return_value=(True, "ok")),
-                mock.patch.object(stop_orchestrator, "push", side_effect=[False, True]) as push,
-                mock.patch.object(stop_orchestrator, "open_pr", return_value="https://example.test/pr/2"),
-                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: handoff.update(data)),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                branch, sha, pr_url, status = stop_orchestrator.commit_push_pr(
-                    "session-auto-pr",
-                    repo,
-                    "Summary line\nMore detail",
-                )
-
-        self.assertEqual(status, "created")
-        self.assertEqual(pr_url, "https://example.test/pr/2")
-        self.assertTrue(sha)
-        self.assertEqual(push.call_count, 2)
-        self.assertEqual(handoff["last_task"]["status"], "created")
-
-    def test_auto_pr_pr_failure_records_partial_and_blocks_chaining(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            init_git_repo(repo)
-            (repo / "README.md").write_text("initial\n")
-            git(repo, "add", "README.md")
-            git(repo, "commit", "-m", "initial")
-            (repo / "README.md").write_text("changed\n")
-            handoff: dict = {}
-
-            with (
-                mock.patch.object(stop_orchestrator, "AUTO_PR_ENABLED", True),
-                mock.patch.object(stop_orchestrator, "AUTO_PR_RETRY_DELAY_S", 0),
-                mock.patch.object(stop_orchestrator, "github_pr_preflight", return_value=(True, "ok")),
-                mock.patch.object(stop_orchestrator, "push", return_value=True),
-                mock.patch.object(stop_orchestrator, "open_pr", return_value="") as open_pr,
-                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: handoff.update(data)),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                branch, sha, pr_url, status = stop_orchestrator.commit_push_pr(
-                    "session-auto-pr",
-                    repo,
-                    "Summary line\nMore detail",
-                )
-
-        self.assertEqual(status, "pr_failed")
-        self.assertEqual(pr_url, "")
-        self.assertTrue(branch)
-        self.assertTrue(sha)
-        self.assertEqual(open_pr.call_count, 3)
-        self.assertEqual(handoff["last_task"]["status"], "pr_failed")
-        self.assertEqual(handoff["last_task"]["sha"], sha)
-
-    def test_stop_main_blocks_after_partial_auto_pr_and_does_not_chain(self) -> None:
-        stdout = io.StringIO()
-        payload = {
-            "session_id": "session-auto-pr",
-            "turn_id": "turn-1",
-            "cwd": "/tmp",
-            "last_assistant_message": "Completed task. " * 40,
-        }
-        with (
-            mock.patch("sys.stdin", io.StringIO(json.dumps(payload))),
-            redirect_stdout(stdout),
-            mock.patch.object(stop_orchestrator, "audit_with_claude", return_value=True),
-            mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
-            mock.patch.object(stop_orchestrator, "wait_for_mimo_pass", return_value=True),
-            mock.patch.object(stop_orchestrator, "commit_push_pr", return_value=("branch", "abc123", "", "pr_failed")),
-            mock.patch.object(stop_orchestrator, "next_task") as next_task,
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            with self.assertRaises(SystemExit) as raised:
-                stop_orchestrator.main()
-
-        data = json.loads(stdout.getvalue())
-        self.assertEqual(int(raised.exception.code or 0), 0)
-        self.assertEqual(data["decision"], "block")
-        self.assertIn("[Auto-PR incomplete]", data["reason"])
-        self.assertIn("pr_failed", data["reason"])
-        next_task.assert_not_called()
 
     def test_github_pr_preflight_requires_origin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             init_git_repo(repo)
 
-            ok, reason = stop_orchestrator.github_pr_preflight(repo)
+            ok, reason = gitlib.github_pr_preflight(repo)
 
         self.assertFalse(ok)
         self.assertEqual(reason, "missing git origin remote")
 
-    def test_self_spec_uses_queued_backlog_and_pops_item(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            (repo / "agent").mkdir()
-            (repo / "agent/parser.py").write_text("# TODO: parser coverage\n")
-            (repo / "agent/todo.py").write_text("# TODO: cleanup\n")
-            handoff = {
-                "tasks_completed_count": 0,
-                "queued_backlog": [
-                    {"description": "Add coverage for parser", "source_file": "agent/parser.py", "priority": 70},
-                    {"description": "Resolve TODO", "source_file": "agent/todo.py", "priority": 50},
-                ],
-            }
-            written: dict = {}
-            with (
-                mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-                mock.patch.object(stop_orchestrator, "write_handoff", side_effect=lambda data: written.update(data)),
-            ):
-                task = stop_orchestrator.next_task("session-self-spec", repo, "branch", "pr")
-
-        self.assertIn("Add coverage for parser", task)
-        self.assertIn("agent/parser.py", task)
-        self.assertEqual([item["description"] for item in written["queued_backlog"]], ["Resolve TODO"])
-
-    def test_self_spec_ignores_stale_handoff_backlog_from_other_cwd(self) -> None:
-        handoff = {
-            "cwd": "/tmp/old-repo",
-            "tasks_completed_count": 0,
-            "queued_backlog": [
-                {"description": "Fill incomplete markdown section", "source_file": "missing.md", "priority": 30},
-            ],
-        }
-        with (
-            mock.patch.object(stop_orchestrator, "load_handoff", return_value=handoff),
-            mock.patch.object(stop_orchestrator, "write_handoff") as write_handoff,
-            mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
-            mock.patch.object(stop_orchestrator, "call_mimo", return_value="STATUS: COMPLETE"),
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            task = stop_orchestrator.next_task("session-self-spec", Path("/tmp/current-repo"), "branch", "pr")
-
-        self.assertEqual(task, "")
-        write_handoff.assert_not_called()
 
     def test_autonomy_daemon_mines_local_tasks_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -178,11 +178,6 @@ def ensure_branch(branch: str, cwd: str | Path) -> bool:
     return rc == 0
 
 
-def stage_all(cwd: str | Path) -> bool:
-    rc, _, _ = safe_run(["git", "add", "-A"], cwd=cwd)
-    return rc == 0
-
-
 def has_staged_changes(cwd: str | Path) -> bool:
     rc, _, _ = safe_run(["git", "diff", "--cached", "--quiet"], cwd=cwd)
     return rc == 1
@@ -191,16 +186,6 @@ def has_staged_changes(cwd: str | Path) -> bool:
 def has_worktree_changes(cwd: str | Path) -> bool:
     rc, out, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
     return rc == 0 and bool(out.strip())
-
-
-def commit(message: str, cwd: str | Path) -> tuple[bool, str]:
-    if not stage_all(cwd) or not has_staged_changes(cwd):
-        return False, ""
-    rc, out, err = safe_run(["git", "commit", "-m", message], cwd=cwd, timeout=60)
-    if rc != 0:
-        return False, err or out
-    rc, sha, _ = safe_run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
-    return True, sha.strip() if rc == 0 else ""
 
 
 def push(branch: str, cwd: str | Path) -> bool:

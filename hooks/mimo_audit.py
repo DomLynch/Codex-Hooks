@@ -447,7 +447,7 @@ def compact(text: str, limit: int) -> str:
 
 
 def read_task_slice(path: str) -> str:
-    return latest_task_slice(path, max_chars=MAX_TRANSCRIPT_CHARS)
+    return latest_task_slice(path, max_chars=MAX_TRANSCRIPT_CHARS, preserve_request=True)
 
 
 def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
@@ -515,57 +515,6 @@ ADVISORY_RE = re.compile(r"\b(confirm|ensure|verify|double-check|should be verif
 ELISION_RE = re.compile(
     r"\b(elided|elision|partially[- ]elided|without showing (the )?(corresponding |actual )?(tool |run |command )?output"
     r"|no visible (execution|tool|log|run|command)?[ /]*(log )?output|not (shown|visible) in (this |the )?slice)\b", re.IGNORECASE)
-
-
-# A finding that names any of these is asserting a defect, whatever else it says.
-DEFECT_RE = re.compile(
-    r"\b(bug|error|fails?|failed|failure|failing|missing|wrong|incorrect|broken|mismatch|regress\w*|contradict\w*|"
-    r"unresolved|weakens?|removed|deleted|leak\w*|crash\w*|race|null|undefined|inconsistent|stale|silent\w*|"
-    r"pending|not run|never ran|no test|untested|unsafe|secret|credential|production|misrepresent\w*|overstat\w*|false|"
-    r"as fact|not (yet )?(live|merged|deployed|applied)|unsupported|only shows|does not show|doesn't show|"
-    r"no tool call|never (ran|called|executed|applied)|already authorized|migration|database|schema)\b", re.IGNORECASE)
-
-
-def void_finding(text: str) -> str:
-    """Why this numbered finding is void ('' if it stands). Deterministic, word-boundary only.
-    Elision-based: the finding's basis is that output is elided here, and it names no contradiction.
-    Advisory: 'confirm/ensure/verify' with no defect named at all. Everything else stands."""
-    if ELISION_RE.search(text) and not DEFECT_RE.search(text):
-        return "elision-only"
-    if ADVISORY_RE.search(text) and not DEFECT_RE.search(text):
-        return "advisory-only"
-    return ""
-
-
-def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
-    """Drop void findings from an ISSUES verdict and renumber. Returns (text, dropped findings verbatim).
-    The reviewer prompt already forbids these; medium effort still emits them (11 blocks on 2026-09-22,
-    4 were this class). The filter makes the rule mechanical; every drop is logged in full."""
-    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
-    kept, dropped = [], []
-    for line in verdict_text.splitlines()[1:]:
-        m = numbered.match(line)
-        if not m:
-            kept.append(line)
-            continue
-        why = void_finding(m.group(1))
-        if why:
-            dropped.append(m.group(1))
-            log(f"VOID_FINDING ({why}): {m.group(1)[:400]}")
-        else:
-            kept.append(m.group(1))
-    if not dropped:
-        return verdict_text, []
-    findings = [ln for ln in kept if not numbered.match(ln) and ln.strip()]
-    # `kept` now holds finding bodies (unnumbered) and any prose lines; renumber the bodies in order.
-    out, n = [], 0
-    for ln in kept:
-        if ln.strip() and ln in findings:
-            n += 1
-            out.append(f"{n}. {ln}")
-    if not n:
-        return "VERDICT: PASS", dropped
-    return "VERDICT: ISSUES\n" + "\n".join(out), dropped
 
 
 QUOTE_RE = re.compile(r"\[quote:\s*[\"“']([^\"”']{3,400})[\"”']\s*\]", re.IGNORECASE)
@@ -742,7 +691,8 @@ def main() -> None:
         return
 
     if not has_tool_activity(transcript):
-        transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS, include_previous=True)
+        transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS,
+                                       include_previous=True, preserve_request=True)
     entries = latest_task_entries(transcript_path)
     paths = edited_paths(entries)
     sensitive = sensitive_paths(paths)
@@ -791,9 +741,8 @@ def main() -> None:
         try:
             verdict_text = ask_mimo_with_retry(transcript)
             if not verdict_text:
-                retry_transcript = compact(transcript, 3_000)
-                log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
-                verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
+                log(f"RETRY_EMPTY: {len(transcript)} chars")
+                verdict_text = ask_mimo_with_retry(transcript, max_tokens=800)
         except Exception as e:
             block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", str(review_cwd))
             return
@@ -830,11 +779,10 @@ def main() -> None:
 
     if from_model and verdict_text.startswith("VERDICT: ISSUES"):
         # Model noise only. A deterministic_findings/ledger verdict is already exact, and running the
-        # void/anchor filters over it could silently void the gate, so those bypass this entirely.
+        # anchor filter over it could silently void the gate, so those bypass it entirely.
         log_noise_classes(verdict_text)
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
-        verdict_text, voided = filter_void_findings(verdict_text)
-        dropped = unanchored + voided
+        dropped = unanchored
         if dropped and verdict_text.startswith("VERDICT: PASS"):
             log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
 

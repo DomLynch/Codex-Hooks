@@ -20,6 +20,9 @@ ALLOWLIST = {
 
 
 def resolve_target(value: str) -> Path:
+    checkout = Path(__file__).resolve().parents[1]
+    if value == "hooks" and (checkout / ".git").exists():
+        return checkout
     return ALLOWLIST.get(value, Path(value)).expanduser().resolve()
 
 

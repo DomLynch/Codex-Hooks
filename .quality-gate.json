@@ -5,11 +5,11 @@
       "HOOK_SENTRY_DSN=",
       "python3",
       "-m",
-      "unittest",
-      "discover",
-      "-s",
+      "pytest",
       "hooks/tests",
-      "-q"
+      "-q",
+      "-p",
+      "no:cacheprovider"
     ],
     [
       "env",

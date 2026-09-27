@@ -14,18 +14,15 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import call_mimo
 from lib.autonomy import record_lesson, remember_repo
-from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
+from lib.git import changed_files, git_root, is_git_repo, resolve_git_cwd
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import changed_files_in_payload, pending_quality, run_quality_checks
-from lib.state import checkpoint_state, now_iso, update_checkpoint_state
+from lib.state import now_iso
 from lib.transcript import latest_task_slice
 
 
 COMPONENT = "post_tool"
-CHECKPOINT_EDIT_THRESHOLD = 5
-CHECKPOINT_TIME_THRESHOLD_S = 1800
-CHECKPOINT_BRANCH_RETRY_S = 1800
 # Large repo test modules can legitimately exceed 60s when the quality floor
 # reruns a whole changed file after patching. Match the stop hook's changed-test
 # budget so post-tool checks fail on real failures, not timeout drift.
@@ -76,6 +73,9 @@ Current task slice:
 
 
 def sync_codegraph(root: Path) -> None:
+    root = root.resolve()
+    if git_root(root) != root:
+        return
     indexed = (root / ".codegraph" / "codegraph.db").exists()
     try:
         command = ["codegraph", "sync", "-q"] if indexed else ["codegraph", "init"]
@@ -185,6 +185,7 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
         payload.get("transcript_path") or "",
         payload.get("last_assistant_message") or "",
         max_chars=MIMO_AUDIT_MAX_TRANSCRIPT_CHARS,
+        preserve_request=True,
     )
     if len(transcript) < MIMO_AUDIT_MIN_TRANSCRIPT_CHARS:
         update_audit_state(session_id, audited=True, verdict="SKIP_TOO_SHORT", preview=f"{len(transcript)} chars")
@@ -211,33 +212,6 @@ def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> No
         )
     if verdict == "UNPARSEABLE":
         log(COMPONENT, f"mimo checkpoint unparseable; allowing progress preview={normalized[:180]}")
-
-
-def maybe_checkpoint(session_id: str, cwd: Path) -> None:
-    if not is_git_repo(cwd):
-        log(COMPONENT, "checkpoint skipped: not a git repo")
-        return
-    state = checkpoint_state(session_id)
-    edits = int(state.get("edits_since_last_commit", 0))
-    if seconds_since(state.get("last_branch_failure_at", "")) < CHECKPOINT_BRANCH_RETRY_S:
-        return
-    due_by_edits = edits >= CHECKPOINT_EDIT_THRESHOLD
-    last_commit_at = state.get("last_commit_at", "")
-    due_by_time = bool(last_commit_at) and seconds_since(last_commit_at) >= CHECKPOINT_TIME_THRESHOLD_S and edits > 0
-    if not (due_by_edits or due_by_time):
-        return
-    branch = current_session_branch(session_id)
-    if not ensure_branch(branch, cwd):
-        update_checkpoint_state(session_id, branch_failed=True)
-        log(COMPONENT, f"checkpoint skipped: could not ensure {branch}")
-        return
-    ok, sha = commit(f"[checkpoint] session {session_id[:8]} - {edits} edits", cwd)
-    if not ok:
-        log(COMPONENT, f"checkpoint skipped/no changes: {sha}")
-        return
-    update_checkpoint_state(session_id, committed=True)
-    pushed = push(branch, cwd)
-    log(COMPONENT, f"checkpoint commit {sha}; push={pushed}")
 
 
 def main() -> None:
@@ -273,10 +247,8 @@ def main() -> None:
             if not result.get("ok"):
                 block(format_quality_failures(result))
         if is_edit:
-            update_checkpoint_state(session_id, edits=1)
             update_audit_state(session_id, edits=1)
             maybe_mimo_checkpoint_audit(payload, session_id, cwd)
-            maybe_checkpoint(session_id, cwd)
     except Exception as exc:
         log(COMPONENT, f"quality error: {exc}")
         block(f"[Quality Floor] Unable to verify edited files: {exc}")

@@ -13,33 +13,22 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.api import call_claude, call_mimo
-from lib.autonomy import pop_next_task, remember_repo
+from lib.api import call_claude
+from lib.autonomy import remember_repo
 from lib.git import (
-    commit,
-    current_session_branch,
-    ensure_branch,
-    files_changed_summary,
-    github_pr_preflight,
-    has_worktree_changes,
     is_git_repo,
-    open_pr,
-    push,
     resolve_git_cwd,
     safe_run,
-    task_branch,
 )
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import pending_quality, run_project_gate, run_quality_checks
-from lib.state import load_handoff, read_session_spec, write_handoff
+from lib.state import read_session_spec
 from lib.transcript import latest_task_entries, latest_task_slice
 
 
 COMPONENT = "stop_orchestrator"
 MAX_CLAUDE_ITERATIONS = 3
-MAX_TASKS_PER_SESSION = 8
-BACKLOG_SKIP_PARTS = {"archive", "archived", "legacy", "agent_archived", "agent_legacy"}
 MILESTONE_INTENT_PATTERNS = (
     re.compile(r"\bready\s+to\s+(?:merge|ship|release|deploy)\b", re.IGNORECASE),
     re.compile(r"\b(?:ship|merge|land|deploy|release)\s+(?:it|this|now)\b", re.IGNORECASE),
@@ -49,10 +38,7 @@ PAUSE_REQUEST_RE = re.compile(
     r"^USER:\s*(?:ok[\s,]+)?(?:stop|pause|stand\s*by|hold off)\s+(?:for now|until\b)",
     re.IGNORECASE,
 )
-DEFAULT_BASE_BRANCH = "main"
 MIMO_WAIT_TIMEOUT_S = 155
-AUTO_PR_SIDE_EFFECT_ATTEMPTS = 3
-AUTO_PR_RETRY_DELAY_S = 2
 
 CLAUDE_ITERATIONS_PATH = Path.home() / ".codex" / "state" / "claude_iterations.json"
 AAA_PROTOCOL_PATH = Path.home() / ".codex" / "specs" / "aaa_protocol.md"
@@ -311,181 +297,6 @@ def run_project_aaa_checks(cwd: Path, changed: list[Path] | None = None) -> list
     return failures
 
 
-def retry_bool(label: str, fn) -> bool:
-    for attempt in range(1, AUTO_PR_SIDE_EFFECT_ATTEMPTS + 1):
-        if fn():
-            if attempt > 1:
-                log(COMPONENT, f"{label} recovered on attempt {attempt}")
-            return True
-        log(COMPONENT, f"{label} failed attempt {attempt}/{AUTO_PR_SIDE_EFFECT_ATTEMPTS}")
-        if attempt < AUTO_PR_SIDE_EFFECT_ATTEMPTS:
-            time.sleep(AUTO_PR_RETRY_DELAY_S)
-    return False
-
-
-def retry_text(label: str, fn) -> str:
-    for attempt in range(1, AUTO_PR_SIDE_EFFECT_ATTEMPTS + 1):
-        value = fn()
-        if value:
-            if attempt > 1:
-                log(COMPONENT, f"{label} recovered on attempt {attempt}")
-            return value
-        log(COMPONENT, f"{label} failed attempt {attempt}/{AUTO_PR_SIDE_EFFECT_ATTEMPTS}")
-        if attempt < AUTO_PR_SIDE_EFFECT_ATTEMPTS:
-            time.sleep(AUTO_PR_RETRY_DELAY_S)
-    return ""
-
-
-def write_task_handoff(handoff: dict, session_id: str, task_n: int, summary: str, branch: str, sha: str, pr_url: str, status: str) -> None:
-    handoff["session_id"] = session_id
-    handoff["tasks_completed_count"] = task_n
-    handoff["last_task"] = {
-        "description": summary,
-        "branch": branch,
-        "pr_url": pr_url,
-        "sha": sha,
-        "status": status,
-    }
-    write_handoff(handoff)
-
-
-def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, str, str, str]:
-    if not is_git_repo(cwd) or not has_worktree_changes(cwd):
-        log(COMPONENT, "auto-pr skipped: no git repo or no changes")
-        return "", "", "", "skipped"
-    handoff = load_handoff()
-    task_n = int(handoff.get("tasks_completed_count", 0)) + 1
-    branch = task_branch(session_id, task_n)
-
-    if not AUTO_PR_ENABLED:
-        log(COMPONENT, f"auto-pr disabled by CODEX_HOOK_AUTO_PR=0; would create {branch}")
-        return branch, "", "", "disabled"
-
-    ok, reason = github_pr_preflight(cwd)
-    if not ok:
-        log(COMPONENT, f"auto-pr skipped before side effects: {reason}")
-        return "", "", "", "preflight_failed"
-    handoff["cwd"] = str(cwd)
-
-    if not ensure_branch(current_session_branch(session_id), cwd):
-        log(COMPONENT, "auto-pr skipped: could not ensure session branch")
-        return "", "", "", "branch_failed"
-    if not ensure_branch(branch, cwd):
-        log(COMPONENT, f"auto-pr skipped: could not ensure task branch {branch}")
-        return "", "", "", "branch_failed"
-
-    summary = transcript.splitlines()[0][:80] if transcript.strip() else "Codex task"
-    auditors = ["GPT-6-Sol"]
-    if CLAUDE_AUDIT_ENABLED:
-        auditors.append("Claude")
-    message = f"[task {task_n}] {summary}\n\nAudited-by: {', '.join(auditors)}\nSession: {session_id}"
-    ok, sha = commit(message, cwd)
-    if not ok:
-        log(COMPONENT, f"auto-pr commit skipped: {sha}")
-        return branch, "", "", "commit_failed"
-    pushed = retry_bool("auto-pr push", lambda: push(branch, cwd))
-    if not pushed:
-        write_task_handoff(handoff, session_id, task_n, summary, branch, sha, "", "push_failed")
-        log(COMPONENT, f"auto-pr incomplete: push failed branch={branch} sha={sha}")
-        return branch, sha, "", "push_failed"
-    body = "\n\n".join([
-        "Auto-generated Codex PR.",
-        f"Session: {session_id}",
-        "Files changed:",
-        files_changed_summary(cwd) or "(see commit)",
-        "Known limitations: generated by local hook pipeline; manual review required.",
-    ])
-    pr_url = retry_text(
-        "auto-pr create",
-        lambda: open_pr(f"[codex] task {task_n}: {summary}", body, base=DEFAULT_BASE_BRANCH, cwd=cwd),
-    )
-    if not pr_url:
-        write_task_handoff(handoff, session_id, task_n, summary, branch, sha, "", "pr_failed")
-        log(COMPONENT, f"auto-pr incomplete: PR creation failed branch={branch} sha={sha}")
-        return branch, sha, "", "pr_failed"
-    write_task_handoff(handoff, session_id, task_n, summary, branch, sha, pr_url, "created")
-    log(COMPONENT, f"auto-pr branch={branch} sha={sha} pr={pr_url}")
-    return branch, sha, pr_url, "created"
-
-
-def _backlog_source_path(cwd: Path, source: str) -> Path:
-    raw = source.split(":", 1)[0].strip()
-    path = Path(raw)
-    return path if path.is_absolute() else cwd / path
-
-
-def filter_handoff_backlog(items: list[dict], cwd: Path) -> list[dict]:
-    filtered: list[dict] = []
-    for item in items or []:
-        source = str(item.get("source_file") or "")
-        if not source:
-            filtered.append(item)
-            continue
-        rel = source.split(":", 1)[0]
-        parts = set(Path(rel).parts)
-        if parts & BACKLOG_SKIP_PARTS:
-            continue
-        if any(part.startswith(".") for part in parts):
-            continue
-        if not _backlog_source_path(cwd, source).exists():
-            continue
-        filtered.append(item)
-    return filtered
-
-
-def next_task(session_id: str, cwd: Path, branch: str, pr_url: str) -> str:
-    queued = pop_next_task("codex", cwd)
-    if queued:
-        title = queued.get("title") or "Queued task"
-        body = queued.get("body") or ""
-        source = queued.get("source_file") or queued.get("source") or "queue"
-        return f"{title}\n\n{body}\n\nSource: {source}"
-
-    handoff = load_handoff()
-    handoff_cwd = handoff.get("cwd")
-    if handoff_cwd and Path(handoff_cwd).resolve() != cwd.resolve():
-        log(COMPONENT, f"self-spec skipped stale handoff cwd={handoff_cwd}")
-        handoff = {}
-    completed = int(handoff.get("tasks_completed_count", 0))
-    if completed >= MAX_TASKS_PER_SESSION:
-        log(COMPONENT, "self-spec skipped: max task budget")
-        return ""
-    backlog = filter_handoff_backlog(handoff.get("queued_backlog") or [], cwd)
-    if backlog != (handoff.get("queued_backlog") or []):
-        handoff["queued_backlog"] = backlog
-        write_handoff(handoff)
-    if backlog:
-        item = backlog.pop(0)
-        handoff["queued_backlog"] = backlog
-        write_handoff(handoff)
-        return f"{item.get('description')}\n\nAcceptance: update {item.get('source_file')} and run the relevant check."
-
-    prompt = f"""Propose ONE next coding task for this repo.
-It must be concrete, independently shippable, and doable in 1-4 tool calls.
-
-Repo: {cwd}
-Just shipped: branch={branch or 'none'} pr={pr_url or 'none'}
-Recent git log:
-{safe_run(['git', 'log', '--oneline', '-5'], cwd=cwd)[1] if is_git_repo(cwd) else ''}
-
-Respond exactly:
-NEXT_TASK_TITLE: <one line>
-NEXT_TASK_BODY: <2-3 sentences with file paths and acceptance>
-
-Or:
-STATUS: COMPLETE
-"""
-    try:
-        response = call_mimo(prompt, max_tokens=600, lane="self_spec")
-    except Exception as exc:
-        log(COMPONENT, f"self-spec fail-open: {exc}")
-        return ""
-    if not response or response.startswith("STATUS: COMPLETE"):
-        log(COMPONENT, "self-spec complete/empty")
-        return ""
-    return response.strip()
-
-
 def main() -> None:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -523,24 +334,6 @@ def main() -> None:
         if not wait_for_mimo_pass(session_id, turn_id):
             log(COMPONENT, "side effects skipped: GPT-6-Sol did not pass current turn")
             return
-        branch, sha, pr_url, auto_pr_status = commit_push_pr(session_id, cwd, transcript)
-        if auto_pr_status in {"push_failed", "pr_failed"}:
-            block(
-                "[Auto-PR incomplete]\n\n"
-                f"Status: {auto_pr_status}\n"
-                f"Branch: {branch}\n"
-                f"Commit: {sha}\n\n"
-                "Do not start the next task yet. Recover this unit first by retrying "
-                "`git push -u origin <branch>` and/or `gh pr create` for the branch above."
-            )
-        if pr_url:
-            task = next_task(session_id, cwd, branch, pr_url)
-            if task:
-                block(
-                    "[Self-Spec Generator] Continuing autonomous run.\n\n"
-                    f"Just shipped: {pr_url or branch}\n\n"
-                    f"NEXT TASK:\n{task}\n\nBegin work. The audit/checkpoint pipeline will run again when complete."
-                )
         log(COMPONENT, "allow stop")
     except Exception as exc:
         log(COMPONENT, f"gate error: {exc}")
