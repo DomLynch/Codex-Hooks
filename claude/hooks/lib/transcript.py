@@ -139,19 +139,24 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
     """Deterministic gate for the most common audit finding: a test/check runner failed
     this turn and the final message says nothing about it.
 
-    Only the LAST test-runner output counts (a later green rerun supersedes an earlier
-    red one). Returns the failure excerpt to quote back, or "" when nothing to flag.
+    Failures are tracked per check runner: a later green run clears a failure only when it
+    reran the same runner (a passing `ruff check` does not clear a failed `pytest`).
+    Returns the unresolved failure excerpt(s) to quote back, or "" when nothing to flag.
     """
-    last = ""
+    failed: dict[frozenset[str], str] = {}
     for role, body in entries:
-        if role == "TOOL OUTPUT" and TEST_RUNNER_RE.search(body.split("\n", 1)[0]):
-            last = body
-    if not last:
+        if role != "TOOL OUTPUT":
+            continue
+        runners = frozenset(" ".join(m.group(1).lower().split()) for m in TEST_RUNNER_RE.finditer(body.split("\n", 1)[0]))
+        if not runners:
+            continue
+        failed = {checks: excerpt for checks, excerpt in failed.items() if not checks & runners}
+        excerpt = _failure_excerpt(body, 300)
+        if excerpt:
+            failed[runners] = excerpt
+    if not failed or FAILURE_ACK_RE.search(final_message or ""):
         return ""
-    excerpt = _failure_excerpt(last, 300)
-    if not excerpt or FAILURE_ACK_RE.search(final_message or ""):
-        return ""
-    return excerpt
+    return _bounded_compact("\n".join(failed.values()), 600)
 
 
 EDIT_TOOL_RE = re.compile(r"^(Edit|Write|MultiEdit|NotebookEdit):", re.IGNORECASE)

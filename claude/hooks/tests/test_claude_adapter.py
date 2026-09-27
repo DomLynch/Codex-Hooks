@@ -892,6 +892,20 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         entries = [("TOOL OUTPUT", self.RED), ("TOOL CALL", "Edit: fix"), ("TOOL OUTPUT", self.GREEN)]
         self.assertEqual(gate(entries, "All green now."), "")
 
+    def test_a_green_run_of_a_different_check_does_not_clear_a_failed_one(self) -> None:
+        # Audit B: pytest FAILED, then an unrelated `ruff check` passed -> the failure was lost.
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        lint = "[c5] Bash: ruff check .\n\nAll checks passed!"
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", self.RED), ("TOOL OUTPUT", lint)], "Done; everything passes."))
+        self.assertEqual(gate([("TOOL OUTPUT", self.RED), ("TOOL OUTPUT", lint), ("TOOL OUTPUT", self.GREEN)], "Done."), "")
+
+    def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        both = "[c6] Bash: pytest -q && ruff check .\n\n4 passed\nAll checks passed!"
+        self.assertEqual(gate([("TOOL OUTPUT", self.RED), ("TOOL OUTPUT", both)], "Done."), "")
+
     def test_ignores_error_strings_from_non_test_tools(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 
