@@ -23,6 +23,7 @@ from lib.claude_adapter import (  # noqa: E402
     synthesize_turn_id,
 )
 import mimo_audit  # noqa: E402
+from lib import audit_state  # noqa: E402
 import autonomy_daemon  # noqa: E402
 import post_tool  # noqa: E402
 import session_start  # noqa: E402
@@ -390,9 +391,9 @@ class ClaudeAdapterTests(unittest.TestCase):
                 "last_assistant_message": "Completed implementation. " * 40,
             }
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(audit_state, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES"),
                 mock.patch.object(mimo_audit, "repair_verdict_format", return_value="VERDICT: ISSUES"),
@@ -451,9 +452,9 @@ class ClaudeAdapterTests(unittest.TestCase):
                 "last_assistant_message": "Completed implementation. " * 40,
             }
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(audit_state, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=TimeoutError("read timeout")),
             ):
@@ -474,9 +475,9 @@ class ClaudeAdapterTests(unittest.TestCase):
                 "last_assistant_message": "Here is status context with no edits or delivery claim. " * 20,
             }
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", tmp_path / "iterations.json"),
+                mock.patch.object(audit_state, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
             ):
@@ -498,9 +499,9 @@ class ClaudeAdapterTests(unittest.TestCase):
                 "last_assistant_message": "I fixed and shipped the hook change. " * 20,
             }
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", state_path),
+                mock.patch.object(audit_state, "STATE_FILE", state_path),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", state_path.parent / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", tmp_path / "verdict.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", tmp_path / "verdict.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson") as record_lesson,
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: ISSUES\n1. Still noisy"),
@@ -652,7 +653,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             transcript = Path(tmp) / "transcript.jsonl"
             transcript.write_text("x" * 100)
             first = synthesize_turn_id("retry-session", str(transcript), False)
-            with mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "iterations.json"):
+            with mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "iterations.json"):
                 mimo_audit.remember_blocked_turn("retry-session", first)
                 transcript.write_text("x" * 140)
                 payload = {
@@ -791,7 +792,7 @@ class BlockChainDamperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "state.json"
             state.write_text(json.dumps({f"old:turn-{i}": 1 for i in range(50)}))  # already at cap
-            with mock.patch.object(mimo_audit, "STATE_FILE", state):
+            with mock.patch.object(audit_state, "STATE_FILE", state):
                 seen = []
                 for i in range(mimo_audit.MAX_CONSECUTIVE_BLOCKS):
                     mimo_audit.save_iterations("sess", f"turn-{i}", 1)  # what the ISSUES branch does first
@@ -808,9 +809,9 @@ class BlockChainDamperTests(unittest.TestCase):
             state = Path(tmp) / "state.json"
             calls: list[str] = []
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", state),
+                mock.patch.object(audit_state, "STATE_FILE", state),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", state.parent / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "record_lesson", side_effect=lambda k, v, *a: calls.append(v)),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "block_stop", side_effect=SystemExit(0)),
@@ -922,9 +923,9 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
@@ -1013,9 +1014,9 @@ class DeterministicFindingsTests(unittest.TestCase):
             self.assertEqual(len(deterministic_findings(entries, msg, tmp)), 2)
 
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
@@ -1153,8 +1154,8 @@ class FindingLedgerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
             ledger.register_findings("L", "VERDICT: ISSUES\n1. tests red\n2. no receipt")
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
@@ -1180,8 +1181,8 @@ class FindingLedgerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
             ledger.register_findings("P", "VERDICT: ISSUES\n1. a")
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
@@ -1203,10 +1204,10 @@ class BoundedAuditErrorTests(unittest.TestCase):
 
     def _run(self, mimo_audit, tmp, sid, model):
         with (
-            mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-            mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+            mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+            mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
             mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
-            mock.patch.object(mimo_audit, "ESCALATION_DIR", Path(tmp) / "esc"),
+            mock.patch.object(audit_state, "ESCALATION_DIR", Path(tmp) / "esc"),
             mock.patch.object(mimo_audit, "log"),
             mock.patch.object(mimo_audit, "record_lesson"),
             mock.patch.object(mimo_audit, "report_failure"),
@@ -1260,7 +1261,7 @@ class BoundedAuditErrorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp) / "s.json"
             state.write_text(json.dumps({f"old:turn-{i}": 1 for i in range(50)}))
-            with mock.patch.object(mimo_audit, "STATE_FILE", state):
+            with mock.patch.object(audit_state, "STATE_FILE", state):
                 seen = []
                 for i in range(3):
                     mimo_audit.save_iterations("T", f"turn-{i}", 1)
@@ -1288,8 +1289,8 @@ class SensitivePathTriageTests(unittest.TestCase):
 
     def _run(self, mimo_audit, tmp, entries, verdict):
         with (
-            mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-            mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+            mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+            mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
             mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
             mock.patch.object(mimo_audit, "log") as log,
             mock.patch.object(mimo_audit, "record_lesson"),
@@ -1382,8 +1383,8 @@ class DocOnlyTriageTests(unittest.TestCase):
         ):
             with tempfile.TemporaryDirectory() as tmp:
                 with (
-                    mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                    mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                    mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                    mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                     mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                     mock.patch.object(mimo_audit, "log"),
                     mock.patch.object(mimo_audit, "record_lesson"),
@@ -1474,8 +1475,8 @@ class TurnDiffTests(unittest.TestCase):
             f.write_text("def f():\n    return 2\n")
             entries = [("TOOL CALL", f'Edit: [t] {{"file_path": "{f}", "old_string": "1", "new_string": "2"}}')]
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
@@ -1593,8 +1594,8 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "hi")])
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
@@ -1663,8 +1664,8 @@ class EarlierSessionEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tp = self._transcript(tmp)
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
@@ -1770,8 +1771,8 @@ class TurnCommitsDiffTests(unittest.TestCase):
             git("commit", "-qam", "feat: guard")
             bash = ("TOOL CALL", 'Bash: [toolu_1] {"command": "python3 - <<EOF ... write_text ... EOF && git commit -qam guard"}')
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
@@ -1837,8 +1838,8 @@ class RepoCwdResolutionTests(unittest.TestCase):
             f.write_text("x = 2\n")
             entries = [("TOOL CALL", f'Edit: [t] {{"file_path": "{f}", "old_string": "1", "new_string": "2"}}')]
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(parent) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(parent) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(parent) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(parent) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(parent) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
@@ -1978,8 +1979,8 @@ class UnreceiptedLiveClaimTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "s.json"),
-                mock.patch.object(mimo_audit, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
@@ -2063,7 +2064,7 @@ def test_retry_turn_id_is_stable_across_stop_retries(tmp_path, monkeypatch):
     changes, iterations restart at 0 and MAX_ITERATIONS never releases. A retry must reuse the blocked turn's id."""
     import mimo_audit as m
     from lib.claude_adapter import synthesize_turn_id
-    monkeypatch.setattr(m, "STATE_FILE", tmp_path / "iters.json")
+    monkeypatch.setattr(audit_state, "STATE_FILE", tmp_path / "iters.json")
     t = tmp_path / "t.jsonl"
     t.write_text("x" * 100)
     first = synthesize_turn_id("s1", str(t), False)

@@ -468,7 +468,7 @@ class EnforcementTests(unittest.TestCase):
 
     def test_debugging_policy_reaches_both_injection_and_review(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ('session_start.py', 'user_prompt_submit.py', 'mimo_audit.py'):
+        for name in ('session_start.py', 'lib/policies.py', 'lib/audit_prompt.py'):
             text = (root/name).read_text()
             for required in ('.quality-gate.json', 'Hypothesis', 'ast-grep', 'py-spy', 'Tree-sitter', 'Repomix'):
                 self.assertIn(required, text, (name, required))

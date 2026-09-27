@@ -12,8 +12,9 @@ from unittest import mock
 HOOKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS))
 import mimo_audit  # noqa: E402
+from lib import audit_state  # noqa: E402
 import session_start  # noqa: E402
-import user_prompt_submit  # noqa: E402
+from lib import policies  # noqa: E402
 from lib import log as hook_log  # noqa: E402
 
 
@@ -35,10 +36,10 @@ class CompletionTests(unittest.TestCase):
             stack.enter_context(mock.patch("sys.stdin", io.StringIO(json.dumps(payload))))
             stack.enter_context(redirect_stdout(stdout))
             stack.enter_context(redirect_stderr(stderr))
-            for name, value in (("STATE_FILE", root / "iterations.json"),
-                                ("VERDICT_FILE", root / "verdict.json"),
-                                ("LOG_FILE", root / "audit.log")):
-                stack.enter_context(mock.patch.object(mimo_audit, name, value))
+            for module, name, value in ((audit_state, "STATE_FILE", root / "iterations.json"),
+                                        (audit_state, "VERDICT_FILE", root / "verdict.json"),
+                                        (mimo_audit, "LOG_FILE", root / "audit.log")):
+                stack.enter_context(mock.patch.object(module, name, value))
             stack.enter_context(mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", root / "ledger.json"))
             if pending:
                 mimo_audit.ledger.register_findings("completion", "VERDICT: ISSUES\n1. Old task finding")
@@ -118,24 +119,24 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(self.last_open_findings, [])
 
     def test_both_injection_surfaces_preserve_authorization_and_scope(self):
-        for policy in (session_start.SESSION_BASELINE, user_prompt_submit.AUTONOMY_POLICY):
+        for policy in (session_start.SESSION_BASELINE, policies.AUTONOMY_POLICY):
             self.assertIn("do not ask for the same permission twice", policy)
             self.assertIn("Explicit stop/pause", policy)
             self.assertIn("unrelated backlog tasks", policy)
             self.assertIn("retry exhaustion is unresolved work, not success", policy.lower())
 
     def test_release_closeout_shared_between_injection_surfaces(self):
-        policy = user_prompt_submit.COMPLETION_POLICY
+        policy = policies.COMPLETION_POLICY
         self.assertIn(policy, session_start.SESSION_BASELINE)
-        self.assertIn(policy, user_prompt_submit.AUTONOMY_POLICY)
+        self.assertIn(policy, policies.AUTONOMY_POLICY)
         for phrase in ('completion_commands', 'same check/workflow', 'weakened assertions',
                        'status-only', 'blocker', 'older Sentry'):
             self.assertIn(phrase, policy)
-        self.assertIn(user_prompt_submit.SENTRY_POLICY, session_start.SESSION_BASELINE)
-        self.assertIn(user_prompt_submit.SENTRY_POLICY, user_prompt_submit.WORK_QUALITY_POLICY)
-        policy = user_prompt_submit.RELEASE_POLICY
+        self.assertIn(policies.SENTRY_POLICY, session_start.SESSION_BASELINE)
+        self.assertIn(policies.SENTRY_POLICY, policies.WORK_QUALITY_POLICY)
+        policy = policies.RELEASE_POLICY
         self.assertIn(policy, session_start.SESSION_BASELINE)
-        self.assertIn(policy, user_prompt_submit.AUTONOMY_POLICY)
+        self.assertIn(policy, policies.AUTONOMY_POLICY)
         for requirement in ("configured deployment workflow", "git status --porcelain",
                             "no-deploy", "unrelated work", "empty commit"):
             self.assertIn(requirement, policy)
@@ -144,7 +145,7 @@ class CompletionTests(unittest.TestCase):
 
     def test_audit_outage_reports_metadata_and_still_blocks(self):
         with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(mimo_audit, "STATE_FILE", Path(tmp) / "state.json"), \
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
                 mock.patch.object(mimo_audit, "log"), \
                 mock.patch.object(mimo_audit, "report_failure") as report, \
                 mock.patch.object(mimo_audit, "save_iterations"), \
