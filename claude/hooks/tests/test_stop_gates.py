@@ -54,6 +54,27 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertIn("AssertionError", gate([("TOOL OUTPUT", self.RED), ("TOOL OUTPUT", lint)], "Done; everything passes."))
         self.assertEqual(gate([("TOOL OUTPUT", self.RED), ("TOOL OUTPUT", lint), ("TOOL OUTPUT", self.GREEN)], "Done."), "")
 
+    def test_a_green_run_of_a_different_target_or_no_run_at_all_does_not_clear(self) -> None:
+        # Recheck 2026-09-27: keying on the runner name let `pytest tests/test_logging.py` (or `pytest --help`)
+        # clear a failed `pytest tests/test_payment.py`. The check is the runner plus its targets, and only a
+        # rerun that covers those targets and shows a pass receipt clears it.
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        failed = "[c1] Bash: pytest tests/test_payment.py\n\nFAILED tests/test_payment.py::test_x - AssertionError: 1 != 2"
+        other = "[c2] Bash: pytest tests/test_logging.py\n\n3 passed in 0.1s"
+        help_ = "[c3] Bash: pytest --help\n\nusage: pytest [options] [file_or_dir]"
+        same = "[c4] Bash: pytest tests/test_payment.py\n\n2 passed in 0.1s"
+        suite = "[c5] Bash: python -m pytest tests/ -q\n\n40 passed in 2s"
+        real = ('[toolu_01VjoMWTJo73YdheyH5J3tUs] Bash: {"command": "pytest tests/test_payment.py -q", "descr'
+                '\n\n2 passed in 0.1s')
+        for clearing in (other, help_):
+            self.assertIn("AssertionError", gate([("TOOL OUTPUT", failed), ("TOOL OUTPUT", clearing)], "Done; everything passes."))
+        for clearing in (same, suite, real):
+            self.assertEqual(gate([("TOOL OUTPUT", failed), ("TOOL OUTPUT", clearing)], "Done."), "", clearing[:40])
+        whole = "[c6] Bash: pytest -q\n\nFAILED tests/test_a.py::t - AssertionError"
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", whole), ("TOOL OUTPUT", same)], "Done."),
+                      "one file passing does not clear a whole-suite failure")
+
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 

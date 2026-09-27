@@ -135,25 +135,57 @@ FAILURE_ACK_RE = re.compile(
 )
 
 
+_COMMAND_JSON_RE = re.compile(r'\{\s*"command"\s*:\s*"((?:[^"\\]|\\.)*)')   # first line may be cut mid-JSON
+_TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~-]*$")   # a path-like token: tests/, tests/x.py, ., src
+
+
+def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
+    """(runner, targets) of the check a TOOL OUTPUT line ran, or None. The runner is the test/lint tool named on
+    the line; targets are its path-like arguments (empty = the whole suite). Same identity = same check."""
+    m = TEST_RUNNER_RE.search(first_line)
+    if not m:
+        return None
+    text = first_line.split(":", 1)[-1] if first_line.startswith("[") else first_line
+    j = _COMMAND_JSON_RE.search(text)
+    command = j.group(1).encode().decode("unicode_escape", "ignore") if j else text
+    runner = " ".join(m.group(1).lower().split())
+    tail = command[command.lower().find(runner.split()[0]) + len(runner):]
+    tail = re.split(r"\s(?:&&|\|\||;|\||>|2>)\s|\n", tail)[0]
+    targets = frozenset(tok for tok in tail.split() if _TARGET_RE.match(tok))
+    return runner, targets
+
+
+def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
+    """A whole-suite rerun (no targets, or `.`) covers anything; a whole-suite failure needs a whole-suite rerun."""
+    if not rerun or "." in rerun:
+        return True
+    return bool(failed) and all(any(t == r or t.startswith(r.rstrip("/") + "/") for r in rerun) for t in failed)
+
+
 def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:
     """Deterministic gate for the most common audit finding: a test/check runner failed
     this turn and the final message says nothing about it.
 
-    Failures are tracked per check runner: a later green run clears a failure only when it
-    reran the same runner (a passing `ruff check` does not clear a failed `pytest`).
+    A failure is identified by its check (runner + targets). Only a later run of the same runner that covers
+    those targets AND shows a pass receipt clears it: `pytest tests/test_logging.py` does not clear a failed
+    `pytest tests/test_payment.py`, `pytest --help` clears nothing, and `ruff` never clears `pytest`.
     Returns the unresolved failure excerpt(s) to quote back, or "" when nothing to flag.
     """
-    failed: dict[frozenset[str], str] = {}
+    failed: dict[tuple[str, frozenset[str]], str] = {}
     for role, body in entries:
         if role != "TOOL OUTPUT":
             continue
-        runners = frozenset(" ".join(m.group(1).lower().split()) for m in TEST_RUNNER_RE.finditer(body.split("\n", 1)[0]))
-        if not runners:
+        first = body.split("\n", 1)[0]
+        identity = _check_identity(first)
+        if not identity:
             continue
-        failed = {checks: excerpt for checks, excerpt in failed.items() if not checks & runners}
         excerpt = _failure_excerpt(body, 300)
         if excerpt:
-            failed[runners] = excerpt
+            failed[identity] = excerpt
+            continue
+        if _RECEIPT_LINE_RE.search(body):
+            runner, targets = identity
+            failed = {k: v for k, v in failed.items() if not (k[0] == runner and _rerun_covers(k[1], targets))}
     if not failed or FAILURE_ACK_RE.search(final_message or ""):
         return ""
     return _bounded_compact("\n".join(failed.values()), 600)
