@@ -232,35 +232,38 @@ def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError
     )
 
 
-def _open_pr_count(cwd: Path, branch: str, timeout: int = 8) -> int:
-    rc, out, _ = safe_run(["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "number", "--jq", "length"],
+_CI_OK = {"success", "skipped", "neutral"}
+
+
+def _actions_runs(cwd: Path, sha: str, timeout: int = 8) -> list[tuple[str, str]] | None:
+    """(status, conclusion) of every GitHub Actions check run on commit `sha`; None when gh fails."""
+    rc, out, _ = safe_run(["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100", "--jq",
+                           '.check_runs[] | select(.app.slug == "github-actions") | [.status, (.conclusion // "")]'],
                           cwd=cwd, timeout=timeout)
-    return int(out.strip()) if rc == 0 and out.strip().isdigit() else 0
+    try:
+        return [(str(status), str(conclusion)) for status, conclusion in map(json.loads, out.split())] if rc == 0 else None
+    except (ValueError, TypeError):
+        return None
 
 
-def ci_covered_commit(cwd: Path) -> str:
-    """Short SHA when there is nothing local for the Stop gate to verify: the working tree is clean
-    (no modified or untracked files) and HEAD is already checked by CI — it is on the remote default
-    branch, or on a pushed branch with an open pull request. Requires a CI workflow in the repo.
-    "" in every other case, including any git/gh failure, so the gate runs."""
+def ci_covered_commit(cwd: Path) -> tuple[str, str]:
+    """(short SHA, "passed" | "pending") when the working tree is clean (no modified or untracked files) and GitHub
+    Actions ran on this exact commit: "passed" only if every run completed as success/skipped/neutral, "pending"
+    while any is still queued or running and none failed. ("", "") in every other case (no workflow, no run on the
+    commit because it is unpushed or has no PR, a failed or cancelled run, any git/gh error), so the gate runs."""
     if not (cwd / ".github" / "workflows").is_dir():
-        return ""
+        return "", ""
     rc, status, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
     if rc or status.strip():
-        return ""
-    rc, head, _ = safe_run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)
-    if rc or not head.strip():
-        return ""
-    rc, default, _ = safe_run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], cwd=cwd)
-    if rc == 0 and default.strip() and safe_run(["git", "merge-base", "--is-ancestor", "HEAD", default.strip()], cwd=cwd)[0] == 0:
-        return head.strip()
-    rc, branch, _ = safe_run(["git", "branch", "--show-current"], cwd=cwd)
-    branch = branch.strip()
-    if rc or not branch:
-        return ""
-    if safe_run(["git", "merge-base", "--is-ancestor", "HEAD", f"origin/{branch}"], cwd=cwd)[0] != 0:
-        return ""
-    return head.strip() if _open_pr_count(cwd, branch) > 0 else ""
+        return "", ""
+    rc, head, _ = safe_run(["git", "rev-parse", "HEAD"], cwd=cwd)
+    head = head.strip()
+    if rc or not head:
+        return "", ""
+    runs = _actions_runs(cwd, head)
+    if not runs or any(status == "completed" and conclusion not in _CI_OK for status, conclusion in runs):
+        return "", ""
+    return head[:7], "passed" if all(status == "completed" for status, _ in runs) else "pending"
 
 
 def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> dict:
