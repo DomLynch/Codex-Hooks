@@ -18,12 +18,18 @@ from .json_state import load_json_locked, update_json_locked
 PENDING_PATH = Path.home() / ".codex/state/pending_quality.json"
 
 
-def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = False) -> list[str]:
-    if cwd is None and not clear:
+def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = False, done: list[str] | None = None) -> list[str]:
+    """Repos this session edited that still owe a quality gate. `done` removes only the repos whose gate
+    passed (a deferred one stays owed); `clear` removes all."""
+    if cwd is None and not clear and done is None:
         return load_json_locked(PENDING_PATH, {}).get(session_id, [])
     def update(data):
         if clear:
             data.pop(session_id, None)
+        elif done is not None:
+            data[session_id] = sorted(set(data.get(session_id, [])) - set(done))
+            if not data[session_id]:
+                data.pop(session_id)
         else:
             data[session_id] = sorted(set(data.get(session_id, [])) | {str(cwd.resolve())})
         return data
