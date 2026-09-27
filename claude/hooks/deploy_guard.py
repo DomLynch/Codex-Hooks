@@ -19,11 +19,15 @@ from pathlib import Path
 
 LOCK_PATH = Path(os.environ.get("DEPLOY_LOCK") or Path.home() / ".claude" / "state" / "deploy_in_flight.json")
 STALE_S = 45 * 60
-# What competes with a deploy for the Mac: real browsers, whole test suites, builds and bakes. Unit tests of one file,
+# What competes with a deploy for the Mac: real browsers, whole test suites, builds and bakes.
+# 2026-09-26: herolook-game-stills / herolook-stills (Playwright + Vite), herolook-kill-record (the sim) and build-creatures
+# (spawns blender) ran through the a981f7a5 lock: the name list needs stills, record and build-.
+# armour-contact-sheet (Playwright) and any herolook-*.mjs render are heavy too; the python herolook_*.py helpers are light and
+# never match here (python, .py). Unit tests of one file,
 # git, gh, curl, greps and edits are not on this list on purpose.
 HEAVY_RE = re.compile(
     r"(?:^|[\s;&|(])(?:"
-    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
+    r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test\s+[^\s]+\s+[^\s]+"
@@ -31,6 +35,12 @@ HEAVY_RE = re.compile(
     r")"
 )
 ALLOW_RE = re.compile(r"scripts/deploy\.sh\b")
+# Pixelmator Pro (Hero Look's headless texture step, 2026-09-26: ML super resolution + export via osascript) is heavy. The app is
+# named inside the osascript argument's quotes, which executable_text() strips as data, so this looks at the RAW command: a real
+# osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
+# a .scpt/.applescript path, a heredoc or `open -a`. Plain osascript (notifications) and a commit message naming Pixelmator pass.
+APP_HOST_RE = re.compile(r"(?:^|[\s;&|(])(?:osascript\b|open\s+-[ab]\b)")
+PIXELMATOR_RE = re.compile(r"(?:osascript\b|open\s+-[ab]\b)(?:(?!&&|\|\||;).)*?pixelmator", re.IGNORECASE | re.DOTALL)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -105,7 +115,8 @@ def executable_text(command: str) -> str:
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
     runs = executable_text(command) if lock and command else ""
-    if not runs or ALLOW_RE.search(runs) or not HEAVY_RE.search(runs):
+    pixelmator = bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
+    if not runs or ALLOW_RE.search(runs) or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
