@@ -40,3 +40,20 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 - VPS Claude install is current (hook_env Opus 5.5 low, CLI 2.1.282, backup `/root/hooks-backup-20260925/`), but its CLI is still on the old account. Dom: no VPS reviewer needed; Claude Code runs on the Mac.
 - Reviewer since the account switch: 93.5% pass, 5% model flags, 0 timeouts, 5 s median; lanes fixed 6 of 11 findings. Re-run `scripts/reviewer_scorecard.py` with a day of data.
 - Frankendom deploys (logs `~/Developer/deploy-<sha>.log`, success = `Published <sha>`): ~10 min each on a quiet Mac; batching took the cost from ~4.6 to ~2.1 min per PR. Slowness past ~15 min is load from other lanes' browser runs, not a hang; the 50-min ceiling catches real hangs.
+
+## Reviewer: plan-item and progress claims — 2026-09-26
+- Strategy's 06:07 list called SCOPE item 8 "done and live" with 2 of 10 moves built, and 06:23 said three moves were "being built" on the strength of its own order to Lead; the reviewer passed both. It sees one ~4k-char turn and had no view of the scope doc.
+- `AUDIT_PROMPT` (Claude only) now flags: a numbered plan item called done/live unless the turn reads its definition and checks every part; and "being built"/firm dates backed only by the lane's own outgoing order.
+- Replay on the real turns: "being built" flagged 4/4, "special move done" 3 of 5 runs after adding a checklist pointer (0/4 without). Eight other lanes' latest turns: no new blocks against the old prompt. Findings survive the void/anchor filters.
+
+## Deploy guard and gate deferral — 2026-09-26
+- PR #16: the Stop gate re-reads `deploy_in_flight.json` every 5 s and between commands; a deploy that starts mid-gate kills the check's process group and defers (no cached pass). The guard also blocks `quality-stop-targeted.mjs`, `npm test`, `npm run test:browser`.
+- The guard now reads only the text a shell line runs (`executable_text`): commit messages, PR bodies and heredocs written to files are ignored; `bash -c`, `eval`, `bash <<EOF`, `$(...)` and backticks are still checked, and the `scripts/deploy.sh` exception only applies when it is actually run. Replay of 5,493 lane commands from 24 h: 87 fewer false blocks, 0 new blocks.
+- Codex `hooks/deploy_guard.py` is not changed (Claude only).
+
+## Codex safety repair — 2026-09-27
+- Codex hooks validate and review only: automatic checkpoint commits, push/PR creation and Self-Spec task chaining were removed. Requested Git/deploy work remains an explicit agent action.
+- Stop and checkpoint reviews preserve the complete current user request separately from compacted evidence, including empty-response retries. Keyword-based advisory suppression was removed; quote anchoring remains.
+- Post-tool CodeGraph updates require a verified Git root. The Codex quality/CI command uses pytest so plain test functions are collected. Claude source, configuration and installed hooks are unchanged.
+- Validation: 200 Codex tests plus 23 subtests passed in the first full run; Ruff passed. Four regression tests cover unrelated staged work, read-only/task scope, request preservation/retry, actual blocking and non-repository indexing.
+- Second review found and fixed the empty-response retry truncation. A fresh Astra Low call saw the complete long request and returned ISSUES for zero of 18 requested tasks created. Final full rerun, CI and installed-file verification are pending release.
