@@ -20,9 +20,10 @@ class EnforcementTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        cache = patch.object(quality, 'GATE_CACHE_PATH', self.root / 'gate-cache.json')
-        cache.start()
-        self.addCleanup(cache.stop)
+        for name, target in (('GATE_CACHE_PATH', self.root / 'gate-cache.json'), ('GATE_LOCK_PATH', self.root / 'gate.lock')):
+            p = patch.object(quality, name, target)
+            p.start()
+            self.addCleanup(p.stop)
         # The gate defers while a real Frankendom deploy holds the lock; these tests must not depend on that.
         lock = patch.object(stop_orchestrator, 'active_deploy_lock', return_value=None)
         lock.start()
@@ -403,6 +404,82 @@ class EnforcementTests(unittest.TestCase):
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
             self.assertIn('deferred: the Mac is overloaded (load 386', out.getvalue())
             run_gate.assert_not_called()
+
+    def test_one_repository_gate_per_mac(self):
+        # Lead, 2026-09-27: 8-12 `quality-stop-targeted.mjs` runs at once, 9 min each against a 420 s budget. The
+        # run holds a Mac-wide lock; other Stops defer. A dead or stale holder does not block anyone.
+        marker = self.root / 'ran'
+        self.contract([[sys.executable, '-c', f'open({str(marker)!r}, "w").write("x")']])
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=self.root, check=True)
+        subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init', '--allow-empty'], cwd=self.root, check=True)
+        holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.addCleanup(holder.kill)
+        lock = self.root / 'gate.lock'
+        lock.write_text(json.dumps({'pid': holder.pid, 'cwd': '/Users/x/frankendom-deploy', 'at': time.time()}))
+        with patch.object(quality.os, 'getloadavg', return_value=(5, 5, 5)), patch.object(quality, 'DEPLOY_HOLD_PATH', self.root / 'none'):
+            self.assertIn('one gate per Mac', quality.gate_busy(self.root)['reason'])
+            self.assertIn('frankendom-deploy', quality.gate_busy(self.root)['reason'])
+            result = quality.run_project_gate(self.root)
+            self.assertIn('one gate per Mac', result['deferred']['reason'])
+            self.assertFalse(marker.exists(), 'a deferred gate runs nothing')
+            lock.write_text(json.dumps({'pid': holder.pid, 'cwd': 'x', 'at': time.time() - 600}))
+            self.assertIn('one gate per Mac', quality.gate_busy(self.root)['reason'], 'a live holder past the Stop budget still holds')
+            lock.write_text(json.dumps({'pid': holder.pid, 'cwd': 'x', 'at': time.time() - 3600}))
+            self.assertIsNone(quality.gate_busy(self.root), 'a forgotten lock expires')
+            holder.kill()
+            holder.wait()
+            lock.write_text(json.dumps({'pid': holder.pid, 'cwd': 'x', 'at': time.time()}))
+            self.assertIsNone(quality.gate_busy(self.root), 'a dead holder does not block')
+            self.assertTrue(quality.run_project_gate(self.root)['ok'])
+            self.assertTrue(marker.exists())
+            self.assertFalse(lock.exists(), 'the lock is released after the run')
+
+    def test_a_dead_holders_orphaned_check_is_killed_before_the_next_gate_starts(self):
+        # Lead, 2026-09-27: a Stop killed by Claude Code left its node tree running (8-minute quality-stop-targeted
+        # in frankendom-stats). The holder records its check's process group; the next acquire kills it.
+        orphan = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        self.addCleanup(orphan.kill)
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        (self.root / 'gate.lock').write_text(json.dumps({'pid': dead.pid, 'cwd': 'x', 'at': time.time(), 'pgid': orphan.pid}))
+        self.assertTrue(quality.acquire_gate_lock(self.root))
+        self.addCleanup(quality.release_gate_lock)
+        deadline = time.time() + 5
+        while orphan.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertIsNotNone(orphan.poll(), 'the orphaned check group is killed')
+        self.assertEqual(json.loads((self.root / 'gate.lock').read_text())['pid'], os.getpid())
+
+    def test_gate_is_skipped_when_the_checkout_has_no_change_on_top_of_its_base(self):
+        # Lead, 2026-09-27: Deploy's checkout on unchanged trunk ran the 9-minute gate at every Stop for nothing.
+        # Clean tree AND `git diff --quiet base...HEAD` -> skip. Base = contract "base", else origin/HEAD.
+        repo, g = self._repo_with_origin(workflow=False)
+        self.assertEqual(quality.unchanged_from_base(repo), 'origin/main')
+        with patch.object(stop_orchestrator, 'ci_covered_commit', return_value=('', '')), \
+                patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'):
+            self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 't', session_id='s1'))
+            run_gate.assert_not_called()
+        (repo / 'a.txt').write_text('2\n')
+        self.assertEqual(quality.unchanged_from_base(repo), '', 'a dirty tree is a task-owned change')
+        g('commit', '-qam', 'edit')
+        self.assertEqual(quality.unchanged_from_base(repo), '', 'a commit on top of the base is a task-owned change')
+        g('push', '-q')
+        self.assertEqual(quality.unchanged_from_base(repo), 'origin/main', 'pushed and merged into the base: nothing local')
+        g('checkout', '-qb', 'feature')
+        g('commit', '-qm', 'no tree change', '--allow-empty')
+        self.assertEqual(quality.unchanged_from_base(repo), 'origin/main', 'an empty commit changes nothing the gate could test')
+        (repo / 'b.txt').write_text('1\n')
+        g('add', '.')
+        g('commit', '-qm', 'more')
+        self.assertEqual(quality.unchanged_from_base(repo), '', 'an unpushed branch commit still runs the gate')
+        g('checkout', '-q', 'main')
+        contract = json.loads((repo / '.quality-gate.json').read_text())
+        for base, expected, why in (('origin/no-such-branch', '', 'an unresolvable base never skips'),
+                                    ('origin/main', 'origin/main', 'the contract may name the base')):
+            (repo / '.quality-gate.json').write_text(json.dumps({**contract, 'base': base}))
+            g('commit', '-qam', f'base {base}')
+            g('push', '-q')
+            self.assertEqual(quality.unchanged_from_base(repo), expected, why)
 
     def test_failures_are_never_cached(self):
         repo = self.root / 'repo'
