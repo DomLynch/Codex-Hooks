@@ -106,7 +106,7 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         for cmd in narrower:
             out = ("TOOL OUTPUT", f"[c2] Bash: {cmd}\n\n1 passed, 1 deselected in 0.1s")
             self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), out], "Done."), cmd)
-        for cmd in ("pytest tests/test_payment.py", "pytest tests/", "pytest", "python -m pytest -q -p no:cacheprovider",
+        for cmd in ("pytest tests/test_payment.py", "pytest tests/", "pytest", "python -m pytest -q -W ignore",
                     "pytest tests/test_payment.py -x --tb=short -n 2 --timeout 30"):
             out = ("TOOL OUTPUT", f"[c3] Bash: {cmd}\n\n2 passed in 0.1s")
             self.assertEqual(gate([("TOOL OUTPUT", file_failed), out], "Done."), "", cmd)
@@ -145,7 +145,7 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
             out = ("TOOL OUTPUT", f"[c2] Bash: {cmd}\n\n1 passed, 2 deselected in 0.1s")
             self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), out], "Done."), cmd)
             self.assertTrue(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} must be opaque")
-        for cmd in ("pytest . -q -x -v -s -rA --tb=short -p no:cacheprovider -n 2 --timeout 30 --no-header --disable-warnings",
+        for cmd in ("pytest . -q -x -v -s -rA --tb=short -W ignore -n 2 --timeout 30 --no-header --disable-warnings",
                     "pytest -qx tests/test_payment.py", "pytest tests/test_payment.py -vv --color=no"):
             self.assertFalse(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} is coverage-neutral")
             out = ("TOOL OUTPUT", f"[c3] Bash: {cmd}\n\n3 passed in 0.1s")
@@ -154,6 +154,66 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertEqual(gate([("TOOL OUTPUT", dot_filtered), ("TOOL OUTPUT", "[c5] Bash: pytest .\n\n3 passed in 0.1s")], "Done."), "",
                          "a full `.` run covers a filtered `.` run")
         self.assertIn("AssertionError", gate([("TOOL OUTPUT", dot_filtered), ("TOOL OUTPUT", "[c6] Bash: pytest . -k test_one\n\n1 passed")], "Done."))
+
+    def test_config_and_plugin_switches_are_not_coverage_neutral(self) -> None:
+        # Recheck 4 (2026-09-27), real pytest: `pytest tests/test_payment.py -o python_functions=test_one`, `-c smoke.ini`
+        # and `-p smoke_plugin` each collected only the passing test and cleared the failed file, because "takes a
+        # value" was treated as "cannot change coverage". A config file, an ini override, a plugin or a directory
+        # switch can deselect tests, so they make the run opaque. Per runner: `-p` is a plugin in pytest but the
+        # file PATTERN in `unittest discover`.
+        from lib.transcript import _check_identity, _OPAQUE, unacknowledged_check_failure as gate
+
+        file_failed = "[c1] Bash: pytest tests/test_payment.py\n\nFAILED tests/test_payment.py::test_two - AssertionError: 1 != 2"
+        config = ["pytest tests/test_payment.py -o python_functions=test_one -q", "pytest tests/test_payment.py -o addopts=-ktest_one",
+                  "pytest tests/test_payment.py -c smoke.ini -q", "pytest -c smoke.ini tests/test_payment.py", "pytest tests/test_payment.py -csmoke.ini",
+                  "pytest tests/test_payment.py -p smoke_plugin -q", "pytest tests/test_payment.py -p no:cacheprovider",
+                  "pytest --rootdir=other tests/test_payment.py", "pytest --confcutdir other tests/test_payment.py",
+                  "pytest -C other tests/test_payment.py", "python -m pytest tests/test_payment.py --override-ini python_functions=test_one"]
+        for cmd in config:
+            out = ("TOOL OUTPUT", f"[c2] Bash: {cmd}\n\n1 passed in 0.1s")
+            self.assertIn("AssertionError", gate([("TOOL OUTPUT", file_failed), out], "Done."), cmd)
+            self.assertTrue(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} must be opaque")
+        for cmd in ("pytest tests/test_payment.py -n 2 --tb=short --timeout 30 -W ignore --maxfail=3 --durations 5 --color=no",
+                    "pytest tests/test_payment.py --cov=src --cov-report term", "pytest tests/test_payment.py --basetemp /tmp/x"):
+            self.assertFalse(any(t.startswith(_OPAQUE) for t in _check_identity(f"[c] Bash: {cmd}")[1]), f"{cmd} is coverage-neutral")
+            self.assertEqual(gate([("TOOL OUTPUT", file_failed), ("TOOL OUTPUT", f"[c3] Bash: {cmd}\n\n2 passed in 0.1s")], "Done."), "", cmd)
+        # unittest: `-p "test_pass*.py"` narrows which files are discovered; `-s dir` is the start directory (a target).
+        self.assertTrue(any(t.startswith(_OPAQUE) for t in _check_identity("[c] Bash: python -m unittest discover -s tests/ -p 'test_pass*.py'")[1]))
+        self.assertEqual(_check_identity("[c] Bash: python -m unittest discover -s tests/ -v"), ("unittest", frozenset({"tests/"})))
+        # Only an identical config-switched rerun clears its own failure.
+        cfg_failed = "[c7] Bash: pytest tests/test_payment.py -o python_functions=test_two\n\nFAILED tests/test_payment.py::test_two - AssertionError"
+        cfg_same = "[c8] Bash: pytest tests/test_payment.py -o python_functions=test_two\n\n1 passed in 0.1s"
+        cfg_other = "[c9] Bash: pytest tests/test_payment.py -o python_functions=test_one\n\n1 passed in 0.1s"
+        self.assertEqual(gate([("TOOL OUTPUT", cfg_failed), ("TOOL OUTPUT", cfg_same)], "Done."), "", "identical rerun clears")
+        self.assertIn("AssertionError", gate([("TOOL OUTPUT", cfg_failed), ("TOOL OUTPUT", cfg_other)], "Done."))
+
+    def test_removing_a_config_switch_does_not_clear_the_failure_it_found(self) -> None:
+        # Recheck 5 (2026-09-27), real pytest: `pytest tests/test_payment.py -o python_functions=check_` found the
+        # failing `check_charge`; the plain `pytest tests/test_payment.py` (and `pytest .`) never collected it and
+        # cleared the failure. Rule: adding unknown configuration cannot prove equivalent coverage, and neither can
+        # removing it. A KNOWN subset under unchanged config (-k/-m/--deselect/--lf/a node id) is still covered by
+        # the whole file; a CONFIG-DEPENDENT run (-o/-c/-p/--rootdir/unknown flag) is cleared only by itself.
+        from lib.transcript import unacknowledged_check_failure as gate
+
+        plain = "[r1] Bash: pytest tests/test_payment.py -q\n\n1 passed in 0.1s"
+        dot = "[r2] Bash: pytest . -q\n\n5 passed in 0.1s"
+        suite = "[r3] Bash: pytest\n\n5 passed in 0.1s"
+        for cmd in ("pytest tests/test_payment.py -o python_functions=check_ -q", "pytest tests/test_payment.py -c strict.ini",
+                    "pytest tests/test_payment.py -p checks_plugin", "pytest -o python_functions=check_ .", "pytest tests/ --unknown-flag",
+                    "pytest --rootdir=other tests/test_payment.py"):
+            failed = ("TOOL OUTPUT", f"[f] Bash: {cmd}\n\nFAILED tests/test_payment.py::check_charge - AssertionError: unfixed")
+            for rerun in (plain, dot, suite):
+                self.assertIn("AssertionError", gate([failed, ("TOOL OUTPUT", rerun)], "Done."), f"{cmd} <- {rerun[:30]}")
+            same = ("TOOL OUTPUT", f"[s] Bash: {cmd}\n\n1 passed in 0.1s")
+            self.assertEqual(gate([failed, same], "Done."), "", f"identical rerun of {cmd}")
+        for cmd in ("pytest tests/test_payment.py -k test_two", "pytest tests/test_payment.py -ktest_two", "pytest tests/test_payment.py -m slow",
+                    "pytest tests/test_payment.py --deselect tests/test_payment.py::test_one", "pytest tests/test_payment.py --lf",
+                    "pytest -k test_two tests/test_payment.py"):
+            failed = ("TOOL OUTPUT", f"[f] Bash: {cmd}\n\nFAILED tests/test_payment.py::test_two - AssertionError: 1 != 2")
+            for rerun in (plain, dot, suite):
+                self.assertEqual(gate([failed, ("TOOL OUTPUT", rerun)], "Done."), "", f"{cmd} is a known subset of {rerun[:30]}")
+            other = ("TOOL OUTPUT", "[o] Bash: pytest tests/test_other.py\n\n3 passed in 0.1s")
+            self.assertIn("AssertionError", gate([failed, other], "Done."), cmd)
 
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
