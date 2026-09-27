@@ -288,9 +288,14 @@ def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_
 
 
 def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS,
-                      include_previous: bool = False) -> str:
+                      include_previous: bool = False, preserve_request: bool = False) -> str:
     entries = latest_task_entries(transcript_path, current_only=False)
-    return compact_latest_task(entries, max_chars, include_previous) if entries else sanitize(fallback)[-max_chars:]
+    text = compact_latest_task(entries, max_chars, include_previous) if entries else sanitize(fallback)[-max_chars:]
+    if preserve_request:
+        request = sanitize(next((body for role, body in reversed(entries) if role == "USER"), ""))
+        if request and request not in text:
+            text = f"CURRENT USER REQUEST (unabridged):\n{request}\n\nTASK EVIDENCE (excerpt):\n{text}"
+    return text
 
 
 def latest_task_entries(transcript_path: str, current_only: bool = True) -> list[tuple[str, str]]:

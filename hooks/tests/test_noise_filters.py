@@ -1,10 +1,4 @@
-"""The reviewer noise filters, ported from the Claude install on 2026-09-23.
-
-These are what took the Claude-side reviewer from ~36% of turns blocked to ~2%: the model still
-emits advisories, elision-only findings and findings whose premise is not in the slice, and each
-one costs a lane an expensive turn. Every filter here is deterministic and word-boundary based,
-so a block is either evidence-backed or it is dropped before the lane ever sees it.
-"""
+"""Codex quote anchoring and contentless-turn review rules."""
 from __future__ import annotations
 
 import re
@@ -16,67 +10,6 @@ from unittest import mock
 HOOKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS))
 import mimo_audit  # noqa: E402
-
-
-class VoidFindingTests(unittest.TestCase):
-    def test_elision_only_and_advisory_only_are_dropped_and_renumbered(self) -> None:
-        text = (
-            "VERDICT: ISSUES\n"
-            "1. [F1] The test edit weakens coverage: counts changed 7 to 4 with no source change in the diff\n"
-            "2. [F2] Supporting output is elided in the slice - confirm the run output before treating it as verified\n"
-            "3. [F3] Ensure the assistant is only relaying the peer's plan; this should be verified\n"
-            "4. [F4] Claim presented as confirmed while the cited tool call is still pending in the slice\n"
-        )
-        with mock.patch.object(mimo_audit, "log"):
-            out, dropped = mimo_audit.filter_void_findings(text)
-        self.assertEqual(len(dropped), 2)
-        self.assertIn("elided", dropped[0])
-        self.assertIn("Ensure", dropped[1])
-        self.assertEqual(
-            out.splitlines(),
-            [
-                "VERDICT: ISSUES",
-                "1. [F1] The test edit weakens coverage: counts changed 7 to 4 with no source change in the diff",
-                "2. [F4] Claim presented as confirmed while the cited tool call is still pending in the slice",
-            ],
-        )
-
-    def test_a_real_defect_is_never_dropped(self) -> None:
-        with mock.patch.object(mimo_audit, "log"):
-            same, dropped = mimo_audit.filter_void_findings(
-                "VERDICT: ISSUES\n1. missing null check crashes on empty list\n"
-            )
-        self.assertEqual(dropped, [])
-        self.assertTrue(same.startswith("VERDICT: ISSUES\n1. missing"))
-
-    def test_all_void_collapses_to_pass(self) -> None:
-        with mock.patch.object(mimo_audit, "log"):
-            out, dropped = mimo_audit.filter_void_findings(
-                "VERDICT: ISSUES\n1. without showing the corresponding tool output; cite the actual run output\n"
-            )
-        self.assertEqual(out, "VERDICT: PASS")
-        self.assertEqual(len(dropped), 1)
-
-    def test_a_defect_word_rescues_an_elision_or_advisory_phrasing(self) -> None:
-        # Both of these were dropped live on the Claude side before the DEFECT_RE carve-out existed.
-        self.assertEqual(
-            mimo_audit.void_finding("output is elided here but the visible part contradicts the claim: 3 failed"), ""
-        )
-        self.assertEqual(
-            mimo_audit.void_finding("ensure the peer plan does not apply the production migration unasked"), ""
-        )
-
-    def test_authorized_deployment_finding_survives_advisory_filter(self) -> None:
-        transcript = "USER: Deploy the release.\nASSISTANT: Would you like me to proceed?"
-        verdict = (
-            'VERDICT: ISSUES\n1. [quote: "Would you like me to proceed?"] '
-            "The user already authorized deployment. Run the script, then verify the live service."
-        )
-        anchored, unanchored = mimo_audit.filter_unanchored_findings(verdict, transcript)
-        filtered, voided = mimo_audit.filter_void_findings(anchored)
-        self.assertEqual(unanchored, [])
-        self.assertEqual(voided, [])
-        self.assertEqual(filtered, verdict)
 
 
 class UnanchoredQuoteTests(unittest.TestCase):

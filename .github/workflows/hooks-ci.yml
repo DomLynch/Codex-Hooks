@@ -25,7 +25,7 @@ jobs:
         run: sh scripts/install-telemetry.sh
 
       - name: Run Codex hook tests
-        run: python3 -m unittest discover -s hooks/tests
+        run: python3 -m pytest hooks/tests -q -p no:cacheprovider
 
       - name: Run Claude hook tests
         run: python3 -m unittest discover -s claude/hooks/tests

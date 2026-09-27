@@ -11,11 +11,10 @@ logs, trusted hashes, or full local Codex app config.
 - `UserPromptSubmit`: injects current-prompt discipline, autonomous execution,
   and V4/MCP routing guidance.
 - `SessionStart`: injects session handoff and project baseline context.
-- `PostToolUse`: runs quality checks after tool use, checkpoint commits, and
-  periodic mid-task GPT-5.6-Terra checkpoint audits.
-- `Stop / GPT-5.6-Terra audit`: fresh read-only Codex review before a turn ends.
-- `Stop / orchestrator`: waits for the audit pass, runs milestone gates, optional
-  Auto-PR, and self-spec chaining.
+- `PostToolUse`: runs quality checks and periodic mid-task review.
+- `Stop / audit`: fresh read-only Codex review before a turn ends.
+- `Stop / orchestrator`: waits for the audit and runs repository quality gates.
+  Hooks never commit, push, publish PRs or assign follow-on tasks.
 - `Autonomy daemon`: launchd job that keeps a shared task queue warm for
   Codex/Claude long-horizon runs using local repo mining only.
 
@@ -53,7 +52,6 @@ Runtime feature flags live in:
 Example:
 
 ```text
-CODEX_HOOK_AUTO_PR=1
 CODEX_HOOK_CLAUDE_AUDIT=0
 CODEX_HOOK_AUTONOMY=1
 CODEX_HOOK_AUTONOMY_LEVEL=standard
@@ -144,5 +142,9 @@ and gives the reviewer a bounded diff of files edited this turn. Sensitive
 paths receive a stricter review without sending their diff. Documentation-only
 edits with no shipping claim skip the model. After three consecutive reviewer
 outages, the turn is released as unresolved with a local escalation record;
-the release orchestrator still requires a reviewer PASS for side effects.
-Checkpoint branches refuse to switch an existing checkout to a different commit.
+the orchestrator still requires a reviewer PASS. Git publication remains an
+explicit agent action scoped to the user's task.
+
+Review evidence is compacted separately from the complete current user request.
+Findings are not discarded merely for containing words such as "verify".
+Post-tool CodeGraph updates run only at a verified Git repository/worktree root.

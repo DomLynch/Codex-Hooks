@@ -17,12 +17,12 @@ class EnforcementTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
 
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
 
-    def test_checkpoint_preserves_newer_checkout_and_uncommitted_edits(self):
+    def test_branch_helper_preserves_newer_checkout_and_uncommitted_edits(self):
         from lib import git as git_tools
 
         def git(*args):
@@ -34,27 +34,17 @@ class EnforcementTests(unittest.TestCase):
         (self.root/'version.txt').write_text('old release\n')
         git('add', '.')
         git('commit', '-qm', 'old release')
-        branch = post_tool.current_session_branch('stale-test')
+        branch = git_tools.current_session_branch('stale-test')
         git('branch', branch)
         (self.root/'version.txt').write_text('current release\n')
         git('commit', '-qam', 'current release')
         (self.root/'pending.txt').write_text('uncommitted task work\n')
         before = (git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch))
-        with (
-            patch.object(post_tool, 'checkpoint_state', return_value={'edits_since_last_commit': 5}),
-            patch.object(post_tool, 'update_checkpoint_state') as state,
-            patch.object(post_tool, 'commit', return_value=(False, 'not committed')) as commit,
-            patch.object(post_tool, 'push') as push,
-            patch.object(post_tool, 'log'),
-        ):
-            post_tool.maybe_checkpoint('stale-test', self.root)
+        self.assertFalse(git_tools.ensure_branch(branch, self.root))
         self.assertEqual(git('branch', '--show-current'), 'main')
         self.assertEqual((git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch)), before)
         self.assertEqual((self.root/'version.txt').read_text(), 'current release\n')
         self.assertEqual((self.root/'pending.txt').read_text(), 'uncommitted task work\n')
-        commit.assert_not_called()
-        push.assert_not_called()
-        state.assert_called_once_with('stale-test', branch_failed=True)
         self.assertTrue(git_tools.ensure_branch('fresh-checkpoint', self.root))
         self.assertEqual(git('rev-parse', 'HEAD'), before[0])
         self.assertTrue(git_tools.ensure_branch('main', self.root))
@@ -249,7 +239,7 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}) as check, \
              patch.object(post_tool, 'pending_quality') as pending, \
              patch.object(post_tool, 'sync_codegraph') as sync, \
-             patch.object(post_tool, 'maybe_checkpoint') as checkpoint:
+             patch.object(post_tool, 'maybe_checkpoint', create=True) as checkpoint:
             post_tool.main()
             pending.assert_not_called()
             sync.assert_not_called()
@@ -268,13 +258,14 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}), \
              patch.object(post_tool, 'pending_quality') as pending, \
              patch.object(post_tool, 'sync_codegraph') as sync, \
-             patch.object(post_tool, 'update_checkpoint_state'), patch.object(post_tool, 'update_audit_state'), \
-             patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint'):
+             patch.object(post_tool, 'update_checkpoint_state', create=True), patch.object(post_tool, 'update_audit_state'), \
+             patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint', create=True):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
             self.assertEqual({call.args[0] for call in sync.call_args_list}, {file.parent for file in files})
 
     def test_codegraph_initializes_then_syncs_existing_index(self):
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         with patch.object(post_tool.subprocess, 'run') as run:
             run.return_value.returncode = 0
             post_tool.sync_codegraph(self.root)
