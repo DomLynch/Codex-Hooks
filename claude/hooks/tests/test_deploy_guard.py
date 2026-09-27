@@ -46,6 +46,44 @@ class DeployGuardTests(unittest.TestCase):
             self.assertIn("Deploy abc1234 is in flight", reason, cmd)
             self.assertIn("one-deployer rule", reason)
 
+    def test_stills_records_and_bakes_are_heavy_whatever_the_cwd_or_prefix(self):
+        # 2026-09-26: these ran through deploy a981f7a5 from a .claude/worktrees cwd. The guard reads the command only, never
+        # the cwd, so a cp && prefix, an env prefix, a pipe suffix or a cd into a worktree must not hide the script name.
+        self.path.write_text(json.dumps(lock()))
+        active = deploy_guard.active_lock()
+        for cmd in ("cp a b && node scripts/herolook-game-stills.mjs --label game-raw --pilot /herolook/legionary-d.glb --frames 28 2>&1 | tail -2",
+                    "node scripts/herolook-game-stills.mjs --frames 34 | tail -1 ; ~/.venvs/face/bin/python -c 'from PIL import Image'",
+                    "cd /Users/domininclynch/Desktop/Business/frankendom/.claude/worktrees/vigorous-northcutt-a264de && node scripts/herolook-stills.mjs",
+                    "node scripts/herolook-stills.mjs", "node scripts/herolook-kill-record.mjs",
+                    "CREATURE_OUT=/tmp/out node scripts/build-creatures.mjs hoplite", "node scripts/build-creatures.mjs hoplite",
+                    "node scripts/build-warrior.mjs", "blender -b -P scripts/character/herolook_scutum.py",
+                    "/Applications/Blender.app/Contents/MacOS/Blender -b -P scripts/character/creatures.py -- --family hoplite",
+                    # Armour's: a Playwright contact sheet, and any future herolook-*.mjs render by prefix.
+                    "node scripts/armour-contact-sheet.mjs --family hoplite | tail -1", "node scripts/herolook-anything-new.mjs"):
+            self.assertIn("one-deployer rule", deploy_guard.decide(cmd, active), cmd)
+        # Light or remote (HF / API calls, PIL): the herolook python helpers stay allowed.
+        for script in ("herolook_normal.py", "herolook_attach.py", "herolook-strip.py", "herolook_rawstill.py", "trellis2.py", "hunyuan21.py", "kontext.py", "t2i.py"):
+            for cmd in (f"~/.venvs/face/bin/python scripts/character/{script} --in x.glb", f"python3 scripts/character/{script}"):
+                self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
+
+    def test_pixelmator_pro_is_heavy_plain_osascript_is_not(self):
+        # 2026-09-26 (Hero Look's headless texture step): Pixelmator Pro via osascript or open -a competes with a deploy.
+        self.path.write_text(json.dumps(lock()))
+        active = deploy_guard.active_lock()
+        for cmd in ("osascript -e 'tell application \"Pixelmator Pro\" to open POSIX file \"/tmp/a.png\"'",
+                    "osascript -e 'tell application \"Pixelmator Pro\"' -e 'activate' 2>&1 | tail -1",
+                    "osascript scripts/pixelmator-upscale.scpt /tmp/a.png", "osascript ~/Developer/scripts/Pixelmator-export.applescript",
+                    "osascript <<'EOF'\ntell application \"Pixelmator Pro\"\n  activate\nend tell\nEOF",
+                    "open -a \"Pixelmator Pro\" /tmp/a.png", "open -a Pixelmator\\ Pro /tmp/a.png", "open -b com.pixelmatorteam.pixelmator.x",
+                    "cd ~/Developer/frankendom-herolook && node scripts/pixelmator-upscale.mjs --in a.png", "node scripts/textures-upscale.mjs",
+                    "node scripts/pixelmator-maps.mjs --in a.png", "node scripts/herolook-sheet.mjs"):   # Hero Look's names, 21:3x
+            self.assertIn("one-deployer rule", deploy_guard.decide(cmd, active), cmd)
+        for cmd in ("osascript -e 'display notification \"done\" with title \"deploy\"'", "osascript -e 'tell application \"Finder\" to activate'",
+                    "osascript scripts/notify.scpt", "open -a Finder", "git commit -m 'osascript Pixelmator Pro texture step'",
+                    "git log --grep 'Pixelmator' --oneline", "grep -rn pixelmator scripts/",
+                    "osascript -e 'display notification \"x\"' && git log --grep Pixelmator"):
+            self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
+
     def test_light_commands_pass_under_a_lock(self):
         self.path.write_text(json.dumps(lock()))
         active = deploy_guard.active_lock()
