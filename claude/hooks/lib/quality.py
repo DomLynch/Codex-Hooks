@@ -195,9 +195,13 @@ def gate_lock_holder() -> dict | None:
 
 
 def _note_gate_child(pgid: int) -> None:
-    data = _read_lock()
-    if data and int(data.get("pid", 0)) == os.getpid():
-        GATE_LOCK_PATH.write_text(json.dumps({**data, "pgid": pgid}))
+    """Record the running check's process group in our lock; never fails the gate (best effort)."""
+    try:
+        data = _read_lock()
+        if data and int(data.get("pid", 0)) == os.getpid():
+            GATE_LOCK_PATH.write_text(json.dumps({**data, "pgid": int(pgid)}))
+    except Exception:
+        pass
 
 
 def acquire_gate_lock(cwd: Path) -> bool:
