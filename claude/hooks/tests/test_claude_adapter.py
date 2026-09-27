@@ -1569,6 +1569,24 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
                 self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
 
+    def test_negation_anywhere_in_the_clause_and_a_later_refusal_revoke_an_ok(self) -> None:
+        # Audit D (2026-09-27): these read as the owner's OK, and an earlier OK outlived a later "do not deploy".
+        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            for words in ("Do not ever deploy it.", "Nothing is approved.", "Go ahead only with the tests; do not deploy.",
+                          "never, ever merge it", "no one approved this", "ok go ahead but hold off on merging"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
+            revoked = [("2026-09-20T10:00:00Z", "Go ahead and deploy it."), ("2026-09-20T11:00:00Z", "Do not deploy it.")]
+            self.assertNotEqual(gate([self.PEER, self.MERGE], self._transcript(Path(tmp), revoked), "2026-09-20T12:00:00Z"), "")
+            renewed = [("2026-09-20T10:00:00Z", "don't merge yet"), ("2026-09-20T11:00:00Z", "ok, merge it now")]
+            self.assertEqual(gate([self.PEER, self.MERGE], self._transcript(Path(tmp), renewed), "2026-09-20T12:00:00Z"), "")
+            for words in ("No worries, go ahead", "If the tests pass, deploy it", "stop asking, you decide",
+                          "not now? fine. go ahead", "Don't wait for me, ship it"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
+
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
         import mimo_audit
 
