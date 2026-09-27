@@ -165,22 +165,37 @@ _AUTHORIZATION_RE = re.compile(
     r"(keep|continue|carry on) (on )?(deploying|merging|shipping|releasing)|"
     r"one deployer|you are the deployer|go ahead|approved|(ok |yes )?do it|yes,? (go|do|proceed|approved)|full (approval|authority)|delegate|"
     r"do whatever (u|you) need|take the decision|you decide|use your judgement|i trust you)\b", re.IGNORECASE)
-# A negation anywhere earlier in the same clause cancels the OK ("Do not ever deploy it", "Nothing is approved",
-# audit D 2026-09-27). A comma or sentence end starts a new clause, so "don't stop, keep deploying" stays an OK;
-# "stop" counts only directly before the match ("stop asking, you decide" is an OK).
-_CLAUSE_NEGATION_RE = re.compile(r"\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b|\bstop\s*$", re.IGNORECASE)
-# Refusing a consequential action ("do not deploy", "hold off on merging") cancels any OK in the same message and
-# revokes every earlier one: "Go ahead only with the tests; do not deploy" is not a deploy OK.
+# One rule grants and revokes (recheck 2026-09-27: separate patterns let "Nothing is approved." slip past both). A
+# negation earlier in the same SENTENCE makes the phrase a refusal; commas do not end it ("Do not ever, under any
+# circumstances, deploy it"). A negation that only negates hesitation ("don't stop", "no worries", "not sure") is
+# not a refusal, nor is the owner describing themselves ("I'm not technical, do it yourself"), and "stop" counts
+# only directly before the phrase ("stop asking, you decide" is an OK).
+_NEGATION_RE = re.compile(
+    r"(?<!\bim )(?<!\bi'm )(?<!\bi’m )(?<!\bi am )\b(?:don['’]?t|do not|never|not|no|nothing|nobody|none)\b"
+    r"(?!\s+(?:stop|wait|worry|worries|hesitate|problem|sure|panic|bother|rush)\b)|\bstop\s*$", re.IGNORECASE)
+# Refusing a consequential action ("do not deploy", "hold off on merging") is a refusal whatever else the message says.
 _REFUSAL_RE = re.compile(
     r"\b(?:don['’]?t|do not|never|stop|hold off(?: on)?|no more)[\s,]+(?:ever[\s,]+|yet[\s,]+)?"
     r"(?:deploy|merg|ship|releas|push|go(?:ing)? live)", re.IGNORECASE)
+_APPROVAL_WORD_RE = re.compile(r"\bapprov\w*\b", re.IGNORECASE)   # "not an approval" revokes; bare "approval" grants nothing
+
+
+def authorization_signal(text: str) -> str:
+    """'ok' when the owner's message grants a merge/deploy, 'refusal' when it refuses or withdraws one
+    (which revokes every earlier OK), '' when it is neither. A refusal anywhere in the message wins."""
+    if _REFUSAL_RE.search(text):
+        return "refusal"
+    signal = ""
+    for m in sorted([*_AUTHORIZATION_RE.finditer(text), *_APPROVAL_WORD_RE.finditer(text)], key=lambda m: m.start()):
+        if _NEGATION_RE.search(re.split(r"[.;:!?\n]", text[:m.start()])[-1]):
+            return "refusal"
+        if m.re is _AUTHORIZATION_RE:
+            signal = "ok"
+    return signal
 
 
 def _authorizes(text: str) -> bool:
-    if _REFUSAL_RE.search(text):
-        return False
-    return any(not _CLAUSE_NEGATION_RE.search(re.split(r"[,.;:!?\n]", text[:m.start()])[-1])
-               for m in _AUTHORIZATION_RE.finditer(text))
+    return authorization_signal(text) == "ok"
 
 
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
@@ -221,9 +236,10 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
         # that are mostly questions, and scheduled/monitor prompts quoting the owner, are not instructions either.
         if len(text) > 400 or text.count("?") >= 2 or text.startswith(("One-hour check-in", "Overnight ", "Morning re-check")):
             continue
-        if _REFUSAL_RE.search(text[:240]):
+        signal = authorization_signal(text[:240])
+        if signal == "refusal":
             break  # the owner's latest word on merging/deploying is "no": earlier OKs are revoked
-        if _authorizes(text[:240]):
+        if signal == "ok":
             out.append((ts[11:16] if len(ts) >= 16 else ts, " ".join(text.split())[:max_chars]))
             if len(out) >= limit:
                 break
