@@ -70,14 +70,18 @@ def update_checkpoint_state(
     edits: int | None = None,
     committed: bool = False,
     branch_failed: bool = False,
+    files: list | None = None,
 ) -> None:
     data = load_json(CHECKPOINT_PATH, {})
     state = data.get(session_id, {"edits_since_last_commit": 0, "last_commit_at": ""})
     if edits is not None:
         state["edits_since_last_commit"] = max(0, int(state.get("edits_since_last_commit", 0)) + edits)
+    if files:
+        state["files"] = sorted({*state.get("files", []), *map(str, files)})
     if branch_failed:
         state["last_branch_failure_at"] = now_iso()
     if committed:
+        state.pop("files", None)
         state["edits_since_last_commit"] = 0
         state["last_commit_at"] = now_iso()
         state.pop("last_branch_failure_at", None)

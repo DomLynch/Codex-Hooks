@@ -94,6 +94,60 @@ class EnforcementTests(unittest.TestCase):
         push.assert_not_called()
         self.assertEqual(subprocess.check_output(['git', 'branch', '--show-current'], cwd=self.root, text=True).strip(), 'lane/feature')
 
+    def test_auto_pr_and_checkpoints_default_off_without_config(self):
+        # Audit E: the installer writes CODEX_HOOK_AUTO_PR=0 but a missing or unreadable
+        # hook_env fell back to "1", so a broken config turned commit+push on.
+        hooks = Path(__file__).resolve().parents[1]
+        env = {k: v for k, v in os.environ.items() if k != 'CODEX_HOOK_AUTO_PR'}
+        env['HOME'] = str(self.root)
+        out = subprocess.check_output(
+            [sys.executable, '-c', 'import stop_orchestrator, post_tool; '
+             'print(stop_orchestrator.AUTO_PR_ENABLED, post_tool.CHECKPOINTS_ENABLED)'],
+            cwd=hooks, env=env, text=True)
+        self.assertEqual(out.split(), ['False', 'False'])
+
+    def test_commit_stages_only_the_files_the_session_edited(self):
+        from lib import git as git_tools
+
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=self.root, text=True).strip()
+
+        git('init', '-q', '-b', 'main')
+        git('config', 'user.email', 'hooks-test@example.com')
+        git('config', 'user.name', 'Hooks Test')
+        for name in ('owned.txt', 'other.txt', 'gone.txt'):
+            (self.root/name).write_text('v1\n')
+        git('add', '.')
+        git('commit', '-qm', 'base')
+        (self.root/'owned.txt').write_text('task edit\n')
+        (self.root/'gone.txt').unlink()
+        (self.root/'other.txt').write_text('another lane\'s work\n')
+        (self.root/'stray.txt').write_text('untracked, not ours\n')
+        git('add', 'other.txt')  # someone else's staged change must not ride along either
+        ok, sha = git_tools.commit('task', self.root, [self.root/'owned.txt', self.root/'gone.txt', Path('/elsewhere/x.py')])
+        self.assertTrue(ok, sha)
+        self.assertEqual(git('show', '--name-only', '--format=', 'HEAD').split(), ['gone.txt', 'owned.txt'])
+        self.assertEqual(git('status', '--porcelain').splitlines(), ['M  other.txt', '?? stray.txt'])
+        self.assertEqual(git_tools.commit('nothing owned', self.root, []), (False, ''))
+
+    def test_checkpoint_commits_only_recorded_session_files(self):
+        with tempfile.TemporaryDirectory() as tmp, patch('lib.state.CHECKPOINT_PATH', Path(tmp)/'cp.json'):
+            post_tool.update_checkpoint_state('s1', edits=1, files=[self.root/'a.py'])
+            post_tool.update_checkpoint_state('s1', edits=1, files=[self.root/'b.py', self.root/'a.py'])
+            self.assertEqual(post_tool.checkpoint_state('s1')['files'], [str(self.root/'a.py'), str(self.root/'b.py')])
+            with (
+                patch.object(post_tool, 'CHECKPOINTS_ENABLED', True),
+                patch.object(post_tool, 'is_git_repo', return_value=True),
+                patch.object(post_tool, 'ensure_branch', return_value=True),
+                patch.object(post_tool, 'commit', return_value=(True, 'abc')) as commit,
+                patch.object(post_tool, 'push', return_value=True),
+                patch.object(post_tool, 'log'),
+                patch.object(post_tool, 'CHECKPOINT_EDIT_THRESHOLD', 2),
+            ):
+                post_tool.maybe_checkpoint('s1', self.root)
+            self.assertEqual(commit.call_args.args[2], [str(self.root/'a.py'), str(self.root/'b.py')])
+            self.assertNotIn('files', post_tool.checkpoint_state('s1'), 'a checkpoint commit starts a fresh file list')
+
     def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
         self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
