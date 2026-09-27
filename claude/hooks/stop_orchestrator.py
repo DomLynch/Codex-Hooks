@@ -33,7 +33,7 @@ from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.rehome import is_rehome_turn
 from lib.quality import ci_covered_commit, deploy_hold, gate_busy, pending_quality, run_project_gate, run_quality_checks
-from lib.state import load_handoff, read_session_spec, write_handoff
+from lib.state import checkpoint_state, load_handoff, read_session_spec, update_checkpoint_state, write_handoff
 from lib.transcript import edited_paths
 from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
@@ -80,7 +80,8 @@ def hook_env(name: str, default: str = "") -> str:
     return default
 
 
-AUTO_PR_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "1") != "0"
+# Off unless explicitly "1": a missing or unreadable hook_env must not turn on commit+push+PR.
+AUTO_PR_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "0") == "1"
 CLAUDE_AUDIT_ENABLED = hook_env("CODEX_HOOK_CLAUDE_AUDIT", "1") != "0"
 
 
@@ -412,10 +413,11 @@ def commit_push_pr(session_id: str, cwd: Path, transcript: str) -> tuple[str, st
     if CLAUDE_AUDIT_ENABLED:
         auditors.append("Claude")
     message = f"[task {task_n}] {summary}\n\nAudited-by: {', '.join(auditors)}\nSession: {session_id}"
-    ok, sha = commit(message, cwd)
+    ok, sha = commit(message, cwd, checkpoint_state(session_id).get("files", []))
     if not ok:
         log(COMPONENT, f"auto-pr commit skipped: {sha}")
         return branch, "", "", "commit_failed"
+    update_checkpoint_state(session_id, committed=True)
     pushed = retry_bool("auto-pr push", lambda: push(branch, cwd))
     if not pushed:
         write_task_handoff(handoff, session_id, task_n, summary, branch, sha, "", "push_failed")

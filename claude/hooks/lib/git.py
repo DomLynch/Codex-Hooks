@@ -195,13 +195,8 @@ def ensure_branch(branch: str, cwd: str | Path) -> bool:
     return rc == 0
 
 
-def stage_all(cwd: str | Path) -> bool:
-    rc, _, _ = safe_run(["git", "add", "-A"], cwd=cwd)
-    return rc == 0
-
-
-def has_staged_changes(cwd: str | Path) -> bool:
-    rc, _, _ = safe_run(["git", "diff", "--cached", "--quiet"], cwd=cwd)
+def has_staged_changes(cwd: str | Path, paths: list[str]) -> bool:
+    rc, _, _ = safe_run(["git", "diff", "--cached", "--quiet", "--", *paths], cwd=cwd)
     return rc == 1
 
 
@@ -210,10 +205,23 @@ def has_worktree_changes(cwd: str | Path) -> bool:
     return rc == 0 and bool(out.strip())
 
 
-def commit(message: str, cwd: str | Path) -> tuple[bool, str]:
-    if not stage_all(cwd) or not has_staged_changes(cwd):
+def commit(message: str, cwd: str | Path, files: list) -> tuple[bool, str]:
+    """Commit only `files` (the ones this session edited), never the rest of a shared checkout."""
+    root = git_root(cwd)
+    if not root:
         return False, ""
-    rc, out, err = safe_run(["git", "commit", "-m", message], cwd=cwd, timeout=60)
+    paths = []
+    for file in files:
+        try:
+            paths.append(str(Path(file).resolve().relative_to(root.resolve())))
+        except ValueError:
+            continue
+    if not paths:
+        return False, ""
+    rc, _, _ = safe_run(["git", "add", "-A", "--", *paths], cwd=root)
+    if rc != 0 or not has_staged_changes(root, paths):
+        return False, ""
+    rc, out, err = safe_run(["git", "commit", "-m", message, "--", *paths], cwd=root, timeout=60)
     if rc != 0:
         return False, err or out
     rc, sha, _ = safe_run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd)

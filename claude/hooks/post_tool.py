@@ -39,7 +39,8 @@ MIMO_AUDIT_MAX_TRANSCRIPT_CHARS = 3000
 MIMO_AUDIT_TIMEOUT_S = 30
 # Checkpoints switch the checkout to claude/<session>/main, commit and push: the
 # same side effect class as auto-PR, so the same switch governs both.
-CHECKPOINTS_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "1") != "0"
+# Off unless explicitly "1": a missing or unreadable hook_env must not turn on commit+push.
+CHECKPOINTS_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "0") == "1"
 
 MIMO_CHECKPOINT_PROMPT = """Audit Claude Code's in-progress task checkpoint.
 Your first line must be exactly one of:
@@ -226,7 +227,7 @@ def maybe_checkpoint(session_id: str, cwd: Path) -> None:
         update_checkpoint_state(session_id, branch_failed=True)
         log(COMPONENT, f"checkpoint skipped: could not ensure {branch}")
         return
-    ok, sha = commit(f"[checkpoint] session {session_id[:8]} - {edits} edits", cwd)
+    ok, sha = commit(f"[checkpoint] session {session_id[:8]} - {edits} edits", cwd, state.get("files", []))
     if not ok:
         log(COMPONENT, f"checkpoint skipped/no changes: {sha}")
         return
@@ -266,7 +267,7 @@ def main() -> None:
             if not result.get("ok"):
                 block(format_quality_failures(result))
         if is_edit:
-            update_checkpoint_state(session_id, edits=1)
+            update_checkpoint_state(session_id, edits=1, files=files)
             update_audit_state(session_id, edits=1)
             maybe_mimo_checkpoint_audit(payload, session_id, cwd)
             maybe_checkpoint(session_id, cwd)
