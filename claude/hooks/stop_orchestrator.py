@@ -209,7 +209,12 @@ def milestone_detected(text: str) -> bool:
     return any(pattern.search(cleaned) for pattern in MILESTONE_INTENT_PATTERNS)
 
 
-def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> bool:
+# run_aaa_gate's third outcome: not failed, not passed. Truthy so the Stop is not blocked, but the repo stays
+# owed a gate and no auto-PR runs (audit C, 2026-09-27).
+DEFERRED = "deferred"
+
+
+def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
     # One deployer, one Mac: the repository gate (test suites, browser checks) waits its turn. The edits are
     # still gated by the PR's CI and by the next Stop after the deploy; the lane is told, not silently passed.
     # Also waits (never fails) for an overloaded Mac, a Deploy hold, or the same check already running here.
@@ -219,15 +224,15 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> bool
     log(COMPONENT, f"repository quality gate deferred ({when}): {why}")
     key = revision or why.split(" (")[0]
     if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == key:
-        return True
+        return DEFERRED
     update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: key})
     sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
         f"[Repository Quality Gate] deferred: {why}; "
         "the gate runs on a later Stop, and the PR's CI still covers this change."}}))
-    return True
+    return DEFERRED
 
 
-def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool:
+def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool | str:
     if (cwd / ".quality-gate.json").exists():
         covered = ci_covered_commit(cwd)
         if covered:
@@ -542,20 +547,32 @@ def main() -> None:
         log(COMPONENT, f"start session={session_id} turn={turn_id} transcript={len(transcript)} cwd={cwd}")
         pending = pending_quality(session_id)
         quality_deadline = time.monotonic() + 480
+        deferred: list[str] = []
         for project in pending:
             target = Path(project)
             if not (target / ".quality-gate.json").exists():
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
-            if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id):
+            outcome = run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
+            if not outcome:
                 return
-        if str(cwd) not in pending and is_git_repo(cwd) and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id):
-            return
+            if outcome == DEFERRED:
+                deferred.append(project)
+        if str(cwd) not in pending and is_git_repo(cwd):
+            outcome = run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
+            if not outcome:
+                return
+            if outcome == DEFERRED:
+                pending_quality(session_id, cwd)  # still owed: the next Stop runs it
+                deferred.append(str(cwd))
         if pending:
-            pending_quality(session_id, clear=True)
+            pending_quality(session_id, done=[p for p in pending if p not in deferred])
         if not audit_with_claude(session_id, transcript, session_spec):
             return
         if not wait_for_mimo_pass(session_id, turn_id):
             log(COMPONENT, f"side effects skipped: {AUDITOR_NAME} did not pass current turn")
+            return
+        if deferred:
+            log(COMPONENT, f"side effects skipped: quality gate deferred for {', '.join(deferred)}")
             return
         branch, sha, pr_url, auto_pr_status = commit_push_pr(session_id, cwd, transcript)
         if auto_pr_status in {"push_failed", "pr_failed"}:
