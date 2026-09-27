@@ -140,8 +140,15 @@ _TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:\[\]-]*$")   # a path-like 
 # Options that do not change which tests are collected. Anything else on the command line (a selection flag, an
 # attached value like -ktest_one, --ignore=..., an option we do not know) makes the run opaque: it is the same
 # check as itself and covers nothing else. Allow-list, not block-list (recheck 3, 2026-09-27).
-_VALUE_FLAGS = {"-p", "-o", "-W", "-c", "-n", "--tb", "--durations", "--maxfail", "--timeout", "--cov", "--cov-report",
-                "--color", "--capture", "--reporter", "--test-reporter", "--root", "--rootdir", "--basetemp", "-C"}
+# "Takes a value" is not "cannot change coverage" (recheck 4): an ini override (-o), a config file (-c), a plugin
+# (-p) or a directory switch (--rootdir, -C) can deselect tests, so they are NOT listed and make the run opaque.
+# Value flags are per runner because one letter means different things (-n is xdist workers in pytest; -p is a
+# plugin in pytest but the file PATTERN in `unittest discover`).
+_VALUE_FLAGS = {
+    "*": {"-W", "--tb", "--durations", "--maxfail", "--timeout", "--cov-report", "--color", "--capture", "--reporter",
+          "--test-reporter", "--basetemp"},
+    "pytest": {"-n", "--cov"},
+}
 _NEUTRAL_FLAGS = {"-q", "-v", "-x", "-s", "-l", "--quiet", "--verbose", "--exitfirst", "--no-header", "--no-summary",
                   "--disable-warnings", "--strict-markers", "--strict", "--fix", "--noEmit", "--pretty", "--no-cov", "--"}
 _NEUTRAL_CLUSTER_RE = re.compile(r"^-[qvxsl]+$|^-r[a-zA-Z]*$")   # -qx, -vv, -rA
@@ -165,13 +172,14 @@ def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     tail = command[command.lower().find(runner.split()[0]) + len(runner):]
     tail = re.split(r"\s(?:&&|\|\||;|\||>|2>)\s|\n", tail)[0]
     tokens = tail.split()
+    value_flags = _VALUE_FLAGS["*"] | _VALUE_FLAGS.get(runner, set())
     targets, opaque, skip = set(), False, False
     for tok in tokens:
         if skip:
             skip = False
             continue
         flag = tok.split("=", 1)[0]
-        if flag in _VALUE_FLAGS:
+        if flag in value_flags:
             skip = "=" not in tok
         elif tok in _NEUTRAL_FLAGS or _NEUTRAL_CLUSTER_RE.match(tok) or tok in _SUBCOMMANDS:
             continue
