@@ -159,6 +159,72 @@ def _same_check_running(cwd: Path, command: list[str]) -> str:
     return ""
 
 
+# Lead, 2026-09-27 evening: 8-12 `quality-stop-targeted.mjs` runs at once (every lane's Stop fires the same gate),
+# 9 min each at load 40-77 against a 420 s budget, while Dom's Blender batch had the Mac. One gate per Mac: the
+# run holds this lock; every other Stop defers with its existing notice. A dead holder or a forgotten lock expires.
+GATE_LOCK_PATH = Path.home() / ".claude" / "state" / "quality_gate.lock"
+GATE_LOCK_TTL_S = 420 + 120
+
+
+def gate_lock_holder() -> dict | None:
+    """{pid, cwd, at} of the live gate run holding the Mac-wide lock; None when free, stale, or its process is gone."""
+    try:
+        data = json.loads(GATE_LOCK_PATH.read_text())
+        pid, at = int(data["pid"]), float(data["at"])
+        if time.time() - at > GATE_LOCK_TTL_S:
+            return None
+        os.kill(pid, 0)
+    except Exception:
+        return None
+    return data
+
+
+def acquire_gate_lock(cwd: Path) -> bool:
+    """Take the Mac-wide gate lock for this process; False when another live run holds it."""
+    for _ in range(2):
+        holder = gate_lock_holder()
+        if holder and int(holder.get("pid", 0)) != os.getpid():
+            return False
+        GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if holder is None:
+            GATE_LOCK_PATH.unlink(missing_ok=True)   # stale or dead
+        try:
+            fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            continue   # a race: re-read the holder once
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"pid": os.getpid(), "cwd": str(cwd), "at": time.time()}, fh)
+        return True
+    return False
+
+
+def release_gate_lock() -> None:
+    holder = gate_lock_holder()
+    if holder and int(holder.get("pid", 0)) == os.getpid():
+        GATE_LOCK_PATH.unlink(missing_ok=True)
+
+
+def unchanged_from_base(cwd: Path) -> str:
+    """Name of the base branch when the checkout carries no task-owned change: clean tree AND no diff between the
+    merge-base with the base and HEAD (`git diff --quiet base...HEAD`). Base = `base` in .quality-gate.json, else
+    origin/HEAD. "" (so the gate runs) for a dirty tree, any commit on top of the base, or no resolvable base.
+    Lead, 2026-09-27: Deploy's checkout on unchanged trunk ran the 9-minute gate at every Stop for nothing."""
+    rc, status, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
+    if rc or status.strip():
+        return ""
+    try:
+        base = json.loads((cwd / ".quality-gate.json").read_text()).get("base")
+    except Exception:
+        base = None
+    if not isinstance(base, str) or not base:
+        rc, base, _ = safe_run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], cwd=cwd)
+        base = base.strip() if rc == 0 else ""
+    if not base:
+        return ""
+    rc, _, _ = safe_run(["git", "diff", "--quiet", f"{base}...HEAD"], cwd=cwd)
+    return base if rc == 0 else ""
+
+
 def gate_busy(cwd: Path) -> dict | None:
     """Why the repository gate should wait instead of starting now, or None."""
     load = os.getloadavg()[0]
@@ -167,6 +233,9 @@ def gate_busy(cwd: Path) -> dict | None:
     hold = deploy_hold()
     if hold:
         return hold
+    holder = gate_lock_holder()
+    if holder and int(holder.get("pid", 0)) != os.getpid():
+        return {"reason": f"a repository gate is already running in {holder.get('cwd')} (pid {holder.get('pid')}, one gate per Mac)"}
     try:
         contract = json.loads((cwd / ".quality-gate.json").read_text())
         commands = list(contract.get("commands") or []) + list(contract.get("completion_commands") or [])
@@ -310,6 +379,9 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
         cached = _cached_pass(key)
         if cached:
             return {"ok": True, "results": [_result(path, "quality contract", True, f"cached pass at {cached} on an identical tree")]}
+        if not acquire_gate_lock(cwd):
+            return {"ok": True, "deferred": gate_busy(cwd) or {"reason": "another repository gate took the Mac-wide lock first"},
+                    "results": results}
         started = time.monotonic()
         for command in commands:
             remaining = timeout - (time.monotonic() - started)
@@ -345,6 +417,8 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             _remember_pass(key, cwd)
     except Exception as exc:
         results.append(_result(path, "quality contract", False, str(exc)))
+    finally:
+        release_gate_lock()
     return {"ok": bool(results) and all(item["ok"] for item in results), "results": results}
 
 
