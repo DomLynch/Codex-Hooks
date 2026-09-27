@@ -118,6 +118,21 @@ class UnacknowledgedFailureGateTests(unittest.TestCase):
         self.assertEqual(gate([("TOOL OUTPUT", narrow_failed), ("TOOL OUTPUT", whole_file)], "Done."), "", "the whole file covers a filtered run of it")
         self.assertIn("AssertionError", gate([("TOOL OUTPUT", narrow_failed), ("TOOL OUTPUT", other_narrow)], "Done."))
 
+    def test_boolean_s_flag_does_not_swallow_the_file_that_follows_it(self) -> None:
+        # Reviewer F1 2026-09-27: `-s` was listed as a value flag (unittest's `-s dir`), so `pytest -s tests/a.py`
+        # lost its file, looked like a whole-suite run and could clear a failure anywhere.
+        from lib.transcript import _check_identity, unacknowledged_check_failure as gate
+
+        self.assertEqual(_check_identity("[c] Bash: pytest -s tests/test_a.py"), ("pytest", frozenset({"tests/test_a.py"})))
+        self.assertEqual(_check_identity("[c] Bash: python -m unittest discover -s hooks/tests -q"), ("unittest", frozenset({"hooks/tests"})))
+        b_failed = "[c1] Bash: pytest tests/test_b.py\n\nFAILED tests/test_b.py::test_x - AssertionError"
+        suite_failed = "[c2] Bash: pytest\n\nFAILED tests/test_b.py::test_x - AssertionError"
+        a_green = "[c3] Bash: pytest -s tests/test_a.py\n\n3 passed in 0.1s"
+        for failed in (b_failed, suite_failed):
+            self.assertIn("AssertionError", gate([("TOOL OUTPUT", failed), ("TOOL OUTPUT", a_green)], "Done."), failed[:30])
+        b_green = "[c4] Bash: pytest -s tests/test_b.py\n\n2 passed in 0.1s"
+        self.assertEqual(gate([("TOOL OUTPUT", b_failed), ("TOOL OUTPUT", b_green)], "Done."), "")
+
     def test_a_chained_green_run_clears_each_check_it_reran(self) -> None:
         from lib.transcript import unacknowledged_check_failure as gate
 

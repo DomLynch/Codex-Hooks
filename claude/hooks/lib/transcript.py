@@ -141,7 +141,8 @@ _TARGET_RE = re.compile(r"^(?!-)[\w.@~-]*[/.][\w./@~:\[\]-]*$")   # a path-like 
 _SELECT_FLAGS = {"-k", "-m", "--deselect", "--lf", "--last-failed", "--sw", "--stepwise", "--co", "--collect-only",
                  "--grep", "-g", "-t", "--testNamePattern", "--test-name-pattern", "--filter", "--match"}
 _VALUE_FLAGS = {"-p", "-o", "-W", "-c", "-n", "--tb", "--durations", "--maxfail", "--timeout", "--cov", "--cov-report",
-                "--reporter", "--test-reporter", "-s", "--root", "-C"}   # take the next token as their value
+                "--reporter", "--test-reporter", "--root", "-C"}   # take the next token as their value
+# Not "-s": pytest's -s is boolean (no capture); unittest's `-s dir` names a path, which is a target anyway.
 _SUBCOMMANDS = {"run", "discover", "exec", "check"}
 _OPAQUE = "\x00"   # prefix of a target that stands for "this exact command and nothing else"
 
