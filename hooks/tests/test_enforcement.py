@@ -59,6 +59,26 @@ class EnforcementTests(unittest.TestCase):
             self.contract([[sys.executable, '-c', f'raise SystemExit({code})']])
             self.assertEqual(quality.run_project_gate(self.root)['ok'], code == 0)
 
+    def test_codex_commands_are_scoped_and_keep_completion_checks(self):
+        for code in (0, 1):
+            with self.subTest(code=code):
+                (self.root / '.quality-gate.json').write_text(json.dumps({
+                    'commands': [[sys.executable, '-c', 'raise SystemExit(99)']],
+                    'codex_commands': [[sys.executable, '-c', 'print("codex only")']],
+                    'completion_commands': [[sys.executable, '-c', f'raise SystemExit({code})']],
+                }))
+                result = quality.run_project_gate(self.root)
+                self.assertEqual(result['ok'], code == 0)
+                self.assertEqual(len(result['results']), 2)
+                self.assertIn('codex only', result['results'][0]['output'])
+
+    def test_invalid_codex_commands_fail_closed(self):
+        for commands in (None, [], 'echo pass', [[]]):
+            (self.root / '.quality-gate.json').write_text(json.dumps({
+                'commands': [[sys.executable, '-c', 'pass']], 'codex_commands': commands,
+            }))
+            self.assertFalse(quality.run_project_gate(self.root)['ok'])
+
     def test_completion_checks_cannot_hide_behind_green_unit_checks(self):
         for code in (1, 0):
             (self.root / '.quality-gate.json').write_text(json.dumps({

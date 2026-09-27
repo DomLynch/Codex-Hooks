@@ -122,7 +122,7 @@ def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
         if type(limit) is not int or not 1 <= limit <= 420:
             raise ValueError("timeout_seconds must be an integer from 1 to 420")
         timeout = min(timeout, limit)
-        commands = contract["commands"]
+        commands = contract.get("codex_commands", contract["commands"])
         if not isinstance(commands, list) or not commands:
             raise ValueError("commands must be a nonempty list of argv lists")
         completion = contract.get("completion_commands", [])

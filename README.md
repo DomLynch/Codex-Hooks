@@ -92,7 +92,8 @@ user-level Codex config.
 # Repository quality contracts
 
 Both Stop adapters run a repository's `.quality-gate.json` commands as argv
-lists. An empty/invalid contract, missing executable, nonzero exit or timeout
+lists. Codex uses `codex_commands` when present, otherwise `commands`; shared
+`completion_commands` still run. An empty/invalid contract, missing executable, nonzero exit or timeout
 blocks completion. Explicit edited repositories remain pending across
 checkpoints; all pending contracts share a 480-second budget. Each contract can
 set `timeout_seconds` to an integer from 1 to 420 to use a smaller limit. Stop
