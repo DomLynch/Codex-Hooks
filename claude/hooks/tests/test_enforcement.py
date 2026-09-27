@@ -422,6 +422,8 @@ class EnforcementTests(unittest.TestCase):
             result = quality.run_project_gate(self.root)
             self.assertIn('one gate per Mac', result['deferred']['reason'])
             self.assertFalse(marker.exists(), 'a deferred gate runs nothing')
+            lock.write_text(json.dumps({'pid': holder.pid, 'cwd': 'x', 'at': time.time() - 600}))
+            self.assertIn('one gate per Mac', quality.gate_busy(self.root)['reason'], 'a live holder past the Stop budget still holds')
             lock.write_text(json.dumps({'pid': holder.pid, 'cwd': 'x', 'at': time.time() - 3600}))
             self.assertIsNone(quality.gate_busy(self.root), 'a forgotten lock expires')
             holder.kill()
@@ -431,6 +433,22 @@ class EnforcementTests(unittest.TestCase):
             self.assertTrue(quality.run_project_gate(self.root)['ok'])
             self.assertTrue(marker.exists())
             self.assertFalse(lock.exists(), 'the lock is released after the run')
+
+    def test_a_dead_holders_orphaned_check_is_killed_before_the_next_gate_starts(self):
+        # Lead, 2026-09-27: a Stop killed by Claude Code left its node tree running (8-minute quality-stop-targeted
+        # in frankendom-stats). The holder records its check's process group; the next acquire kills it.
+        orphan = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        self.addCleanup(orphan.kill)
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        (self.root / 'gate.lock').write_text(json.dumps({'pid': dead.pid, 'cwd': 'x', 'at': time.time(), 'pgid': orphan.pid}))
+        self.assertTrue(quality.acquire_gate_lock(self.root))
+        self.addCleanup(quality.release_gate_lock)
+        deadline = time.time() + 5
+        while orphan.poll() is None and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertIsNotNone(orphan.poll(), 'the orphaned check group is killed')
+        self.assertEqual(json.loads((self.root / 'gate.lock').read_text())['pid'], os.getpid())
 
     def test_gate_is_skipped_when_the_checkout_has_no_change_on_top_of_its_base(self):
         # Lead, 2026-09-27: Deploy's checkout on unchanged trunk ran the 9-minute gate at every Stop for nothing.

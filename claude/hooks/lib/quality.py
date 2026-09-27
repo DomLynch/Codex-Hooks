@@ -163,30 +163,60 @@ def _same_check_running(cwd: Path, command: list[str]) -> str:
 # 9 min each at load 40-77 against a 420 s budget, while Dom's Blender batch had the Mac. One gate per Mac: the
 # run holds this lock; every other Stop defers with its existing notice. A dead holder or a forgotten lock expires.
 GATE_LOCK_PATH = Path.home() / ".claude" / "state" / "quality_gate.lock"
-GATE_LOCK_TTL_S = 420 + 120
+# Lead: gate processes outlived the 420 s Stop budget (an 8-minute node tree in frankendom-stats), so the lock breaks
+# only when the holder is dead or the lock is far older than any budget. The holder records its check's process
+# group; a later acquire kills that group when the holder died without releasing (Claude Code killed the hook).
+GATE_LOCK_TTL_S = 1800
+
+
+def _read_lock() -> dict | None:
+    try:
+        return json.loads(GATE_LOCK_PATH.read_text())
+    except Exception:
+        return None
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def gate_lock_holder() -> dict | None:
-    """{pid, cwd, at} of the live gate run holding the Mac-wide lock; None when free, stale, or its process is gone."""
+    """{pid, cwd, at[, pgid]} of the live gate run holding the Mac-wide lock; None when free, expired, or dead."""
+    data = _read_lock()
     try:
-        data = json.loads(GATE_LOCK_PATH.read_text())
-        pid, at = int(data["pid"]), float(data["at"])
-        if time.time() - at > GATE_LOCK_TTL_S:
-            return None
-        os.kill(pid, 0)
-    except Exception:
+        alive = data is not None and time.time() - float(data["at"]) <= GATE_LOCK_TTL_S and _alive(int(data["pid"]))
+    except (KeyError, TypeError, ValueError):
         return None
-    return data
+    return data if alive else None
+
+
+def _note_gate_child(pgid: int) -> None:
+    data = _read_lock()
+    if data and int(data.get("pid", 0)) == os.getpid():
+        GATE_LOCK_PATH.write_text(json.dumps({**data, "pgid": pgid}))
 
 
 def acquire_gate_lock(cwd: Path) -> bool:
-    """Take the Mac-wide gate lock for this process; False when another live run holds it."""
+    """Take the Mac-wide gate lock for this process; False when another live run holds it. A dead holder's check
+    process group (an orphan left by a killed hook) is killed first, so no second gate runs on top of it."""
     for _ in range(2):
         holder = gate_lock_holder()
         if holder and int(holder.get("pid", 0)) != os.getpid():
             return False
         GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
         if holder is None:
+            stale = _read_lock() or {}
+            pgid = int(stale.get("pgid") or 0)
+            if pgid and pgid != os.getpid() and _alive(pgid):
+                import signal
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except OSError:
+                    pass
             GATE_LOCK_PATH.unlink(missing_ok=True)   # stale or dead
         try:
             fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -393,6 +423,7 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             # Kill the whole check process group on timeout or a deploy, including npm/node --test children.
             with subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, start_new_session=True) as proc:
+                _note_gate_child(proc.pid)   # its own session: pgid == pid
                 while True:
                     remaining = timeout - (time.monotonic() - started)
                     try:
