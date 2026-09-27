@@ -1547,6 +1547,12 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
             tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "keep an eye on the deploy log")])
             self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "")
+            # 2026-09-27 review: a negated phrase is not an OK
+            for words in ("don't keep deploying", "do not continue merging", "stop, don't keep shipping", "not approved"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
+            tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", "don't wait, go ahead")])
+            self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "")
 
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
         import mimo_audit

@@ -40,7 +40,12 @@ ALLOW_RE = re.compile(r"scripts/deploy\.sh\b")
 # osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
 # a .scpt/.applescript path, a heredoc or `open -a`. Plain osascript (notifications) and a commit message naming Pixelmator pass.
 APP_HOST_RE = re.compile(r"(?:^|[\s;&|(])(?:osascript\b|open\s+-[ab]\b)")
-PIXELMATOR_RE = re.compile(r"(?:osascript\b|open\s+-[ab]\b)(?:(?!&&|\|\||;).)*?pixelmator", re.IGNORECASE | re.DOTALL)
+# Same line and segment (a newline or single | ends the command: 2026-09-27 review found `osascript -e notify` then
+# `git commit -m pixelmator` on the next line was blocked), or inside the osascript heredoc's own body.
+PIXELMATOR_RE = re.compile(
+    r"(?:osascript\b|open\s+-[ab]\b)[^\n;|&]*?pixelmator"
+    r"|osascript\b[^\n;|&]*<<-?\s*['\"]?(\w+)\b['\"]?[^\n]*\n(?:(?!\n\s*\1\s*(?:\n|$)).)*?pixelmator",
+    re.IGNORECASE | re.DOTALL)
 
 
 def _pid_alive(pid: int) -> bool:

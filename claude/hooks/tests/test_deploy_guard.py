@@ -81,7 +81,11 @@ class DeployGuardTests(unittest.TestCase):
         for cmd in ("osascript -e 'display notification \"done\" with title \"deploy\"'", "osascript -e 'tell application \"Finder\" to activate'",
                     "osascript scripts/notify.scpt", "open -a Finder", "git commit -m 'osascript Pixelmator Pro texture step'",
                     "git log --grep 'Pixelmator' --oneline", "grep -rn pixelmator scripts/",
-                    "osascript -e 'display notification \"x\"' && git log --grep Pixelmator"):
+                    "osascript -e 'display notification \"x\"' && git log --grep Pixelmator",
+                    # 2026-09-27 review: a newline or a single | ends the osascript command, and so does its heredoc
+                    "osascript -e 'display notification \"x\"'\ngit commit -m \"pixelmator texture\"",
+                    "osascript -e 'display notification \"done\"' | tee pixelmator.log",
+                    "osascript <<'EOF'\ndisplay notification \"x\"\nEOF\ngit commit -m pixelmator"):
             self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
 
     def test_light_commands_pass_under_a_lock(self):
