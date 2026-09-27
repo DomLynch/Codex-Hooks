@@ -235,23 +235,34 @@ def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError
 _CI_OK = {"success", "skipped", "neutral"}
 
 
-def _actions_runs(cwd: Path, sha: str, timeout: int = 8) -> list[tuple[str, str]] | None:
-    """(status, conclusion) of every GitHub Actions check run on commit `sha`; None when gh fails."""
-    rc, out, _ = safe_run(["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100", "--jq",
-                           '.check_runs[] | select(.app.slug == "github-actions") | [.status, (.conclusion // "")]'],
-                          cwd=cwd, timeout=timeout)
+def _check_runs(cwd: Path, sha: str, timeout: int = 8) -> list[tuple[str, str, str]] | None:
+    """(name, status, conclusion) of every check run on commit `sha`, whichever app made it; None when gh fails."""
+    rc, out, _ = safe_run(["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100",
+                           "--jq", '.check_runs[] | [.name, .status, (.conclusion // "")]'], cwd=cwd, timeout=timeout)
     try:
-        return [(str(status), str(conclusion)) for status, conclusion in map(json.loads, out.split())] if rc == 0 else None
+        return [(str(n), str(st), str(c)) for n, st, c in map(json.loads, out.splitlines())] if rc == 0 else None
     except (ValueError, TypeError):
         return None
 
 
+def _named_ci_checks(cwd: Path) -> list[str]:
+    """The `ci_checks` list from .quality-gate.json: the CI checks that stand in for the local gate. [] unless it
+    is a nonempty list of nonempty strings."""
+    try:
+        names = json.loads((cwd / ".quality-gate.json").read_text()).get("ci_checks")
+    except Exception:
+        return []
+    return names if isinstance(names, list) and names and all(isinstance(n, str) and n for n in names) else []
+
+
 def ci_covered_commit(cwd: Path) -> tuple[str, str]:
-    """(short SHA, "passed" | "pending") when the working tree is clean (no modified or untracked files) and GitHub
-    Actions ran on this exact commit: "passed" only if every run completed as success/skipped/neutral, "pending"
-    while any is still queued or running and none failed. ("", "") in every other case (no workflow, no run on the
-    commit because it is unpushed or has no PR, a failed or cancelled run, any git/gh error), so the gate runs."""
-    if not (cwd / ".github" / "workflows").is_dir():
+    """(short SHA, "passed" | "pending") when the working tree is clean (no modified or untracked files) and every
+    CI check the contract names in `ci_checks` ran on this exact commit: "passed" when each completed as
+    success/skipped/neutral, "pending" while any is still queued or running and none failed. ("", "") in every
+    other case (no ci_checks named, no workflow, a named check missing/failed/cancelled, any git/gh error), so
+    the gate runs. Unnamed checks (docs, other apps) do not count either way."""
+    expected = _named_ci_checks(cwd)
+    if not expected or not (cwd / ".github" / "workflows").is_dir():
         return "", ""
     rc, status, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
     if rc or status.strip():
@@ -260,10 +271,16 @@ def ci_covered_commit(cwd: Path) -> tuple[str, str]:
     head = head.strip()
     if rc or not head:
         return "", ""
-    runs = _actions_runs(cwd, head)
-    if not runs or any(status == "completed" and conclusion not in _CI_OK for status, conclusion in runs):
+    runs = _check_runs(cwd, head)
+    if runs is None:
         return "", ""
-    return head[:7], "passed" if all(status == "completed" for status, _ in runs) else "pending"
+    pending = False
+    for name in expected:
+        mine = [(st, c) for n, st, c in runs if n == name]
+        if not mine or any(st == "completed" and c not in _CI_OK for st, c in mine):
+            return "", ""
+        pending = pending or any(st != "completed" for st, _ in mine)
+    return head[:7], "pending" if pending else "passed"
 
 
 def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> dict:
