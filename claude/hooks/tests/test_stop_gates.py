@@ -407,6 +407,28 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
                 tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
                 self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
 
+    def test_any_refusal_revokes_earlier_oks_and_commas_do_not_end_a_negation(self) -> None:
+        # Recheck 2026-09-27: "Nothing is approved." was not an OK but did not revoke an earlier one either
+        # (grant and revoke used different patterns), and "Do not ever, under any circumstances, deploy it."
+        # read as an OK because the negation stopped at the comma.
+        from lib.claude_adapter import peer_triggered_unauthorized_action as gate
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ok = ("2026-09-20T10:00:00Z", "Go ahead and deploy it.")
+            for later in ("Nothing is approved.", "Do not ever, under any circumstances, deploy it.",
+                          "no, not approved", "that is not an approval", "never merge this"):
+                tp = self._transcript(Path(tmp), [ok, ("2026-09-20T11:00:00Z", later)])
+                self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", later)
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", later)])
+                self.assertNotEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", later)
+            renewed = [("2026-09-20T10:00:00Z", "Nothing is approved."), ("2026-09-20T11:00:00Z", "ok, merge it now")]
+            self.assertEqual(gate([self.PEER, self.MERGE], self._transcript(Path(tmp), renewed), "2026-09-20T12:00:00Z"), "")
+            for words in ("don't stop, keep deploying", "No worries, go ahead", "not now? fine. go ahead",
+                          "Don't wait for me, ship it", "stop asking, you decide", "If the tests pass, deploy it",
+                          "no problem, deploy it", "Not sure about the wording, but go ahead", "don't hesitate, merge it"):
+                tp = self._transcript(Path(tmp), [("2026-09-20T11:00:00Z", words)])
+                self.assertEqual(gate([self.PEER, self.MERGE], tp, "2026-09-20T12:00:00Z"), "", words)
+
     def test_main_blocks_via_the_gate_without_calling_the_model(self) -> None:
 
         with tempfile.TemporaryDirectory() as tmp:
