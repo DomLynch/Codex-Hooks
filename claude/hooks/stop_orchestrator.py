@@ -37,7 +37,7 @@ from lib.state import checkpoint_state, load_handoff, read_session_spec, update_
 from lib.transcript import edited_paths
 from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
-from mimo_audit import retry_turn_id
+from lib.audit_state import retry_turn_id
 
 
 COMPONENT = "stop_orchestrator"

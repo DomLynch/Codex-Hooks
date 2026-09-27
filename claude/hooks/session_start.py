@@ -19,7 +19,7 @@ from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 from lib.handoff_check import project_slug
 from lib.context_size import TITLE_LANES, lane_name, session_title
-from user_prompt_submit import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
+from lib.policies import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
 
 
 COMPONENT = "session_start"
