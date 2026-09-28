@@ -394,7 +394,8 @@ def test_handoff_check_names_worktree_lanes_by_title_and_finds_their_memory(tmp_
     from datetime import datetime
     from lib import handoff_check as hc
     monkeypatch.setattr(hc.Path, "home", staticmethod(lambda: tmp_path))
-    monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane, fetch=True: (True, "state ok"))
+    fetched = []
+    monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane, fetch=True: fetched.append(fetch) or (True, "state ok"))
     t = tmp_path / "t.jsonl"
     t.write_text(json.dumps({"customTitle": "Frankendom - Lead Developer"}) + "\n"
                  + json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 760_000}}}) + "\n")
@@ -408,6 +409,7 @@ def test_handoff_check_names_worktree_lanes_by_title_and_finds_their_memory(tmp_
     ready = hc.prompt_handoff_notice(str(t), wt)
     assert "Backup verified" in ready and "clear_session" in ready and "the lead lane" in ready
     assert hc.handoff_notice(str(t), wt, "PR #12 merged").startswith("# Handoff check") and "Backup verified" in hc.handoff_notice(str(t), wt, "PR #12 merged")
+    assert not any(fetched), "neither copy fetches: the Stop copy runs before the review and only feeds the log"
     t.write_text(json.dumps({"customTitle": "Frankendom - Lead Developer"}) + "\n"
                  + json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 740_000}}}) + "\n")
     assert hc.prompt_handoff_notice(str(t), wt) == "", "under Lead's own 750k: silent"

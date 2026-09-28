@@ -155,4 +155,5 @@ def handoff_notice(transcript_path: str, cwd: Path, last_message: str) -> str:
     lane = session_lane(transcript_path, str(cwd))
     if tokens < warn_tokens(lane) or not task_closed(last_message):
         return ""
-    return _readiness(cwd, lane, f"# Handoff check — context {tokens // 1000}k and this turn closed a task")
+    # No fetch: this copy only feeds the log, and it runs before the Stop review (a fetch cost ~6 s, 2026-09-28).
+    return _readiness(cwd, lane, f"# Handoff check — context {tokens // 1000}k and this turn closed a task", fetch=False)
