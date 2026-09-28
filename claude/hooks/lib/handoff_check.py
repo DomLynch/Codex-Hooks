@@ -13,7 +13,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from lib.context_size import context_tokens, lane_name, warn_tokens
+from lib.context_size import context_tokens, session_lane, warn_tokens
 
 TASK_CLOSED_MARKERS = ("merged", "handed over", "handing over", "task closed", "shipped", "done for now",
                        "wrapped up", "handed back", "closing out", "that closes")
@@ -100,10 +100,20 @@ def task_closed(last_message: str) -> bool:
     return any(m in (last_message or "").lower() for m in TASK_CLOSED_MARKERS)
 
 
+def _memory_cwd(cwd: Path, lane: str) -> Path:
+    """The folder whose memory key the lane reads: its own, else ~/Developer/frankendom-<lane or its alias>.
+    App-worktree lanes keep memory under the Developer folder (Lead: lead-catalogue), never the worktree's key."""
+    names = [lane, *[folder for folder, doc in STATE_DOC_ALIASES.items() if doc == lane]]
+    for c in (cwd, *(Path.home() / "Developer" / f"frankendom-{n}" for n in names)):
+        if (Path.home() / ".claude" / "projects" / ("-" + project_slug(c)) / "memory").is_dir():
+            return c
+    return cwd
+
+
 def _readiness(cwd: Path, lane: str, head: str, fetch: bool = True) -> str:
     """Both backup checks, then either the clear-yourself steps or what is still missing."""
     ok_state, why_state = state_file_pushed(cwd, lane, fetch)
-    ok_mem, why_mem = memory_written_today(cwd)
+    ok_mem, why_mem = memory_written_today(_memory_cwd(cwd, lane))
     doc = STATE_DOC_ALIASES.get(lane, lane)
     if ok_state and ok_mem:
         return (f"{head}\nBackup verified: {why_state}; {why_mem}.\n"
@@ -131,7 +141,7 @@ def prompt_handoff_notice(transcript_path: str, cwd: Path) -> str:
     2026-09-22 to 2026-09-24 no lane ever saw a "ready" notice: Lead and Strategy cleared from their own memory
     rules, and World and Executioner, told only "/clear" by the context line, asked Dom to do it.
     """
-    lane = lane_name(str(cwd))
+    lane = session_lane(transcript_path, str(cwd))   # 2026-09-28: worktree folders name no lane; the title does
     tokens = context_tokens(transcript_path)
     if lane == "session" or tokens < warn_tokens(lane):
         return ""
@@ -142,7 +152,7 @@ def handoff_notice(transcript_path: str, cwd: Path, last_message: str) -> str:
     """The Stop-turn copy: logged as HANDOFF_CHECK ready/not ready. See prompt_handoff_notice for why the model
     never reads it. '' when this does not apply."""
     tokens = context_tokens(transcript_path)
-    lane = lane_name(str(cwd))
+    lane = session_lane(transcript_path, str(cwd))
     if tokens < warn_tokens(lane) or not task_closed(last_message):
         return ""
     return _readiness(cwd, lane, f"# Handoff check — context {tokens // 1000}k and this turn closed a task")
