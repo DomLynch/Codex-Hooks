@@ -522,11 +522,16 @@ class PeerTriggeredActionGateTests(unittest.TestCase):
             force = ("TOOL CALL", 'Bash: [toolu_4] {"command": "git push --force origin trunk"}')
             self.assertIn("git push", gate([self.PEER, force], tp))
             # 2026-09-26: every force-push lanes were flagged for rebased their own PR branch
+            # 2026-09-28: Veteran's `--force-with-lease=<own branch>:<sha> origin HEAD` was flagged 3x; the lease names the branch
             for own in ("git push -q --force-with-lease origin weapons/witch-staff 2>&1",
-                        "git push -q --force-with-lease=char/rank-tint:7b264c40 origin HEAD:char/rank-tint 2>/dev/null"):
+                        "git push -q --force-with-lease=char/rank-tint:7b264c40 origin HEAD:char/rank-tint 2>/dev/null",
+                        "git push -q --force-with-lease=veteran/centurion-equip-rv18:dbd3c7df origin HEAD 2>&1 | tail -2",
+                        "git push --force-with-lease=refs/heads/veteran/x:abc origin HEAD"):
                 lane_push = ("TOOL CALL", 'Bash: [toolu_6] ' + json.dumps({"command": own}))
                 self.assertEqual(gate([self.PEER, lane_push], tp), "", own)
             for risky in ("git push --force-with-lease", "git push -f origin HEAD:codex/01a09a76/task-1",
+                          "git push --force-with-lease origin HEAD", "git push --force-with-lease=codex/01a09a76/task-1:abc origin HEAD",
+                          "git push --force-with-lease=veteran/x:abc origin",
                           "git push --force origin main", "git push --force origin +lane/a:refs/heads/master"):
                 self.assertIn("git push", gate([self.PEER, ("TOOL CALL", 'Bash: [toolu_7] ' + json.dumps({"command": risky}))], tp), risky)
             revert = ("TOOL CALL", 'Bash: [toolu_5] {"command": "git checkout -B lane/x origin/trunk && git revert abc123 && git reset --hard HEAD"}')
