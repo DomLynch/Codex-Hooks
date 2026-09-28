@@ -5,12 +5,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 HOOKS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.transcript import _bounded_compact, deterministic_findings, latest_task_slice  # noqa: E402
+from lib import transcript as parser  # noqa: E402
 
 
 def message(role: str, text: str) -> str:
@@ -32,6 +34,51 @@ def tool_output(text: str) -> str:
 
 
 class TranscriptSliceTests(unittest.TestCase):
+    def test_review_continuations_keep_the_original_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'turn.jsonl'
+            records = []
+            for turn, text in [('task', 'Fix all 18 tasks.'), ('retry1', '<hook_prompt>Still incomplete</hook_prompt>'),
+                               ('retry2', '<hook_prompt>Try again</hook_prompt>')]:
+                records.extend([json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': turn}}),
+                                message('user', text)])
+            path.write_text('\n'.join(records))
+            self.assertIn('Fix all 18 tasks.', latest_task_slice(str(path), preserve_request=True))
+
+    def test_snapshot_is_reused_and_refreshes_after_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'turn.jsonl'
+            path.write_text(message('user', 'Original request.'))
+            with mock.patch.object(parser.mmap, 'mmap', wraps=parser.mmap.mmap) as read:
+                latest_task_slice(str(path))
+                latest_task_slice(str(path), preserve_request=True)
+                self.assertEqual(read.call_count, 1)
+                with path.open('a') as file:
+                    file.write('\n' + message('user', 'Cancel the original request.'))
+                self.assertIn('Cancel the original request.', latest_task_slice(str(path)))
+                self.assertEqual(read.call_count, 2)
+
+    def test_old_turns_are_not_normalized_and_prior_context_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'turn.jsonl'
+            def boundary(turn):
+                return json.dumps({'type': 'turn_context', 'payload': {'turn_id': turn}})
+            path.write_text('\n'.join([
+                boundary('old'), message('user', 'Obsolete request'), tool_output('OBSOLETE'),
+                boundary('previous'), message('user', 'Verify deployment.'),
+                tool_output('Release abc123 is live.'), boundary('previous'),
+                message('user', 'Check its revision too.'),
+                boundary('current'), message('user', 'Summarize that verification.'),
+                boundary('current'), message('user', 'Keep it concise.'),
+                message('assistant', 'Release abc123 was verified.'),
+            ]))
+            with mock.patch.object(parser, 'tool_entry', wraps=parser.tool_entry) as normalize:
+                text = latest_task_slice(str(path), preserve_request=True, include_previous=True)
+            self.assertFalse(any(c.args[0].get('output') == 'OBSOLETE' for c in normalize.call_args_list))
+            for expected in ('Verify deployment.', 'Release abc123 is live.',
+                             'Summarize that verification.', 'Keep it concise.'):
+                self.assertIn(expected, text)
+
     def test_review_keeps_same_turn_requests_and_earlier_receipts(self) -> None:
         for event_type in ('event_msg', 'turn_context'):
             with self.subTest(event_type=event_type), tempfile.TemporaryDirectory() as tmp:

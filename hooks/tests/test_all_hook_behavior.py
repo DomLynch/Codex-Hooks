@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -291,7 +290,6 @@ class AllHookBehaviorTests(unittest.TestCase):
 
     def test_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
-        self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
 
     def test_mimo_connection_reset_retries_once_then_passes(self) -> None:
         with (
@@ -698,83 +696,6 @@ class AllHookBehaviorTests(unittest.TestCase):
                 self.assertEqual(mimo_audit.load_iterations("session-a", "turn-2"), 0)
                 data = json.loads(state_path.read_text())
                 self.assertNotIn("session-a", data)
-
-    def test_stop_orchestrator_blocks_side_effects_without_mimo_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            verdict_path = Path(tmp) / "mimo_last_verdict.json"
-            verdict_path.write_text(json.dumps({
-                "orch-session": {
-                    "turn_id": "turn-1",
-                    "verdict": "ISSUES",
-                    "updated_at": 9999999999,
-                }
-            }))
-            with (
-                mock.patch.object(stop_orchestrator, "MIMO_VERDICT_PATH", verdict_path),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-
-    def test_stop_orchestrator_accepts_same_turn_verdict_written_first(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(
-                stop_orchestrator,
-                "load_json_locked",
-                return_value={"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": time.time() - 10}},
-            ),
-            mock.patch.object(stop_orchestrator.time, "sleep"),
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-
-    def test_stop_orchestrator_wait_ignores_wall_clock_jump(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(stop_orchestrator.time, "monotonic", side_effect=[0, 0, 1]),
-            mock.patch.object(stop_orchestrator.time, "time", side_effect=[100, 10_000]),
-            mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=[{},
-                {"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": 100}}]),
-            mock.patch.object(stop_orchestrator.time, "sleep"),
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-
-    def test_stop_orchestrator_rejects_same_turn_chat_skip_without_waiting(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(
-                stop_orchestrator,
-                "load_json_locked",
-                return_value={
-                    "orch-session": {
-                        "turn_id": "turn-1",
-                        "verdict": "SKIP_CHAT_TURN",
-                        "updated_at": time.time() - 10,
-                    }
-                },
-            ),
-            mock.patch.object(stop_orchestrator.time, "sleep") as sleep,
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-            sleep.assert_not_called()
-
-    def test_stop_orchestrator_rejects_stale_verdict_without_turn_id(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            verdict_path = Path(tmp) / "mimo_last_verdict.json"
-            verdict_path.write_text(json.dumps({
-                "orch-session": {
-                    "turn_id": "old-turn",
-                    "verdict": "PASS",
-                    "updated_at": time.time() - 121,
-                }
-            }))
-            with (
-                mock.patch.object(stop_orchestrator, "MIMO_VERDICT_PATH", verdict_path),
-                mock.patch.object(stop_orchestrator, "log"),
-            ):
-                self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", ""))
 
     def test_shared_autonomy_queue_dedupes_and_leases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,6 +15,18 @@ import stop_orchestrator  # noqa: E402
 
 
 class AuditSafetyTests(unittest.TestCase):
+    def test_quality_orchestrator_does_not_poll_the_independent_reviewer(self):
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            for name, value in [('pending_quality', []), ('read_session_spec', {}),
+                                ('audit_with_claude', True)]:
+                stack.enter_context(mock.patch.object(stop_orchestrator, name, return_value=value))
+            stack.enter_context(mock.patch.object(stop_orchestrator, 'remember_repo'))
+            stack.enter_context(mock.patch.object(stop_orchestrator, 'log'))
+            stack.enter_context(mock.patch.object(stop_orchestrator.time, 'sleep', side_effect=AssertionError('obsolete wait')))
+            with mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': tmp, 'session_id': 'no-verdict'}))), redirect_stdout(io.StringIO()) as out:
+                stop_orchestrator.main()
+            self.assertEqual(out.getvalue(), '')
+
     def test_hooks_never_publish_or_start_another_task(self):
         for request in ('Audit only; do not commit or start another task.', 'Fix the bug.'):
             with self.subTest(request=request), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
@@ -45,7 +57,6 @@ class AuditSafetyTests(unittest.TestCase):
                     stack.enter_context(mock.patch.object(post_tool, name, create=True))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'read_session_spec', return_value={}))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'audit_with_claude', return_value=True))
-                stack.enter_context(mock.patch.object(stop_orchestrator, 'wait_for_mimo_pass', return_value=True))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'latest_task_slice', return_value='USER:\n' + request))
                 stack.enter_context(mock.patch.object(post_tool, 'sync_codegraph'))
                 for module in (post_tool, stop_orchestrator):

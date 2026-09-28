@@ -38,11 +38,9 @@ PAUSE_REQUEST_RE = re.compile(
     r"^USER:\s*(?:ok[\s,]+)?(?:stop|pause|stand\s*by|hold off)\s+(?:for now|until\b)",
     re.IGNORECASE,
 )
-MIMO_WAIT_TIMEOUT_S = 155
 
 CLAUDE_ITERATIONS_PATH = Path.home() / ".codex" / "state" / "claude_iterations.json"
 AAA_PROTOCOL_PATH = Path.home() / ".codex" / "specs" / "aaa_protocol.md"
-MIMO_VERDICT_PATH = Path.home() / ".codex" / "state" / "mimo_last_verdict.json"
 HOOK_ENV_PATH = Path.home() / ".codex" / "secrets" / "hook_env"
 
 
@@ -151,28 +149,6 @@ Current task transcript:
         block(f"[Claude audit — max iterations {count}/{MAX_CLAUDE_ITERATIONS}]\n\n{normalized}\n\nStopping side effects instead of shipping unapproved code.")
         return False
     block(f"[Claude audit — iteration {count}/{MAX_CLAUDE_ITERATIONS}]\n\n{normalized}\n\nFix these before stopping.")
-    return False
-
-
-def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
-    deadline = time.monotonic() + MIMO_WAIT_TIMEOUT_S
-    observed_turn = observed_verdict = ""
-    while time.monotonic() < deadline:
-        state = load_json_locked(MIMO_VERDICT_PATH, {}).get(session_id) or {}
-        observed_turn = str(state.get("turn_id") or "")
-        observed_verdict = str(state.get("verdict") or "")
-        if state and (not turn_id or state.get("turn_id") == turn_id):
-            updated_at = float(state.get("updated_at") or 0)
-            age = time.time() - updated_at
-            if not turn_id and age > 120:
-                log(COMPONENT, f"mimo gate stale verdict ignored age={age:.1f}s")
-                return False
-            verdict = state.get("verdict")
-            log(COMPONENT, f"mimo gate verdict={verdict} turn={state.get('turn_id', '')}")
-            return verdict == "PASS"
-        time.sleep(1)
-    log(COMPONENT, f"mimo gate timeout session={session_id} turn={turn_id} "
-        f"observed_turn={observed_turn} observed_verdict={observed_verdict}; side effects skipped")
     return False
 
 
@@ -330,9 +306,6 @@ def main() -> None:
         if pending:
             pending_quality(session_id, clear=True)
         if not audit_with_claude(session_id, transcript, session_spec):
-            return
-        if not wait_for_mimo_pass(session_id, turn_id):
-            log(COMPONENT, "side effects skipped: GPT-6-Sol did not pass current turn")
             return
         log(COMPONENT, "allow stop")
     except Exception as exc:
