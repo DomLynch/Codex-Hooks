@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import mmap
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -298,6 +300,42 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
     return text
 
 
+@lru_cache(maxsize=1)
+def _recent_records(path: str, size: int, stamp: tuple[int, int, int]) -> list[dict]:
+    """Reuse one snapshot; keep two request turns plus intervening review continuations."""
+    if not size:
+        return []
+    records, boundary, completed = [], 0, 0
+    turn, requested, chunk_request = None, False, False
+    with open(path, 'rb') as file, mmap.mmap(file.fileno(), size, access=mmap.ACCESS_READ) as data:
+        end = size
+        while end:
+            start = data.rfind(b'\n', 0, end - 1) + 1
+            line, end = data[start:end], start
+            try:
+                obj = json.loads(line.decode('utf-8', errors='replace'))
+            except ValueError:
+                continue
+            records.append(obj)
+            payload = obj.get('payload') or {}
+            if obj.get('type') == 'response_item' and payload.get('role') == 'user':
+                text = strip_hook_prompts(_content_text(payload.get('content')))
+                chunk_request |= bool(text and not re.fullmatch(r'\s*<environment_context>.*?</environment_context>\s*', text, re.DOTALL))
+            if obj.get('type') == 'turn_context' or (obj.get('type') == 'event_msg' and payload.get('type') == 'task_started'):
+                current = payload.get('turn_id')
+                if current:
+                    if current != turn:
+                        completed += requested
+                        if completed == 2:
+                            break
+                        turn, requested = current, False
+                    requested |= chunk_request
+                    chunk_request = False
+                    boundary = len(records)
+    # Legacy transcripts without turn IDs retain their existing message boundaries.
+    return list(reversed(records[:boundary] if completed == 2 else records))
+
+
 def latest_task_entries(transcript_path: str, current_only: bool = True, preserve_turn: bool = False) -> list[tuple[str, str]]:
     if not transcript_path or not Path(transcript_path).is_file():
         return []
@@ -305,14 +343,11 @@ def latest_task_entries(transcript_path: str, current_only: bool = True, preserv
     calls: dict[str, str] = {}
     turn_id, request_index = None, None
     try:
-        lines = Path(transcript_path).read_text(errors="replace").splitlines()
+        stat = Path(transcript_path).stat()
+        records = _recent_records(transcript_path, stat.st_size, (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
     except OSError:
         return []
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except Exception:
-            continue
+    for obj in records:
         payload = obj.get("payload") or {}
         item_type = payload.get("type")
         if preserve_turn and (obj.get("type") == "turn_context" or
