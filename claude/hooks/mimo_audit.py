@@ -43,7 +43,7 @@ from lib.audit_prompt import AUDIT_PROMPT, FORMAT_REPAIR_PROMPT  # noqa: E402
 from lib.verdicts import ADVISORY_RE, ELISION_RE, QUOTE_RE, _norm, normalize_verdict, valid_verdict, void_finding  # noqa: E402
 from lib.transcript import DIFF_CAP, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_commits, turn_commits_diff, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
-from lib.git import resolve_git_cwd  # noqa: E402
+from lib.git import resolve_git_cwd, trunk_branch  # noqa: E402
 from lib.rehome import is_rehome_turn  # noqa: E402
 from lib.handoff_check import handoff_notice  # noqa: E402
 from lib.claude_adapter import normalize_payload, latest_task_slice_claude, latest_task_entries_claude, latest_turn_started_at, owner_instructions, peer_triggered_unauthorized_action, earlier_session_evidence  # noqa: E402
@@ -422,6 +422,11 @@ def main() -> None:
         if standing:
             log(f"OWNER_STANDING: {len(standing)} instruction(s)")
             transcript = f"{transcript}\n\nOWNER STANDING INSTRUCTIONS (the owner's words in this session, newest first):\n" + "\n".join(f"- [{ts}] {text}" for ts, text in standing)
+        # 2026-09-28: Frankendom's trunk is codex/01a09a76/task-1; the reviewer flagged "targets trunk" as false 3x in one
+        # night because a PR's base "is not main". Name the trunk when it is not one the reviewer would guess.
+        trunk = trunk_branch(repo_cwd)
+        if trunk and trunk not in ("main", "master"):
+            transcript = f"{transcript}\n\nREPOSITORY TRUNK: {trunk} (origin/HEAD). 'trunk' and 'main' in the lane's words mean this branch; a PR based on it targets trunk."
         # What the answer cites from earlier turns (SHAs, PRs, times, pass counts) that the slice cut off.
         earlier = earlier_session_evidence(transcript_path, last_msg, transcript, latest_turn_started_at(transcript_path))
         if earlier:

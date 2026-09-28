@@ -168,6 +168,7 @@ class EarlierSessionEvidenceTests(unittest.TestCase):
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
                 mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("USER", "status?")]),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                mock.patch.object(mimo_audit, "trunk_branch", return_value="codex/01a09a76/task-1"),
             ):
                 payload = {"session_id": "EE", "turn_id": "t", "transcript_path": tp, "cwd": tmp,
                            "last_assistant_message": "PR #21 merged as a6a4f4e and 412 passed. " * 5}
@@ -177,6 +178,18 @@ class EarlierSessionEvidenceTests(unittest.TestCase):
         sent = model.call_args[0][0]
         self.assertIn("EARLIER IN THIS SESSION (tool output", sent)
         self.assertIn("[10:00] Merged PR #21 as a6a4f4e", sent)
+        # 2026-09-28: the reviewer flagged "#942 targets trunk" 3x in one night because Frankendom's trunk is not called main
+        self.assertIn("REPOSITORY TRUNK: codex/01a09a76/task-1", sent)
+
+    def test_trunk_branch_is_origin_head_without_the_remote(self) -> None:
+        from lib.git import safe_run, trunk_branch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(trunk_branch(tmp), "", "not a repo")
+            safe_run(["git", "init", "-q"], cwd=tmp)
+            self.assertEqual(trunk_branch(tmp), "", "no origin/HEAD")
+            safe_run(["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/codex/01a09a76/task-1"], cwd=tmp)
+            self.assertEqual(trunk_branch(tmp), "codex/01a09a76/task-1")
 
 
 class TurnDiffSinceTests(unittest.TestCase):

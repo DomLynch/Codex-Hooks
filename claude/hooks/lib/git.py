@@ -178,6 +178,12 @@ def current_branch(cwd: str | Path) -> str:
     return out.strip() if rc == 0 else ""
 
 
+def trunk_branch(cwd: str | Path) -> str:
+    """origin/HEAD without the remote name: the branch PRs merge into. "" when unset or not a repo."""
+    rc, out, _ = safe_run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], cwd=cwd)
+    return out.strip().removeprefix("origin/") if rc == 0 else ""
+
+
 def ensure_branch(branch: str, cwd: str | Path) -> bool:
     if not is_git_repo(cwd):
         return False

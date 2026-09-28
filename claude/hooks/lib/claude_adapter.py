@@ -254,7 +254,8 @@ def owner_instructions(transcript_path: str, before: str = "", limit: int = 5, m
 
 # A force-push that names a lane branch (`origin weapons/witch-staff`, `HEAD:char/rank-tint`) only rebases the lane's
 # own PR: 2026-09-26 lanes rejected every such finding. It stays consequential with no named branch, or onto a trunk
-# (Frankendom's is codex/01a09a76/task-1).
+# (Frankendom's is codex/01a09a76/task-1). `--force-with-lease=<ref>:<sha> origin HEAD` names the branch too (the lease
+# is the ref being rewritten): Veteran rejected 3 such findings on 2026-09-28.
 _TRUNK_RE = re.compile(r"^(?:main|master|trunk|develop|HEAD|codex/.*)$")
 
 
@@ -264,7 +265,9 @@ def _force_push_to_lane_branch(segment: str) -> bool:
     refspecs = positional[1:]
     if not refspecs:
         return False
+    lease = next((a.split("=", 1)[1].split(":")[0].removeprefix("refs/heads/") for a in args if a.startswith("--force-with-lease=")), "")
     targets = [r.lstrip("+").split(":")[-1].removeprefix("refs/heads/") for r in refspecs]
+    targets = [lease if t == "HEAD" and lease else t for t in targets]
     return all(t and not _TRUNK_RE.match(t) for t in targets)
 
 
