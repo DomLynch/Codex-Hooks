@@ -58,3 +58,9 @@ Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memo
 - Validation: 200 Codex tests plus 23 subtests passed twice, including the final run with Astra Low overrides; Ruff passed. Four regression tests cover unrelated staged work, read-only/task scope, request preservation/retry, actual blocking and non-repository indexing.
 - Second review found and fixed the empty-response retry truncation. A fresh Astra Low call saw the complete long request and returned ISSUES for zero of 18 requested tasks created.
 - Follow-up: the live Codex Stop gate still selected the shared Claude suite, whose model assertion inherited Codex's Astra override. Added an optional `codex_commands` contract override, retaining shared completion checks and leaving the original shared commands and Claude files unchanged.
+
+## Codex reviewer calibration — 2026-09-28
+- Review excerpts now group the original request and steering by Codex turn ID. Fresh turns reset scope; non-review callers keep their existing boundary. Stop/checkpoint prompts require concrete defects and matching resource/revision evidence, with equivalent wording accepted.
+- Two review passes: request/retry regressions, 100 seeded boundary sequences, unchanged non-review output and redaction; Codex gate passes 205 tests + 27 subtests and Ruff under Astra Low. Initial regression failures were expected and now pass.
+- Eight paired Astra Low replays: baseline 7/8, changed 8/8. The lost-request miss now blocks; five nonblocking cases pass and all three real defects block. This small sample does not establish a lower live noise rate or token savings. Replay evidence: `/tmp/codex-noise-replay-results.json`.
+- The optional second reviewer was disabled in Codex-owned VPS settings; its configured branch makes no external reviewer call. Claude-owned files/settings were not changed. Deploy-guard command matching remains a separate open fix; historical Sentry issues remain unresolved.

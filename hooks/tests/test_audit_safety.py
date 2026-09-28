@@ -63,11 +63,12 @@ class AuditSafetyTests(unittest.TestCase):
         request = 'Background. ' * 150 + 'Create all 18 separate Codex tasks now.' + ' Details. ' * 200
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'turn.jsonl'
-            rows = [('user', request), ('assistant', 'Investigation. ' * 1000),
+            rows = [('user', request), ('user', 'Keep it lean.'), ('assistant', 'Investigation. ' * 1000),
                     ('assistant', 'I did not create the separate tasks.')]
             records = [{'type': 'message', 'role': role, 'content': body} for role, body in rows]
             records.insert(1, {'type': 'function_call_output', 'output': 'Inspection finished; no tasks created.'})
-            path.write_text('\n'.join(json.dumps({'type': 'response_item', 'payload': row}) for row in records))
+            boundary = json.dumps({'type': 'event_msg', 'payload': {'type': 'task_started', 'turn_id': 'turn'}})
+            path.write_text(boundary + '\n' + '\n'.join(json.dumps({'type': 'response_item', 'payload': row}) for row in records))
             text = mimo_audit.read_task_slice(str(path))
             self.assertIn(request, text)
             self.assertIn('I did not create the separate tasks.', text)
@@ -85,6 +86,7 @@ class AuditSafetyTests(unittest.TestCase):
                 self.assertEqual(review.call_count, 2)
                 for call in review.call_args_list:
                     self.assertIn(request, call.args[0])
+                    self.assertIn('Keep it lean.', call.args[0])
 
     def test_non_repository_is_never_indexed(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(post_tool.subprocess, 'run') as run:
