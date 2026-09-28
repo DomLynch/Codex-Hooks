@@ -87,6 +87,12 @@ unmet explicit requirement. Equivalent wording is sufficient; cosmetic or
 acknowledgement phrasing is nonblocking. Before flagging, check current scope,
 whether the work was already completed, and evidence for the SAME resource,
 revision and check. Audit/status/pause requests do not authorize implementation.
+Interpret "all" within the subject being discussed, not the entire workspace or
+installed catalog. "All" or "global" alone does not establish scope expansion.
+Missing context or ambiguous scope is not a blocking omission: require clear user
+evidence that the supposedly missing work was requested. Explicit user scope
+changes override earlier context.
+When scope is ambiguous, PASS on scope; never expand it as a condition of stopping.
 
 Important - what counts as "task content":
 The transcript may not always have explicit "ASSISTANT:" labels or rich formatting.
@@ -698,7 +704,7 @@ def main() -> None:
         allow_stop("chat turn - audit skipped")
         return
 
-    if not has_tool_activity(transcript):
+    if transcript_path:
         transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS,
                                        include_previous=True, preserve_request=True)
     entries = latest_task_entries(transcript_path)

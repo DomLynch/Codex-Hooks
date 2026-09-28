@@ -77,6 +77,47 @@ class ReviewEvidenceTests(unittest.TestCase):
         self.assertNotIn("OLD_PASS", text)
         self.assertIn("FAILED current_test", text)
 
+    def test_tool_turn_keeps_bounded_previous_user_scope_only(self):
+        for previous_role, limit in [("TOOL OUTPUT", 600), ("TOOL OUTPUT", 4000), ("ASSISTANT", 4000)]:
+            entries = [("USER", "Frankendom skills only. " + "scope " * 500),
+                       (previous_role, "OLD_PASS"), ("USER", "Check all skills."),
+                       ("TOOL OUTPUT", "Read character skill; FAILED current_test"),
+                       ("ASSISTANT", "Reviewed the character skill.")]
+            text = compact_latest_task(entries, limit, include_previous=True)
+            current, history = text.split("\n\nPRIOR TURN CONTEXT", 1)
+            self.assertIn("Frankendom skills only.", history)
+            self.assertLessEqual(len(history), 600)
+            self.assertNotIn("OLD_PASS", text)
+            self.assertIn("Check all skills.", current)
+            self.assertIn("FAILED current_test", current)
+            self.assertLessEqual(len(text), limit)
+            self.assertNotIn("Frankendom", compact_latest_task(entries, 4000))
+
+    def test_stop_supplies_scope_even_when_current_turn_uses_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "transcript.jsonl"
+            rows = [
+                {"type": "message", "role": "user", "content": "Frankendom skills only."},
+                {"type": "message", "role": "assistant", "content": "Character skill updated."},
+                {"type": "message", "role": "user", "content": "Check all skills."},
+                {"type": "function_call_output", "output": "Read character skill and references."},
+                {"type": "message", "role": "assistant", "content": "Reviewed all character skills."},
+            ]
+            path.write_text("\n".join(json.dumps({"type": "response_item", "payload": r}) for r in rows))
+            payload = {"session_id": "scope", "transcript_path": str(path),
+                       "last_assistant_message": "Reviewed all character skills.", "cwd": tmp}
+            with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()), \
+                 mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"), \
+                 mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"), \
+                 mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"), \
+                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as audit:
+                with self.assertRaises(SystemExit) as stopped:
+                    mimo_audit.main()
+                self.assertEqual(stopped.exception.code, 0)
+            self.assertIn("Frankendom skills only.", audit.call_args.args[0])
+            self.assertIn("Read character skill and references.", audit.call_args.args[0])
+
     def test_history_is_one_turn_only_and_respects_small_budgets(self):
         entries = [("USER", "Older"), ("TOOL OUTPUT", "STALE_RECEIPT"),
                    ("USER", "Previous"), ("ASSISTANT", "No checks"),

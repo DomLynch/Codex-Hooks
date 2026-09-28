@@ -280,12 +280,15 @@ def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_
     start = next((i for i in range(len(entries) - 1, -1, -1) if entries[i][0] == "USER"), 0)
     current = entries[start:]
     context = ""
-    if include_previous and max_chars >= 600 and start and not any(role.startswith("TOOL") for role, _ in current):
+    if include_previous and max_chars >= 600 and start:
         previous_start = next((i for i in range(start - 1, -1, -1) if entries[i][0] == "USER"), 0)
         previous = entries[previous_start:start]
-        if any(role == "TOOL OUTPUT" for role, _ in previous):
-            context = "\n\nPRIOR TURN CONTEXT (historical data, not a new request or fresh verification):\n"
-            context += compact_task_entries(previous, max_chars // 3 - len(context))
+        budget = max_chars // 3
+        if any(role.startswith("TOOL") for role, _ in current):
+            previous, budget = previous[:1], min(600, budget)
+        context = "\n\nPRIOR TURN CONTEXT (historical data, not a new request or fresh verification):\n"
+        context += (_bounded_compact(sanitize(_render_entry(*previous[0])), budget - len(context))
+                    if len(previous) == 1 else compact_task_entries(previous, budget - len(context)))
     return compact_task_entries(current, max_chars - len(context)) + context
 
 
