@@ -46,6 +46,11 @@ Check only the current task slice. Block only for concrete problems:
 - Repeated command or test failures are being ignored instead of diagnosed
 - V4/MCP/project guidance is being ignored on non-trivial code work: no three-query Semble discovery, skipped Codegraph structural/impact analysis, or no stated reason
 
+Equivalent wording is sufficient; cosmetic/acknowledgement phrasing is nonblocking.
+Check current scope, already-completed work, and the SAME resource/revision before
+flagging. Audit/status/pause requests do not authorize implementation. USER UPDATE
+messages steer the original request; later explicit changes override conflicts.
+
 This slice may omit earlier tool calls. Missing Semble/Codegraph receipts alone
 are not evidence of skipped discovery; flag only explicit, current noncompliance.
 Do not repeat an acknowledged past process mistake that cannot be redone.

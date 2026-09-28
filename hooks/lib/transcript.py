@@ -289,7 +289,7 @@ def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_
 
 def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int = MAX_TRANSCRIPT_CHARS,
                       include_previous: bool = False, preserve_request: bool = False) -> str:
-    entries = latest_task_entries(transcript_path, current_only=False)
+    entries = latest_task_entries(transcript_path, current_only=False, preserve_turn=preserve_request)
     text = compact_latest_task(entries, max_chars, include_previous) if entries else sanitize(fallback)[-max_chars:]
     if preserve_request:
         request = sanitize(next((body for role, body in reversed(entries) if role == "USER"), ""))
@@ -298,11 +298,12 @@ def latest_task_slice(transcript_path: str, fallback: str = "", max_chars: int =
     return text
 
 
-def latest_task_entries(transcript_path: str, current_only: bool = True) -> list[tuple[str, str]]:
+def latest_task_entries(transcript_path: str, current_only: bool = True, preserve_turn: bool = False) -> list[tuple[str, str]]:
     if not transcript_path or not Path(transcript_path).is_file():
         return []
     entries: list[tuple[str, str]] = []
     calls: dict[str, str] = {}
+    turn_id, request_index = None, None
     try:
         lines = Path(transcript_path).read_text(errors="replace").splitlines()
     except OSError:
@@ -312,10 +313,14 @@ def latest_task_entries(transcript_path: str, current_only: bool = True) -> list
             obj = json.loads(line)
         except Exception:
             continue
-        if obj.get("type") != "response_item":
-            continue
         payload = obj.get("payload") or {}
         item_type = payload.get("type")
+        if preserve_turn and (obj.get("type") == "turn_context" or
+                              (obj.get("type") == "event_msg" and item_type == "task_started")):
+            if payload.get("turn_id") and payload["turn_id"] != turn_id:
+                turn_id, request_index = payload["turn_id"], None
+        if obj.get("type") != "response_item":
+            continue
         if item_type == "message":
             role = str(payload.get("role") or "message").upper()
             text = _content_text(payload.get("content"))
@@ -325,11 +330,17 @@ def latest_task_entries(transcript_path: str, current_only: bool = True) -> list
             if role == "USER" and text.lstrip().startswith("<hook_prompt"):
                 remaining = strip_hook_prompts(text)
                 if remaining:
-                    entries.append(("USER", remaining))
-                    continue
-                role = "PRIOR REVIEW (not a new request)"
-                text = re.sub(r"</?hook_prompt\b[^>]*>", "", text)
+                    text = remaining
+                else:
+                    role = "PRIOR REVIEW (not a new request)"
+                    text = re.sub(r"</?hook_prompt\b[^>]*>", "", text)
             if text:
+                if role == "USER" and turn_id:
+                    if request_index is not None:
+                        # Steering belongs to the active turn; a new turn resets this index.
+                        entries[request_index] = ("USER", entries[request_index][1] + "\n\nUSER UPDATE:\n" + text)
+                        continue
+                    request_index = len(entries)
                 entries.append((role, text))
         else:
             entry = tool_entry(payload, calls)

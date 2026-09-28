@@ -32,6 +32,41 @@ def tool_output(text: str) -> str:
 
 
 class TranscriptSliceTests(unittest.TestCase):
+    def test_review_keeps_same_turn_requests_and_earlier_receipts(self) -> None:
+        for event_type in ('event_msg', 'turn_context'):
+            with self.subTest(event_type=event_type), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'turn.jsonl'
+                boundary = json.dumps({'type': event_type, 'payload': {'type': 'task_started', 'turn_id': 'active'}})
+                request = 'Create all 18 separate tasks. ' + 'Details. ' * 500
+                path.write_text('\n'.join([
+                    message('user', 'Obsolete task'), boundary, message('user', request),
+                    tool_output('Verified task count: 0'), boundary,
+                    message('user', 'Keep it lean.'),
+                    message('user', '<hook_prompt>Prior review</hook_prompt>\nCodex only.'),
+                    message('assistant', 'I saved the handover; no tasks were created.'),
+                ]))
+                text = latest_task_slice(str(path), preserve_request=True)
+                for expected in (request, 'Keep it lean.', 'Codex only.', 'Verified task count: 0'):
+                    self.assertIn(expected, text)
+                self.assertNotIn('Obsolete task', text)
+                self.assertLessEqual(len(text), len(request) + 4200)
+
+    def test_review_new_turn_does_not_revive_previous_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'turn.jsonl'
+            records = []
+            for turn, request in [('old', 'Deploy the old release.'), ('new', 'Audit only; no edits.')]:
+                records.extend([json.dumps({'type': 'turn_context', 'payload': {'turn_id': turn}}),
+                                message('user', request)])
+            records.extend([message('user', 'Be concise.'), message('assistant', 'Two findings remain.')])
+            path.write_text('\n'.join(records))
+            text = latest_task_slice(str(path), preserve_request=True)
+            self.assertIn('Audit only; no edits.', text)
+            self.assertIn('Be concise.', text)
+            self.assertNotIn('Deploy the old release.', text)
+            # Non-review callers retain the latest-message boundary, including pause handling.
+            self.assertNotIn('Audit only; no edits.', latest_task_slice(str(path)))
+
     def test_file_link_without_content_claim_is_not_a_finding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "result.json"
