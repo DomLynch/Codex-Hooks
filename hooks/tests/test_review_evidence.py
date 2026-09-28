@@ -118,6 +118,26 @@ class ReviewEvidenceTests(unittest.TestCase):
             self.assertIn("Frankendom skills only.", audit.call_args.args[0])
             self.assertIn("Read character skill and references.", audit.call_args.args[0])
 
+    def test_stop_bounds_missing_transcript_fallback(self):
+        for path in (None, "", "missing.jsonl"):
+            for prefix in ("Completed the requested audit. ", "TOOL OUTPUT: audit completed. "):
+                with self.subTest(path=path, prefix=prefix), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    answer = prefix + "Detailed result. " * 7000 + "FINAL_RESULT"
+                    payload = {"session_id": "fallback", "cwd": tmp, "last_assistant_message": answer}
+                    if path is not None:
+                        payload["transcript_path"] = str(root / path) if path else ""
+                    with mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()), \
+                         mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"), \
+                         mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"), \
+                         mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"), \
+                         mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as audit:
+                        with self.assertRaises(SystemExit) as stopped:
+                            mimo_audit.main()
+                        self.assertEqual(stopped.exception.code, 0)
+                    audit.assert_called_once()
+                    self.assertEqual(audit.call_args.args[0], answer[-mimo_audit.MAX_TRANSCRIPT_CHARS:])
+
     def test_history_is_one_turn_only_and_respects_small_budgets(self):
         entries = [("USER", "Older"), ("TOOL OUTPUT", "STALE_RECEIPT"),
                    ("USER", "Previous"), ("ASSISTANT", "No checks"),
