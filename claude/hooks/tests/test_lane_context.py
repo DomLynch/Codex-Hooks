@@ -384,3 +384,34 @@ def test_restart_note_names_memory_state_doc_and_folder_rule(tmp_path, monkeypat
     monkeypatch.setattr("subprocess.run", lambda args, **k: type("R", (), {"stdout": ""})())
     assert "ask Lead" in ss.restart_note(Path("/wt/funny"), "char")
     assert "ls -d ~/Developer/frankendom-*" in ss.restart_note(Path("/wt/funny"), "nosuchlane")
+
+
+def test_handoff_check_names_worktree_lanes_by_title_and_finds_their_memory(tmp_path, monkeypatch):
+    """2026-09-28: Lead at 881k, Strategy and Web over their limits, and not one "ready" notice all day. The check
+    named the lane from the folder, and app worktrees (…/worktrees/funny-rhodes-…) name none, so it stayed silent.
+    Its memory check also looked under the worktree's key, where lanes keep no memory (they use
+    ~/Developer/frankendom-<key>, e.g. lead-catalogue for Lead)."""
+    from datetime import datetime
+    from lib import handoff_check as hc
+    monkeypatch.setattr(hc.Path, "home", staticmethod(lambda: tmp_path))
+    fetched = []
+    monkeypatch.setattr(hc, "state_file_pushed", lambda cwd, lane, fetch=True: fetched.append(fetch) or (True, "state ok"))
+    t = tmp_path / "t.jsonl"
+    t.write_text(json.dumps({"customTitle": "Frankendom - Lead Developer"}) + "\n"
+                 + json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 760_000}}}) + "\n")
+    wt = tmp_path / "frankendom" / ".claude" / "worktrees" / "funny-rhodes-f0eaa1"
+    out = hc.prompt_handoff_notice(str(t), wt)
+    assert "NOT ready" in out and "docs/state/lead.md" in out and "no memory directory" in out
+    mem = tmp_path / ".claude" / "projects" / ("-" + hc.project_slug(tmp_path / "Developer" / "frankendom-lead-catalogue")) / "memory"
+    mem.mkdir(parents=True)
+    (mem / "handoff.md").write_text("x")
+    (mem / "MEMORY.md").write_text(f"- [handoff](handoff.md) {datetime.now():%Y-%m-%d}\n")
+    ready = hc.prompt_handoff_notice(str(t), wt)
+    assert "Backup verified" in ready and "clear_session" in ready and "the lead lane" in ready
+    assert hc.handoff_notice(str(t), wt, "PR #12 merged").startswith("# Handoff check") and "Backup verified" in hc.handoff_notice(str(t), wt, "PR #12 merged")
+    assert not any(fetched), "neither copy fetches: the Stop copy runs before the review and only feeds the log"
+    t.write_text(json.dumps({"customTitle": "Frankendom - Lead Developer"}) + "\n"
+                 + json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 740_000}}}) + "\n")
+    assert hc.prompt_handoff_notice(str(t), wt) == "", "under Lead's own 750k: silent"
+    t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 900_000}}}) + "\n")
+    assert hc.prompt_handoff_notice(str(t), wt) == "", "no title and no lane folder: not a lane, silent as before"
