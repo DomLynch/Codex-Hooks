@@ -457,8 +457,30 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
     return {"ok": bool(results) and all(item["ok"] for item in results), "results": results}
 
 
+OUTPUT_CAP = 4000
+# A failing test as `node --test` (✖ / not ok / # fail), vitest/jest (✗ × FAIL) or pytest (FAILED, Error) prints it.
+_FAILING_LINE_RE = re.compile(r"^\s*(?:not ok\b|✖|✗|×|FAIL(?:ED)?\b)|AssertionError|\bError:|# fail [1-9]", re.MULTILINE)
+
+
+def _clip_output(output: str, cap: int = OUTPUT_CAP) -> str:
+    """The tail of the run plus every failing-test line the tail no longer shows.
+
+    Veteran lane, 2026-09-28: a plain `output[-4000:]` cut the front of a long `node --test` run, so six real
+    graphics.test failures printed early were invisible in the block and only surfaced in test:all. A lane
+    cannot fix a failure it is not shown, so the block names every failing test before the tail."""
+    if len(output) <= cap:
+        return output
+    tail = output[-(cap // 2):]
+    cut = output[:-(cap // 2)]
+    kept = [line.strip() for line in cut.splitlines() if _FAILING_LINE_RE.search(line) and line.strip() not in tail]
+    if not kept:
+        return output[-cap:]
+    head = "[failing lines from the elided front]\n" + "\n".join(kept)
+    return (head[:cap - len(tail) - 1] + "\n" + tail)[-cap:]
+
+
 def _result(file: Path, tool: str, ok: bool, output: str = "") -> dict:
-    return {"file": str(file), "tool": tool, "ok": ok, "output": output[-4000:]}
+    return {"file": str(file), "tool": tool, "ok": ok, "output": _clip_output(output)}
 
 
 def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
