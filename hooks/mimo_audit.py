@@ -704,9 +704,8 @@ def main() -> None:
         allow_stop("chat turn - audit skipped")
         return
 
-    if transcript_path:
-        transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS,
-                                       include_previous=True, preserve_request=True)
+    transcript = latest_task_slice(transcript_path, transcript, MAX_TRANSCRIPT_CHARS,
+                                   include_previous=True, preserve_request=True)
     entries = latest_task_entries(transcript_path)
     paths = edited_paths(entries)
     sensitive = sensitive_paths(paths)
