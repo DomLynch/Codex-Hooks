@@ -28,7 +28,8 @@ URGENT_TOKENS = 800_000  # above every lane threshold, so "put this first" never
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
 # the lowercase-only pattern made it no lane at all (2026-09-24). Keys are lowercased: "Stats" -> "stats".
-LANE_RE = re.compile(r"frankendom(?:-| - )([\w.-]+)", re.IGNORECASE)
+# A leading "The" is skipped: "Frankendom - The Pit" is lane pit (docs/state/pit.md), not "the" (2026-09-29).
+LANE_RE = re.compile(r"frankendom(?:-| - )(?:the )?([\w.-]+)", re.IGNORECASE)
 
 
 def context_tokens(transcript_path: str) -> int:
@@ -90,7 +91,7 @@ def session_lane(transcript_path: str, cwd: str) -> str:
 
 # A title's first word is not always the lane's key: "Multi Chars" keeps docs/state/multichar.md.
 TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish",
-               "hero": "herolook", "the": "pit"}
+               "hero": "herolook"}
 
 
 def warn_tokens(lane: str) -> int:

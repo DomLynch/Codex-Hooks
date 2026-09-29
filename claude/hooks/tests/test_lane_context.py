@@ -81,6 +81,8 @@ def test_worktree_lanes_are_named_by_their_title(tmp_path):
     assert cs.session_lane(str(t), wt) == "herolook"
     write("Frankendom - The Pit", 100_000)                        # 2026-09-29: docs/state/pit.md, not "the"
     assert cs.session_lane(str(t), wt) == "pit"
+    write("Frankendom - The Forge", 100_000)                      # any other "The ..." lane keeps its own name
+    assert cs.session_lane(str(t), wt) == "forge"
     write("Frankendom - Deploy", 550_000)
     assert cs.session_lane(str(t), wt) == "deploy" and cs.context_notice(str(t), wt) == ("", False)  # under 600k
     write("Frankendom - Weapons", 550_000)
