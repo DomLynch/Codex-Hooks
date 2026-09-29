@@ -79,6 +79,27 @@ class EnforcementTests(unittest.TestCase):
             }))
             self.assertFalse(quality.run_project_gate(self.root)['ok'])
 
+    def test_standalone_command_lists_execute_all_checks_and_report_failure(self):
+        for key in ('codex_commands', 'completion_commands'):
+            for code in (0, 7):
+                with self.subTest(key=key, code=code):
+                    commands = [[sys.executable, '-c',
+                                 f'print("check {i}"); raise SystemExit({code if i == 3 else 0})']
+                                for i in (1, 2, 3)]
+                    (self.root / '.quality-gate.json').write_text(json.dumps({key: commands}))
+                    result = quality.run_project_gate(self.root)
+                    self.assertEqual(result['ok'], code == 0)
+                    self.assertEqual([r['output'].strip() for r in result['results']],
+                                     ['check 1', 'check 2', 'check 3'])
+
+    def test_empty_or_malformed_completion_only_contract_fails_without_execution(self):
+        for contract in ({}, {'completion_commands': []}, {'completion_commands': None},
+                         {'completion_commands': 'echo pass'}, {'completion_commands': [[]]}):
+            with self.subTest(contract=contract), patch.object(quality.subprocess, 'Popen') as run:
+                (self.root / '.quality-gate.json').write_text(json.dumps(contract))
+                self.assertFalse(quality.run_project_gate(self.root)['ok'])
+                run.assert_not_called()
+
     def test_completion_checks_cannot_hide_behind_green_unit_checks(self):
         for code in (1, 0):
             (self.root / '.quality-gate.json').write_text(json.dumps({
