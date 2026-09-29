@@ -417,6 +417,33 @@ class EnforcementTests(unittest.TestCase):
             shutil.rmtree(self.root / 'node_modules')
             self.assertIsNone(quality.gate_busy(self.root), 'a package.json with no dependencies needs nothing installed')
 
+    def test_gate_waits_while_lead_has_handed_the_box_to_another_worktree(self):
+        # Lead, 2026-09-29: Combat's gate ran at 20:01 while Weapons held the slot Lead had handed it. Lead writes
+        # ~/.claude/state/box_slot = "<owner worktree path> <until, ISO local time>" and removes it on "box back".
+        from datetime import datetime, timedelta
+        self.contract([['true']])
+        slot = self.root / 'box_slot'
+        soon = (datetime.now() + timedelta(minutes=30)).isoformat(timespec='minutes')
+        owner = self.root / 'frankendom weapons'
+        with patch.object(quality, 'BOX_SLOT_PATH', slot), patch.object(quality, 'DEPLOY_HOLD_PATH', self.root / 'no-hold'), \
+                patch.object(quality.os, 'getloadavg', return_value=(5, 5, 5)):
+            self.assertIsNone(quality.gate_busy(self.root), 'no slot file: the gate runs')
+            slot.write_text(f'{owner} {soon}\n')
+            reason = quality.gate_busy(self.root)['reason']
+            self.assertIn(f'box slot held by {owner} until {soon}', reason)
+            owner.mkdir()
+            self.assertIsNone(quality.gate_busy(owner), 'the slot owner runs its own gate')
+            (owner / 'sub').mkdir()
+            self.assertIsNone(quality.gate_busy(owner / 'sub'), 'and from a folder inside it')
+            past = (datetime.now() - timedelta(minutes=1)).isoformat(timespec='minutes')
+            slot.write_text(f'{owner} {past}\n')
+            self.assertIsNone(quality.gate_busy(self.root), 'an expired slot does not hold')
+            slot.write_text('garbage\n')
+            self.assertIsNone(quality.gate_busy(self.root), 'an unreadable slot does not hold')
+            slot.write_text(f'{owner} {(datetime.now() + timedelta(days=3)).isoformat(timespec="minutes")}\n')
+            os.utime(slot, (time.time() - 13 * 3600, time.time() - 13 * 3600))
+            self.assertIsNone(quality.gate_busy(self.root), 'a forgotten slot expires 12 h after it was written')
+
     def test_busy_gate_defers_with_a_note_instead_of_failing(self):
         self.contract([['true']])
         with patch.object(stop_orchestrator, 'gate_busy', return_value={'reason': 'the Mac is overloaded (load 386, limit 60)'}), \
