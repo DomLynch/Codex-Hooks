@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -392,6 +393,29 @@ class EnforcementTests(unittest.TestCase):
             elsewhere.mkdir()
             (elsewhere / '.quality-gate.json').write_text((self.root / '.quality-gate.json').read_text())
             self.assertIsNone(quality.gate_busy(elsewhere), 'the same check in another folder does not count')
+
+    def test_gate_waits_when_no_declared_package_is_installed(self):
+        # Lead, 2026-09-29: the Duel app worktree has no node_modules (the Desktop checkout's is empty), so eslint
+        # failed on "Cannot find package '@eslint/js'" and blocked every Stop. Nothing is installed automatically.
+        self.contract([['true']])
+        (self.root / 'package.json').write_text(json.dumps({'devDependencies': {'@eslint/js': '9', 'eslint': '9'}}))
+        with patch.object(quality, 'DEPLOY_HOLD_PATH', self.root / 'no-hold'), \
+                patch.object(quality.os, 'getloadavg', return_value=(5, 5, 5)):
+            self.assertIn('no node_modules', quality.gate_busy(self.root)['reason'])
+            (self.root / 'node_modules').mkdir()
+            self.assertIn('no node_modules', quality.gate_busy(self.root)['reason'], 'an empty node_modules is none')
+            pkg = self.root / 'node_modules' / 'eslint'
+            pkg.mkdir()
+            (pkg / 'package.json').write_text('{}')
+            self.assertIsNone(quality.gate_busy(self.root), 'installed packages: the gate runs (and a missing one fails)')
+            child = self.root / 'wt'
+            child.mkdir()
+            (child / '.quality-gate.json').write_text((self.root / '.quality-gate.json').read_text())
+            (child / 'package.json').write_text((self.root / 'package.json').read_text())
+            self.assertIsNone(quality.gate_busy(child), 'packages in a parent folder resolve for node too')
+            (self.root / 'package.json').write_text(json.dumps({'name': 'no-deps'}))
+            shutil.rmtree(self.root / 'node_modules')
+            self.assertIsNone(quality.gate_busy(self.root), 'a package.json with no dependencies needs nothing installed')
 
     def test_busy_gate_defers_with_a_note_instead_of_failing(self):
         self.contract([['true']])

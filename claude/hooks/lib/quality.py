@@ -259,6 +259,23 @@ def unchanged_from_base(cwd: Path) -> str:
     return base if rc == 0 else ""
 
 
+def missing_packages(cwd: Path) -> dict | None:
+    """package.json declares dependencies and none is installed in cwd or a parent node_modules (node's lookup).
+
+    The Duel app worktree had no node_modules and the Desktop checkout's was empty, so eslint failed on "Cannot
+    find package '@eslint/js'" and blocked every Stop (Lead, 2026-09-29). That is the environment, not the change:
+    wait, and never install or link packages from a hook. One installed package is enough to run, so a real
+    missing dependency in an installed tree still fails the gate."""
+    try:
+        pkg = json.loads((cwd / "package.json").read_text())
+        names = [*(pkg.get("dependencies") or {}), *(pkg.get("devDependencies") or {})]
+    except Exception:
+        return None
+    if not names or any((d / "node_modules" / n / "package.json").exists() for d in (cwd, *cwd.parents) for n in names):
+        return None
+    return {"reason": f"this worktree has no node_modules (none of package.json's {len(names)} packages is installed)"}
+
+
 def gate_busy(cwd: Path) -> dict | None:
     """Why the repository gate should wait instead of starting now, or None."""
     load = os.getloadavg()[0]
@@ -267,6 +284,9 @@ def gate_busy(cwd: Path) -> dict | None:
     hold = deploy_hold()
     if hold:
         return hold
+    missing = missing_packages(cwd)
+    if missing:
+        return missing
     holder = gate_lock_holder()
     if holder and int(holder.get("pid", 0)) != os.getpid():
         return {"reason": f"a repository gate is already running in {holder.get('cwd')} (pid {holder.get('pid')}, one gate per Mac)"}
