@@ -79,6 +79,8 @@ def test_worktree_lanes_are_named_by_their_title(tmp_path):
     assert cs.context_notice(str(t), wt) == ("", False)          # under Strategy's 700k
     write("Frankendom - Hero Look", 100_000)                      # 2026-09-26: its folder is frankendom-herolook
     assert cs.session_lane(str(t), wt) == "herolook"
+    write("Frankendom - The Pit", 100_000)                        # 2026-09-29: docs/state/pit.md, not "the"
+    assert cs.session_lane(str(t), wt) == "pit"
     write("Frankendom - Deploy", 550_000)
     assert cs.session_lane(str(t), wt) == "deploy" and cs.context_notice(str(t), wt) == ("", False)  # under 600k
     write("Frankendom - Weapons", 550_000)
@@ -359,7 +361,8 @@ def test_worktree_lane_comes_from_the_title_even_right_after_a_clear(tmp_path):
              "Frankendom - Auditer + fixer - Fable 5.1": "code-quality", "Frankendom - Hero Look": "herolook",
              "Frankendom - Veteran": "veteran-polish", "Frankendom - Finishers & Gore": "finishers",
              "Frankendom - Backend/Accounts": "backend", "Frankendom - Multi Chars": "multichar",
-             "Frankendom - Visuals / World": "world", "Frankendom - Strategy - Fable 5.1": "strategy"}
+             "Frankendom - Visuals / World": "world", "Frankendom - Strategy - Fable 5.1": "strategy",
+             "Frankendom - The Pit": "pit", "Frankendom - Duel": "duel"}
     for i, (title, key) in enumerate(cases.items()):
         folder = tmp_path / str(i)
         folder.mkdir()

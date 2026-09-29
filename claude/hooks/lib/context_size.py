@@ -90,7 +90,7 @@ def session_lane(transcript_path: str, cwd: str) -> str:
 
 # A title's first word is not always the lane's key: "Multi Chars" keeps docs/state/multichar.md.
 TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish",
-               "hero": "herolook"}
+               "hero": "herolook", "the": "pit"}
 
 
 def warn_tokens(lane: str) -> int:
