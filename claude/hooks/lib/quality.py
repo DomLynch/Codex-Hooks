@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -131,6 +132,8 @@ DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
 GATE_MAX_LOAD = float(os.environ.get("CLAUDE_GATE_MAX_LOAD") or 60)
 DEPLOY_HOLD_PATH = Path.home() / ".claude" / "state" / "deploy_hold"   # Deploy touches it while it waits to launch
 DEPLOY_HOLD_TTL_S = 30 * 60
+BOX_SLOT_PATH = Path.home() / ".claude" / "state" / "box_slot"   # Lead: "<owner worktree path> <until ISO time>"
+BOX_SLOT_MAX_S = 12 * 3600
 
 
 def deploy_hold() -> dict | None:
@@ -139,6 +142,21 @@ def deploy_hold() -> dict | None:
     except OSError:
         return None
     return {"reason": f"Deploy is holding the Mac ({DEPLOY_HOLD_PATH.name}, {age:.0f}s old)"} if age < DEPLOY_HOLD_TTL_S else None
+
+
+def box_slot(cwd: Path) -> dict | None:
+    """Lead has handed the box to another worktree until a time (Lead, 2026-09-29: Combat's gate ran while Weapons
+    held the slot). A missing, unreadable or expired file holds nothing; a forgotten one expires 12 h after writing."""
+    try:
+        owner, until = BOX_SLOT_PATH.read_text().strip().rsplit(None, 1)
+        end = min(datetime.fromisoformat(until).timestamp(), BOX_SLOT_PATH.stat().st_mtime + BOX_SLOT_MAX_S)
+        owner_path = Path(owner).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    here = cwd.resolve()
+    if time.time() >= end or here == owner_path or owner_path in here.parents:
+        return None
+    return {"reason": f"box slot held by {owner} until {until}"}
 
 
 def _same_check_running(cwd: Path, command: list[str]) -> str:
@@ -259,6 +277,23 @@ def unchanged_from_base(cwd: Path) -> str:
     return base if rc == 0 else ""
 
 
+def missing_packages(cwd: Path) -> dict | None:
+    """package.json declares dependencies and none is installed in cwd or a parent node_modules (node's lookup).
+
+    The Duel app worktree had no node_modules and the Desktop checkout's was empty, so eslint failed on "Cannot
+    find package '@eslint/js'" and blocked every Stop (Lead, 2026-09-29). That is the environment, not the change:
+    wait, and never install or link packages from a hook. One installed package is enough to run, so a real
+    missing dependency in an installed tree still fails the gate."""
+    try:
+        pkg = json.loads((cwd / "package.json").read_text())
+        names = [*(pkg.get("dependencies") or {}), *(pkg.get("devDependencies") or {})]
+    except Exception:
+        return None
+    if not names or any((d / "node_modules" / n / "package.json").exists() for d in (cwd, *cwd.parents) for n in names):
+        return None
+    return {"reason": f"this worktree has no node_modules (none of package.json's {len(names)} packages is installed)"}
+
+
 def gate_busy(cwd: Path) -> dict | None:
     """Why the repository gate should wait instead of starting now, or None."""
     load = os.getloadavg()[0]
@@ -267,6 +302,9 @@ def gate_busy(cwd: Path) -> dict | None:
     hold = deploy_hold()
     if hold:
         return hold
+    waiting = missing_packages(cwd) or box_slot(cwd)
+    if waiting:
+        return waiting
     holder = gate_lock_holder()
     if holder and int(holder.get("pid", 0)) != os.getpid():
         return {"reason": f"a repository gate is already running in {holder.get('cwd')} (pid {holder.get('pid')}, one gate per Mac)"}
