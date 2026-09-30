@@ -383,8 +383,11 @@ class EnforcementTests(unittest.TestCase):
                 self.assertIn('load 386', quality.gate_busy(self.root)['reason'])
             hold.touch()
             self.assertIn('Deploy is holding', quality.gate_busy(self.root)['reason'])
-            os.utime(hold, (time.time() - 3600, time.time() - 3600))
-            self.assertIsNone(quality.gate_busy(self.root), 'a forgotten hold expires')
+            # Lead, 2026-09-30 08:44: a release paused 46 min after its last touch; the hold still stands.
+            os.utime(hold, (time.time() - 46 * 60, time.time() - 46 * 60))
+            self.assertIn('Deploy is holding', quality.gate_busy(self.root)['reason'], 'a paused release still holds')
+            os.utime(hold, (time.time() - 13 * 3600, time.time() - 13 * 3600))
+            self.assertIsNone(quality.gate_busy(self.root), 'a forgotten hold expires after 12 h')
             running = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], cwd=self.root)
             self.addCleanup(running.kill)
             time.sleep(0.3)

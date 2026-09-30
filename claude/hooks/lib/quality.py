@@ -131,7 +131,9 @@ DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
 # in this folder (a lane's own run, or one a Stop deadline left behind).
 GATE_MAX_LOAD = float(os.environ.get("CLAUDE_GATE_MAX_LOAD") or 60)
 DEPLOY_HOLD_PATH = Path.home() / ".claude" / "state" / "deploy_hold"   # Deploy touches it while it waits to launch
-DEPLOY_HOLD_TTL_S = 30 * 60
+# The hold stands while the file exists: a paused release can go 46 min without a touch (Lead, 2026-09-30, when a
+# 30 min limit let a full test suite run to load 94). Only a file forgotten for 12 h is ignored.
+DEPLOY_HOLD_TTL_S = 12 * 3600
 BOX_SLOT_PATH = Path.home() / ".claude" / "state" / "box_slot"   # Lead: "<owner worktree path> <until ISO time>"
 BOX_SLOT_MAX_S = 12 * 3600
 
