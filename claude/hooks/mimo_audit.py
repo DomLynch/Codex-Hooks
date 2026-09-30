@@ -134,13 +134,29 @@ def block_stop(reason: str) -> None:
     sys.exit(0)
 
 
+# Errors a retry cannot fix: the reviewer's account is out of quota or logged out. Blocking on them only costs the
+# lane turns (2026-09-30: the weekly limit hit at 18:43 and every lane lost two turns per Stop, 63 failures in 11 min,
+# with the reset five days away). Timeouts and network errors still block and retry, as before.
+ACCOUNT_ERROR_RE = re.compile(
+    r"hit your (?:weekly|daily|monthly|session|usage) limit|usage limit reached|"
+    r"OAuth session expired|Failed to authenticate|not logged in|Invalid API key",
+    re.IGNORECASE,
+)
+
+
 def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str, cwd: str = "") -> None:
     """Reviewer could not run. Block, but only MAX_CONSECUTIVE_AUDIT_ERRORS Stops in a row:
     the counter is per session (per-turn iterations reset every Stop and never bound anything).
-    On the cap, write an escalation record and release the turn as unresolved."""
+    On the cap, write an escalation record and release the turn as unresolved.
+    An account error (quota, login) releases at once: retrying cannot fix it."""
     report_failure("mimo_audit", "audit_unavailable")
     save_iterations(session_id, turn_id, iterations + 1)
     save_verdict(session_id, turn_id, "ERROR", message)
+    if ACCOUNT_ERROR_RE.search(message or ""):
+        reset_audit_errors(session_id)
+        log(f"AUDIT_ACCOUNT_DOWN: {message[:200]}")
+        allow_stop("reviewer account unavailable (quota or login); turn released unreviewed", unresolved=True)
+        return
     errors = increment_audit_errors(session_id)
     if errors >= MAX_CONSECUTIVE_AUDIT_ERRORS:
         path = write_escalation(session_id, cwd, message, errors)
