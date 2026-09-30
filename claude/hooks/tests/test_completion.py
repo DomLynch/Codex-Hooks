@@ -156,6 +156,33 @@ class CompletionTests(unittest.TestCase):
         self.assertEqual(verdict.call_args.args[2], "ERROR")
         block.assert_called_once()
 
+    def test_an_account_error_releases_at_once_instead_of_blocking(self):
+        # 2026-09-30: the reviewer account hit its weekly limit; each Stop blocked twice before release, in every
+        # lane, for a limit five days from resetting. A retry cannot fix quota or login, so release immediately.
+        for message in ("audit API error: Claude audit failed (1): You've hit your weekly limit · resets Oct 5",
+                        "audit API error: Failed to authenticate: OAuth session expired and could not be refreshed"):
+            with tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
+                    mock.patch.object(mimo_audit, "log"), \
+                    mock.patch.object(mimo_audit, "report_failure"), \
+                    mock.patch.object(mimo_audit, "save_iterations"), \
+                    mock.patch.object(mimo_audit, "save_verdict") as verdict, \
+                    mock.patch.object(mimo_audit, "block_stop") as block, \
+                    mock.patch.object(mimo_audit, "allow_stop") as allow:
+                mimo_audit.block_audit_error("session", "turn", 0, message)
+            block.assert_not_called()
+            allow.assert_called_once()
+            self.assertTrue(allow.call_args.kwargs["unresolved"])
+            self.assertEqual(verdict.call_args.args[2], "ERROR")   # still recorded, never a PASS
+        # a timeout is not an account error: it still blocks and retries
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
+                mock.patch.object(mimo_audit, "log"), mock.patch.object(mimo_audit, "report_failure"), \
+                mock.patch.object(mimo_audit, "save_iterations"), mock.patch.object(mimo_audit, "save_verdict"), \
+                mock.patch.object(mimo_audit, "block_stop") as block:
+            mimo_audit.block_audit_error("session", "turn", 0, "audit API error: Claude audit timed out after 100s")
+        block.assert_called_once()
+
     def test_log_reports_hook_exceptions_not_expected_outcomes(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(hook_log, "LOG_DIR", Path(tmp)), \
