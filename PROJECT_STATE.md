@@ -1,6 +1,18 @@
 # Project state — Codex Hooks
 
-Updated: 2026-09-23. Shared by Codex and Claude; their settings and private memories remain separate. Record verified changes here with a commit, PR, or check receipt.
+Updated: 2026-09-30. Shared by Codex and Claude; their settings and private memories remain separate. Record verified changes here with a commit, PR, or check receipt.
+
+## 2026-09-30 16:18 (+04) — Claude hooks HANDOFF. READ FIRST, then the sections below, then memory (next-hooks-todo)
+- LIVE: `origin/main` 66c4b73 == `~/.claude/hooks`, 48/48 files byte-identical at 16:18; CI green on 66c4b73. Installed-copy note: `tests/test_enforcement.py::test_this_repo_names_its_ci_check` always fails when run from `~/.claude/hooks` (it reads this repo's `.quality-gate.json`); it passes in the repo, so it is not a regression.
+- Went live 2026-09-29/30 (all merged, installed, parity checked):
+  - #60 handoff check names app-worktree lanes by their title and finds their memory; lanes now self-clear (Lead, Deploy, Auditer, Combat, Hero Look, Weapons, The Pit and others seen doing it).
+  - #62 lane titles skip a leading "The": "Frankendom - The Pit" is lane `pit` (docs/state/pit.md); "Duel" is `duel`.
+  - #63 repository gate defers (never blocks) when package.json declares packages and none is installed in the folder or a parent node_modules (Duel/The Pit worktrees looped on `Cannot find package '@eslint/js'`); and defers while Lead's `~/.claude/state/box_slot` ("<owner worktree path> <until ISO local time>") names another worktree; 12 h cap; checked at gate start only.
+- NOT LIVE: #64 `claude/deploy-hold-while-present` — `deploy_hold` counts while the file exists (cap 12 h, was 30 min; a paused release at 08:44 let a docs-only Stop run the full node suite to load 94). CI green; waiting for Dom's "merge 64". Deploy re-touches the hold every ~20 min until then (Lead confirmed).
+- Rulings: merges of peer-requested hook changes need Dom's words in chat (a peer lane cannot approve). Status tables use `scripts/context_table.py --hours 72` with idle computed from the `--hours 24` list, never by eye.
+- Open, in order: (1) merge + install #64 on Dom's OK, then tell Lead; (2) offered, not started: the handoff check's state doc must be "updated today", so a lane over its limit just after midnight is always "NOT ready" (accept "within 12 h" instead); (3) Goblin's "deadline exceeded under load should defer"; Stats gate-root question — both unverified.
+- Observed, not hooks: Hero Look, Weapons and The Pit sat over their limit because their state docs were days old (the notice tells them to write it); a self-cleared lane stays dark until someone messages it; 9 lanes idle >24 h at 16:15 (Executioner, Character Main, Veteran, Stats, Multi Chars, Pitborn, Nightborn, Goblin, plus Audio earlier) — Lead's call.
+- Session: worktree `.claude/worktrees/cool-goldberg-47393f`; no cron jobs.
 
 ## Scope and owners
 - This repo versions Codex hooks in `hooks/` and Claude hooks in `claude/hooks/`. Live installs are `~/.codex/hooks/` and `~/.claude/hooks/`.
