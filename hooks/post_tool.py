@@ -229,6 +229,7 @@ def main() -> None:
         cwd = Path(workdir or payload.get("cwd") or ".").resolve()
         is_edit = tool_name.rsplit("__", 1)[-1] in EDIT_TOOLS or "*** Begin Patch" in str(tool_input)
         files = changed_files_in_payload(payload) if is_edit else []
+        autofix = bool(files)  # Never rewrite unrelated dirt discovered by the fallback.
         targets = {}
         for file in files:
             root = git_root(file.parent)
@@ -242,12 +243,11 @@ def main() -> None:
             files = changed_files(cwd)
         if not targets and files:
             targets[cwd] = files
-        if is_edit:
-            for root in targets:
-                sync_codegraph(root)
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
         for root, target_files in targets.items():
-            result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic())
+            result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic(), autofix=autofix)
+            if is_edit:
+                sync_codegraph(root)
             log(COMPONENT, f"quality files={len(target_files)} ok={result.get('ok')} cwd={root}")
             if not result.get("ok"):
                 block(format_quality_failures(result))
