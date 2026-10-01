@@ -1,5 +1,10 @@
 # Project state — Codex Hooks
 
+## Codex safe formatting — 1 October 2026
+- Explicit edit targets now receive Ruff formatting and isolated, safe E401 import splitting before the existing checks. Read-only commands, fallback dirty-file discovery and Stop verification do not autofix. Final lint explicitly disables project-configured fix/fix-only modes; unsafe transformations, remaining lint errors, missing tools, deadlines and failing tests still block.
+- CodeGraph refresh follows formatting. Reviewer model/config and Claude files are unchanged. One audit caught the shared checker's read-only mutation risk; opt-in formatting and regression coverage close it.
+- Validation: new tests failed against the old code; the changed Codex gate passes 214 tests + 47 subtests and Ruff. Coverage includes behavior preservation, untouched neighboring files, idempotence, hostile fix settings, real test failures, formatter errors and deadline exhaustion. Release/install receipts belong in the existing Codex handover.
+
 Updated: 2026-09-30. Shared by Codex and Claude; their settings and private memories remain separate. Record verified changes here with a commit, PR, or check receipt.
 
 ## 2026-09-30 16:18 (+04) — Claude hooks HANDOFF. READ FIRST, then the sections below, then memory (next-hooks-todo)

@@ -161,7 +161,7 @@ def _result(file: Path, tool: str, ok: bool, output: str = "") -> dict:
     return {"file": str(file), "tool": tool, "ok": ok, "output": output[-4000:]}
 
 
-def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
+def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60, *, autofix: bool = False) -> dict:
     results: list[dict] = []
     deadline = time.monotonic() + timeout
 
@@ -186,11 +186,17 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
         if not _tool_exists(project_tool(name, cwd)):
             results.append(_result(files[0], name, False, f"Required tool unavailable: {name}; install project development dependencies."))
 
+    if autofix and py_files and _tool_exists(project_tool("ruff", cwd)):
+        # Only split combined imports automatically; never inherit broader fix rules.
+        for args in (["check", "--isolated", "--select", "E401", "--fix", "--no-unsafe-fixes"],
+                     ["format"]):
+            rc, out, err = run([project_tool("ruff", cwd), *args, *map(str, py_files)])
+            results.append(_result(py_files[0], "ruff " + args[0], rc == 0, out + err))
     for file in py_files:
         rc, out, err = run(["python3", "-m", "py_compile", str(file)])
         results.append(_result(file, "py_compile", rc == 0, out + err))
     if py_files and _tool_exists(project_tool("ruff", cwd)):
-        rc, out, err = run([project_tool("ruff", cwd), "check", *map(str, py_files)])
+        rc, out, err = run([project_tool("ruff", cwd), "check", "--no-fix", "--no-fix-only", *map(str, py_files)])
         results.append(_result(py_files[0], "ruff", rc == 0, out + err))
     if py_files and _tool_exists(project_tool("mypy", cwd)) and has_mypy_config(cwd):
         rc, out, err = run([project_tool("mypy", cwd), "--no-error-summary", *map(str, py_files)])

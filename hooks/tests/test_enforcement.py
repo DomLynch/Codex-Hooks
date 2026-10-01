@@ -168,6 +168,75 @@ class EnforcementTests(unittest.TestCase):
         binary.chmod(0o700)
         self.assertEqual(quality.project_tool('eslint', self.root), str(binary))
 
+    def test_quality_formats_only_requested_files_without_changing_behavior(self):
+        file = self.root / 'format_me.py'
+        file.write_text('import json, math\nx=1; y=2\npayload=json.dumps([x,y,math.floor(3.5)])\n')
+        neighbor = self.root / 'leave_me.py'
+        neighbor.write_text('a=1; b=2\n')
+        original = file.read_text()
+        before = {}
+        exec(compile(original, str(file), 'exec'), before)
+        result = quality.run_quality_checks([file], self.root, autofix=True)
+        self.assertTrue(result['ok'], result)
+        self.assertNotEqual(file.read_text(), original)
+        after = {}
+        exec(compile(file.read_text(), str(file), 'exec'), after)
+        self.assertEqual(after['payload'], before['payload'])
+        self.assertEqual(neighbor.read_text(), 'a=1; b=2\n')
+        formatted = file.read_bytes()
+        self.assertTrue(quality.run_quality_checks([file], self.root, autofix=True)['ok'])
+        self.assertEqual(file.read_bytes(), formatted)
+
+    def test_quality_default_is_read_only_even_with_project_fix_settings(self):
+        (self.root / 'ruff.toml').write_text('fix = true\nfix-only = true\nunsafe-fixes = true\n')
+        file = self.root / 'unchanged.py'
+        source = 'import os\nx=1; y=2\n'
+        file.write_text(source)
+        self.assertFalse(quality.run_quality_checks([file], self.root)['ok'])
+        self.assertEqual(file.read_text(), source)
+
+    def test_quality_keeps_errors_and_unsafe_fixes_blocking(self):
+        # Project settings must not widen the hook's automatic repair scope.
+        (self.root / 'ruff.toml').write_text(
+            'fix = true\nfix-only = true\nunsafe-fixes = true\n'
+            '[lint]\nextend-safe-fixes = ["E731", "F401"]\n'
+        )
+        file = self.root / 'broken.py'
+        for source, expected in (
+            ('result = missing_name\n', 'F821'),
+            ('import os\n', 'F401'),
+            ('f = lambda x: x + 1\n', 'E731'),
+            ('x = 1\nimport os\n\nprint(os.name, x)\n', 'E402'),
+            ('def broken(:\n', 'SyntaxError'),
+        ):
+            with self.subTest(expected=expected):
+                file.write_text(source)
+                result = quality.run_quality_checks([file], self.root, autofix=True)
+                self.assertFalse(result['ok'], result)
+                self.assertIn(expected, '\n'.join(r['output'] for r in result['results']))
+                self.assertEqual(file.read_text(), source)
+
+    def test_quality_preserves_failing_tests_after_formatting(self):
+        file = self.root / 'test_failure.py'
+        file.write_text('def test_failure():\n    x=1; y=2\n    assert x == y\n')
+        result = quality.run_quality_checks([file], self.root, autofix=True)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any(r['tool'] == 'pytest' and not r['ok'] for r in result['results']))
+
+    def test_quality_format_failure_and_deadline_cannot_pass(self):
+        file = self.root / 'sample.py'
+        file.write_text('x=1; y=2\n')
+        binary = self.root / '.venv/bin/ruff'
+        binary.parent.mkdir(parents=True)
+        binary.write_text(f'#!{sys.executable}\nimport sys\n'
+                          'sys.exit(2 if "format" in sys.argv else 0)\n')
+        binary.chmod(0o700)
+        result = quality.run_quality_checks([file], self.root, autofix=True)
+        self.assertFalse(result['ok'])
+        self.assertTrue(any(r['tool'] == 'ruff format' and not r['ok'] for r in result['results']))
+        self.assertFalse(quality.run_quality_checks([file], self.root, timeout=0, autofix=True)['ok'])
+        self.assertEqual(file.read_text(), 'x=1; y=2\n')
+
     def test_mypy_requires_actual_configuration(self):
         project = self.root/'pyproject.toml'
         project.write_text('[project]\nname="test"\n')
@@ -286,24 +355,30 @@ class EnforcementTests(unittest.TestCase):
             sync.assert_not_called()
             checkpoint.assert_not_called()
             self.assertEqual(check.call_args.args[1], (self.root/'project').resolve())
+            self.assertFalse(check.call_args.kwargs['autofix'])
 
     def test_multi_repo_edits_register_every_repo(self):
         import io
         files = [self.root/'one'/'app.py', self.root/'two'/'app.py']
+        for file in files:
+            file.parent.mkdir()
+            file.write_text('x=1; y=2\n')
         payload = {'tool_name': 'Edit', 'cwd': str(self.root), 'tool_input': {}}
         with patch.object(post_tool.sys, 'stdin', io.StringIO(json.dumps(payload))), \
              patch.object(post_tool, 'changed_files_in_payload', return_value=files), \
              patch.object(post_tool, 'git_root', side_effect=lambda path: path), \
              patch.object(post_tool, 'resolve_git_cwd', return_value=self.root), \
              patch.object(post_tool, 'remember_repo'), patch.object(post_tool, 'log'), \
-             patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}), \
+             patch.object(post_tool, 'run_quality_checks', wraps=quality.run_quality_checks) as check, \
              patch.object(post_tool, 'pending_quality') as pending, \
-             patch.object(post_tool, 'sync_codegraph') as sync, \
+             patch.object(post_tool, 'sync_codegraph', side_effect=lambda root: \
+                          self.assertNotIn(';', (root/'app.py').read_text())) as sync, \
              patch.object(post_tool, 'update_checkpoint_state', create=True), patch.object(post_tool, 'update_audit_state'), \
              patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint', create=True):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
             self.assertEqual({call.args[0] for call in sync.call_args_list}, {file.parent for file in files})
+            self.assertTrue(all(call.kwargs['autofix'] for call in check.call_args_list))
 
     def test_codegraph_initializes_then_syncs_existing_index(self):
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
