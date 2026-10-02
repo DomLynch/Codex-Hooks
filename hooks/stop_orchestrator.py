@@ -15,7 +15,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from lib.autonomy import remember_repo
 from lib.git import (
     is_git_repo,
-    resolve_git_cwd,
+    git_root,
     safe_run,
 )
 from lib.log import log
@@ -171,7 +171,7 @@ def main() -> None:
         turn_id = payload.get("turn_id") or ""
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
-        cwd = resolve_git_cwd(cwd, transcript=transcript)
+        cwd = git_root(cwd) or cwd
         remember_repo(cwd)
 
         log(COMPONENT, f"start session={session_id} turn={turn_id} transcript={len(transcript)} cwd={cwd}")
@@ -186,11 +186,14 @@ def main() -> None:
             if not target.exists():
                 log(COMPONENT, f"discarding deleted pending-quality repo: {target}")
                 continue
+            if git_root(target) != target:
+                log(COMPONENT, f"discarding non-repository pending-quality path: {target}")
+                continue
             if not (target / ".quality-gate.json").exists():
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
             if not run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic()):
                 return
-        if (str(cwd) not in pending and is_git_repo(cwd) and milestone_detected(transcript)
+        if (not pending and is_git_repo(cwd) and milestone_detected(transcript)
                 and not run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic())):
             return
         if pending:
