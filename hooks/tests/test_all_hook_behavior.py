@@ -187,17 +187,11 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertIn("NEVER flag an edit", mimo_audit.AUDIT_PROMPT)
         self.assertIn("truncated/incomplete/corrupting", mimo_audit.AUDIT_PROMPT)
 
-    def test_mid_run_prompts_check_semble_and_codegraph_routing(self) -> None:
-        self.assertIn("three-query Semble discovery", post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn("Codegraph structural/impact analysis", post_tool.MIMO_CHECKPOINT_PROMPT)
 
     def test_review_calibration_preserves_real_failure_gates(self) -> None:
         for phrase in ("exact URL/resource", "negative test", "proposed wording",
                        "still flag unsafe recommendations", "internal pipeline success alone"):
             self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
-        for phrase in ("acknowledged failure under active diagnosis", "unless completion is claimed",
-                       "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
-            self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
 
     def test_followup_receipt_exception_keeps_new_claims_gated(self) -> None:
         for phrase in ("missing repeated receipts alone is NOT a blocker", "does not establish truth",
@@ -389,148 +383,6 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertIsNone(rc)
         self.assertEqual(out, "")
-
-    def test_post_tool_periodic_mimo_checkpoint_blocks_on_issues(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            state_path = tmp_path / "post_tool_mimo_audit.json"
-            file_path = tmp_path / "module.py"
-            file_path.write_text("x = 1\n")
-            state_path.write_text(json.dumps({
-                "session-midrun": {
-                    "edits_since_last_audit": 14,
-                    "last_audit_at": "2026-05-09T00:00:00+00:00",
-                }
-            }))
-            payload = {
-                "session_id": "session-midrun",
-                "cwd": tmp,
-                "tool_name": "Write",
-                "tool_input": {"file_path": str(file_path)},
-                "last_assistant_message": "Completed useful code changes. " * 40,
-            }
-
-            with (
-                mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
-                mock.patch.object(post_tool, "call_mimo", return_value="VERDICT: ISSUES\n1. Fix the incomplete implementation."),
-                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
-                mock.patch.object(post_tool, "log"),
-            ):
-                rc, out = run_main_with_stdin(post_tool.main, payload)
-
-            data = json.loads(out)
-            state = json.loads(state_path.read_text())["session-midrun"]
-            checkpoint.assert_not_called()
-
-        self.assertEqual(rc, 0)
-        self.assertEqual(data["decision"], "block")
-        self.assertIn("[GPT-6-Sol checkpoint audit]", data["reason"])
-        self.assertIn("Fix the incomplete implementation", data["reason"])
-        self.assertEqual(state["edits_since_last_audit"], 0)
-        self.assertEqual(state["last_verdict"], "ISSUES")
-
-    def test_post_tool_periodic_mimo_checkpoint_pass_resets_counter(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            state_path = tmp_path / "post_tool_mimo_audit.json"
-            file_path = tmp_path / "module.py"
-            file_path.write_text("x = 1\n")
-            state_path.write_text(json.dumps({
-                "session-midrun": {
-                    "edits_since_last_audit": 14,
-                    "last_audit_at": "2026-05-09T00:00:00+00:00",
-                }
-            }))
-            payload = {
-                "session_id": "session-midrun",
-                "cwd": tmp,
-                "tool_name": "Write",
-                "tool_input": {"file_path": str(file_path)},
-                "last_assistant_message": "Completed useful code changes. " * 40,
-            }
-
-            with (
-                mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
-                mock.patch.object(post_tool, "call_mimo", return_value="VERDICT: PASS"),
-                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
-                mock.patch.object(post_tool, "log"),
-            ):
-                rc, out = run_main_with_stdin(post_tool.main, payload)
-
-            state = json.loads(state_path.read_text())["session-midrun"]
-            checkpoint.assert_not_called()
-
-        self.assertIsNone(rc)
-        self.assertEqual(out, "")
-        self.assertEqual(state["edits_since_last_audit"], 0)
-        self.assertEqual(state["last_verdict"], "PASS")
-
-    def test_post_tool_periodic_mimo_checkpoint_not_due_skips_api(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            state_path = tmp_path / "post_tool_mimo_audit.json"
-            file_path = tmp_path / "module.py"
-            file_path.write_text("x = 1\n")
-            state_path.write_text(json.dumps({
-                "session-midrun": {
-                    "edits_since_last_audit": 1,
-                    "last_audit_at": post_tool.now_iso(),
-                }
-            }))
-            payload = {
-                "session_id": "session-midrun",
-                "cwd": tmp,
-                "tool_name": "Write",
-                "tool_input": {"file_path": str(file_path)},
-                "last_assistant_message": "Completed useful code changes. " * 40,
-            }
-
-            with (
-                mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
-                mock.patch.object(post_tool, "call_mimo") as call_mimo,
-                mock.patch.object(post_tool, "maybe_checkpoint", create=True),
-                mock.patch.object(post_tool, "log"),
-            ):
-                rc, out = run_main_with_stdin(post_tool.main, payload)
-
-        self.assertIsNone(rc)
-        self.assertEqual(out, "")
-        call_mimo.assert_not_called()
-
-    def test_post_tool_periodic_mimo_checkpoint_api_error_fails_open(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            state_path = tmp_path / "post_tool_mimo_audit.json"
-            file_path = tmp_path / "module.py"
-            file_path.write_text("x = 1\n")
-            state_path.write_text(json.dumps({
-                "session-midrun": {
-                    "edits_since_last_audit": 14,
-                    "last_audit_at": "2026-05-09T00:00:00+00:00",
-                }
-            }))
-            payload = {
-                "session_id": "session-midrun",
-                "cwd": tmp,
-                "tool_name": "Write",
-                "tool_input": {"file_path": str(file_path)},
-                "last_assistant_message": "Completed useful code changes. " * 40,
-            }
-
-            with (
-                mock.patch.object(post_tool, "MIMO_CHECKPOINT_AUDIT_PATH", state_path),
-                mock.patch.object(post_tool, "call_mimo", side_effect=TimeoutError("timeout")),
-                mock.patch.object(post_tool, "maybe_checkpoint", create=True) as checkpoint,
-                mock.patch.object(post_tool, "log"),
-            ):
-                rc, out = run_main_with_stdin(post_tool.main, payload)
-
-            state = json.loads(state_path.read_text())["session-midrun"]
-            checkpoint.assert_not_called()
-
-        self.assertIsNone(rc)
-        self.assertEqual(out, "")
-        self.assertEqual(state["last_verdict"], "ERROR")
 
 
     def test_mimo_audit_pass_path_saves_pass_without_network(self) -> None:

@@ -305,6 +305,9 @@ def compact_latest_task(entries: list[tuple[str, str]], max_chars: int, include_
         if not delegated and any(role.startswith("TOOL") for role, _ in current):
             previous, budget = previous[:1], min(600, budget)
         context = "\n\nPRIOR TURN CONTEXT (historical data, not a new request or fresh verification):\n"
+        outcome = next((entry for entry in reversed(previous) if entry[0].startswith("USER TURN OUTCOME")), None)
+        if delegated and outcome:
+            context += _bounded_compact(_render_entry(*outcome), budget // 2) + "\n"
         context += (_bounded_compact(sanitize(_render_entry(*previous[0])), budget - len(context))
                     if len(previous) == 1 else compact_task_entries(previous, budget - len(context)))
     return compact_task_entries(current, max_chars - len(context)) + context
@@ -365,7 +368,7 @@ def latest_task_entries(transcript_path: str, current_only: bool = True, preserv
         return []
     entries: list[tuple[str, str]] = []
     calls: dict[str, str] = {}
-    turn_id, request_index = None, None
+    turn_id, request_index, user_turn_id = None, None, None
     try:
         stat = Path(transcript_path).stat()
         records = _recent_records(transcript_path, stat.st_size, (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino))
@@ -374,10 +377,13 @@ def latest_task_entries(transcript_path: str, current_only: bool = True, preserv
     for obj in records:
         payload = obj.get("payload") or {}
         item_type = payload.get("type")
-        if preserve_turn and (obj.get("type") == "turn_context" or
-                              (obj.get("type") == "event_msg" and item_type == "task_started")):
+        if obj.get("type") == "turn_context" or (obj.get("type") == "event_msg" and item_type == "task_started"):
             if payload.get("turn_id") and payload["turn_id"] != turn_id:
                 turn_id, request_index = payload["turn_id"], None
+        if (obj.get("type") == "event_msg" and item_type == "task_complete"
+                and user_turn_id and payload.get("turn_id") == user_turn_id
+                and payload.get("last_agent_message")):
+            entries.append(("USER TURN OUTCOME (historical, not proof of success)", payload["last_agent_message"]))
         if obj.get("type") == "event_msg" and item_type == "item_completed":
             item = payload.get("item") or {}
             output = item.get("output") if isinstance(item, dict) else None
@@ -402,7 +408,9 @@ def latest_task_entries(transcript_path: str, current_only: bool = True, preserv
                     role = "PRIOR REVIEW (not a new request)"
                     text = re.sub(r"</?hook_prompt\b[^>]*>", "", text)
             if text:
-                if role == "USER" and turn_id:
+                if role == "USER":
+                    user_turn_id = turn_id
+                if role == "USER" and turn_id and preserve_turn:
                     if request_index is not None:
                         # Steering belongs to the active turn; a new turn resets this index.
                         entries[request_index] = ("USER", entries[request_index][1] + "\n\nUSER UPDATE:\n" + text)

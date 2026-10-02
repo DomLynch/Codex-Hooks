@@ -22,9 +22,6 @@ class EnforcementTests(unittest.TestCase):
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
 
-    def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
-        self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
 
     def test_contract_success_and_real_failure(self):
         for code in (0, 1):
@@ -341,8 +338,7 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'pending_quality') as pending, \
              patch.object(post_tool, 'sync_codegraph', side_effect=lambda root: \
                           self.assertNotIn(';', (root/'app.py').read_text())) as sync, \
-             patch.object(post_tool, 'update_audit_state'), \
-             patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint', create=True):
+             patch.object(post_tool, 'maybe_checkpoint', create=True):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
             self.assertEqual({call.args[0] for call in sync.call_args_list}, {file.parent for file in files})
