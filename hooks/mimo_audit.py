@@ -711,7 +711,16 @@ def main() -> None:
     sensitive = sensitive_paths(paths)
     review_cwd = resolve_git_cwd(payload.get("cwd") or ".", files=[Path(p) for p in paths], transcript=transcript)
     mechanical = deterministic_findings(entries, last_msg, payload.get("cwd") or ".")
-    unanswered = ledger.apply_decisions(session_id, last_msg)
+    review_end = next((i + 1 for i in range(len(entries) - 1, -1, -1)
+                       if entries[i][0] == "PRIOR REVIEW (not a new request)"
+                       and "Findings carry IDs." in entries[i][1]), None)
+    decisions = last_msg
+    if review_end is not None:
+        # A Stop payload may still name the final answer from before this finding.
+        decisions = "\n".join(body for role, body in entries[review_end:] if role == "ASSISTANT")
+        if ("ASSISTANT", last_msg) not in entries:
+            decisions += "\n" + last_msg
+    unanswered = ledger.apply_decisions(session_id, decisions)
     pending = [f"[{finding['id']}] {finding['text']}" for finding in ledger.open_findings(session_id)
                if finding["id"] in unanswered]
     if pending:
