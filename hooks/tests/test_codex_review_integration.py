@@ -98,6 +98,84 @@ class CodexReviewIntegrationTests(unittest.TestCase):
             self.assertEqual(third, "")
             self.assertEqual(json.loads((root / "audit_pending.json").read_text()), {})
 
+    def test_commentary_decisions_are_scoped_to_latest_finding(self):
+        from lib import ledger
+        def message(role, content, phase=None):
+            return {"type": "response_item", "payload": {
+                "type": "message", "role": role, "content": content, "phase": phase}}
+        review = message("user", "<hook_prompt>VERDICT: ISSUES\n1. [F1] Renderer is broken.\n"
+                         "Findings carry IDs. Answer each ID.</hook_prompt>")
+        ack = "[F1] fixed: corrected renderer and verified the failing workflow."
+        cases = [
+            ("commentary", [message("assistant", ack, "commentary")], True),
+            ("rejected", [message("assistant", "[F1] rejected: same workflow already passed.", "commentary")], True),
+            ("fresh-final-conflict", [message("assistant", ack, "commentary")], True),
+            ("later-commentary", [message("assistant", ack, "final_answer"),
+                message("assistant", "[F1] rejected: current receipt proves no defect.", "commentary")], True),
+            ("unanswered", [message("assistant", "I will look into it.", "commentary")], False),
+            ("tool", [{"type": "response_item", "payload": {"type": "function_call_output", "output": ack}}], False),
+            ("user", [message("user", ack)], False),
+            ("quality-after-ack", [message("assistant", ack, "commentary"),
+                message("user", "<hook_prompt>[Repository Quality Gate] Check pending.</hook_prompt>")], True),
+            ("reopened", [message("assistant", ack, "commentary"), review], False),
+            ("payload-only", [], True),
+            ("stale-payload", [message("assistant", ack, "final_answer"), review], False),
+        ]
+        import random
+        rng = random.Random(20261002)
+        for trial in range(50):
+            sequence, answered = [], False
+            for _ in range(rng.randrange(1, 12)):
+                event = rng.randrange(4)
+                if event == 0:
+                    sequence.append(review)
+                    answered = False
+                elif event == 1:
+                    sequence.append(message("assistant", ack, "commentary"))
+                    answered = True
+                elif event == 2:
+                    sequence.append({"type": "response_item", "payload": {
+                        "type": "function_call_output", "output": ack}})
+                else:
+                    sequence.append(message("user", "<hook_prompt>[Quality Gate] Pending.</hook_prompt>"))
+            cases.append((f"sequence-{trial}", sequence, answered))
+        for name, following, answered in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                path = root / "transcript.jsonl"
+                stale = "I fixed the renderer and tested the workflow."
+                rows = [message("user", "Fix and verify the renderer workflow."),
+                        message("assistant", stale, "final_answer"),
+                        message("assistant", ack, "commentary"), review, *following]
+                path.write_text("\n".join(map(json.dumps, rows)))
+                payload = {"session_id": name, "turn_id": "retry", "transcript_path": str(path),
+                           "last_assistant_message": ack if name in {"payload-only", "stale-payload"} else stale,
+                           "cwd": tmp}
+                if name == "fresh-final-conflict":
+                    payload["last_assistant_message"] = "[F1] rejected: newest final receipt proves no defect."
+                if name == "later-commentary":
+                    payload["last_assistant_message"] = ack
+                if name == "payload-only":
+                    rows.pop(2)  # A genuinely new final may not yet be flushed to the transcript.
+                    path.write_text("\n".join(map(json.dumps, rows)))
+                with (mock.patch.object(mimo_audit, "STATE_FILE", root / "iterations.json"),
+                      mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"),
+                      mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"),
+                      mock.patch.object(ledger, "LEDGER_PATH", root / "audit_pending.json"),
+                      mock.patch.object(mimo_audit, "record_lesson"),
+                      mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                      mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO())):
+                    ledger.register_findings(name, "VERDICT: ISSUES\n1. Renderer is broken.")
+                    with self.assertRaises(SystemExit):
+                        mimo_audit.main()
+                    self.assertEqual(model.call_count, int(answered))
+                    if answered:
+                        self.assertIn("[F1]", model.call_args.args[0])
+                        if name in {"fresh-final-conflict", "later-commentary"}:
+                            self.assertIn("[F1] rejected -", model.call_args.args[0])
+                    else:
+                        self.assertEqual(ledger.open_findings(name)[0]["id"], "F1")
+
     def test_max_iteration_release_does_not_block_a_later_turn(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
