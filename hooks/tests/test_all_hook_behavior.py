@@ -382,7 +382,7 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(data["decision"], "block")
         self.assertIn("py_compile failed", data["reason"])
 
-    def test_post_tool_non_edit_checks_existing_dirty_files(self) -> None:
+    def test_post_tool_non_edit_leaves_existing_dirty_files_alone(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             init_git_repo(repo)
@@ -401,10 +401,8 @@ class AllHookBehaviorTests(unittest.TestCase):
             with mock.patch.object(post_tool, "log"):
                 rc, out = run_main_with_stdin(post_tool.main, payload)
 
-        data = json.loads(out)
-        self.assertEqual(rc, 0)
-        self.assertEqual(data["decision"], "block")
-        self.assertIn("py_compile failed", data["reason"])
+        self.assertIsNone(rc)
+        self.assertEqual(out, "")
 
     def test_post_tool_periodic_mimo_checkpoint_blocks_on_issues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

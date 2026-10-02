@@ -95,7 +95,7 @@ class EnforcementTests(unittest.TestCase):
     def test_empty_or_malformed_completion_only_contract_fails_without_execution(self):
         for contract in ({}, {'completion_commands': []}, {'completion_commands': None},
                          {'completion_commands': 'echo pass'}, {'completion_commands': [[]]}):
-            with self.subTest(contract=contract), patch.object(quality.subprocess, 'Popen') as run:
+            with self.subTest(contract=contract), patch.object(quality, 'safe_run') as run:
                 (self.root / '.quality-gate.json').write_text(json.dumps(contract))
                 self.assertFalse(quality.run_project_gate(self.root)['ok'])
                 run.assert_not_called()
@@ -130,26 +130,23 @@ class EnforcementTests(unittest.TestCase):
 
     def test_project_timeout_is_bounded_and_overridable(self):
         self.contract([[sys.executable, '-c', 'pass']])
-        with patch.object(quality.subprocess, 'Popen') as popen:
-            proc = popen.return_value.__enter__.return_value
-            proc.communicate.return_value = ('', '')
-            proc.returncode = 0
+        with patch.object(quality, 'safe_run', return_value=(0, '', '')) as runner:
             self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
-            self.assertGreater(proc.communicate.call_args.kwargs['timeout'], 410)
-            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 420)
+            self.assertGreater(runner.call_args.kwargs['timeout'], 410)
+            self.assertLessEqual(runner.call_args.kwargs['timeout'], 420)
 
             self.root.joinpath('.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': 30,
             }))
             self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
-            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 30)
+            self.assertLessEqual(runner.call_args.kwargs['timeout'], 30)
 
     def test_invalid_project_timeout_fails_closed(self):
         for value in (0, 421, True, 1.5, '420'):
             self.root.joinpath('.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': value,
             }))
-            with patch.object(quality.subprocess, 'Popen') as popen:
+            with patch.object(quality, 'safe_run') as popen:
                 self.assertFalse(quality.run_project_gate(self.root)['ok'])
                 popen.assert_not_called()
 
@@ -354,8 +351,7 @@ class EnforcementTests(unittest.TestCase):
             pending.assert_not_called()
             sync.assert_not_called()
             checkpoint.assert_not_called()
-            self.assertEqual(check.call_args.args[1], (self.root/'project').resolve())
-            self.assertFalse(check.call_args.kwargs['autofix'])
+            check.assert_not_called()
 
     def test_multi_repo_edits_register_every_repo(self):
         import io
