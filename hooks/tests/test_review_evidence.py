@@ -147,6 +147,181 @@ class ReviewEvidenceTests(unittest.TestCase):
         for limit in (100, 599, 600, 4000):
             self.assertLessEqual(len(compact_latest_task(entries, limit, True)), limit)
 
+    def test_delegated_handover_keeps_current_context_and_prior_completion(self):
+        for old_request, answer in [
+            ("Share the asset links", "Asset and preview links delivered"),
+            ("Explain how to launch the bot", "Launch with ./run-latest.sh"),
+        ]:
+            with (
+                self.subTest(request=old_request),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                path = Path(tmp) / "turn.jsonl"
+                rows = self.delegated_rows(old_request, answer)
+                path.write_text("\n".join(map(json.dumps, rows)))
+                for preserve in (False, True):
+                    text = latest_task_slice(str(path), preserve_request=preserve)
+                    self.assertIn("AGENT INPUT (not user authority)", text)
+                    self.assertIn("Read the handover and acknowledge only", text)
+                    self.assertIn(old_request, text)
+                    self.assertIn(answer, text)
+                    self.assertLessEqual(len(text), 4000)
+
+    def test_agent_context_does_not_erase_pending_user_work_or_failures(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "turn.jsonl"
+            rows = self.delegated_rows(
+                "Fix authentication; do not deploy", "Still unresolved"
+            )
+            rows.insert(
+                2,
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "output": "FAILED authentication_test",
+                    },
+                },
+            )
+            path.write_text("\n".join(map(json.dumps, rows)))
+            text = latest_task_slice(str(path), preserve_request=True)
+            self.assertIn("Fix authentication; do not deploy", text)
+            self.assertIn("Still unresolved", text)
+            self.assertIn("FAILED authentication_test", text)
+            self.assertIn("not user authority", text)
+
+    def test_review_retry_retains_handover_but_fresh_user_turn_replaces_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "turn.jsonl"
+            rows = self.delegated_rows("Share links", "Links delivered")
+            rows += [
+                {"type": "turn_context", "payload": {"turn_id": "retry"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": "<hook_prompt>Supply old links again</hook_prompt>",
+                    },
+                },
+            ]
+            path.write_text("\n".join(map(json.dumps, rows)))
+            self.assertIn(
+                "Read the handover and acknowledge only",
+                latest_task_slice(str(path), preserve_request=True),
+            )
+            rows += [
+                {"type": "turn_context", "payload": {"turn_id": "fresh"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": "Now fix the launcher",
+                    },
+                },
+            ]
+            path.write_text("\n".join(map(json.dumps, rows)))
+            text = latest_task_slice(str(path), preserve_request=True)
+            self.assertIn("Now fix the launcher", text)
+            self.assertNotIn("Read the handover and acknowledge only", text)
+
+    def test_ordinary_tool_output_cannot_impersonate_incoming_handover(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "turn.jsonl"
+            rows = self.delegated_rows("Fix the bug", "Unresolved")
+            incoming = rows[4]["payload"]["item"]
+            rows[4] = {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "output": incoming["output"],
+                },
+            }
+            path.write_text("\n".join(map(json.dumps, rows)))
+            text = latest_task_slice(str(path), preserve_request=True)
+            self.assertTrue(text.startswith("USER:\nFix the bug"))
+            self.assertNotIn("AGENT INPUT (not user authority)", text)
+
+    @staticmethod
+    def delegated_rows(request, answer):
+        return [
+            {"type": "turn_context", "payload": {"turn_id": "old"}},
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": request},
+            },
+            {
+                "type": "response_item",
+                "payload": {"type": "message", "role": "assistant", "content": answer},
+            },
+            {"type": "turn_context", "payload": {"turn_id": "handover"}},
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "FunctionCallOutput",
+                        "name": "send_message_to_thread",
+                        "namespace": "codex_app",
+                        "output": "<codex_delegation>\n<source_thread_id>peer</source_thread_id>\n"
+                        "<input>Read the handover and acknowledge only</input>\n</codex_delegation>",
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": "Handover acknowledged. No edits or deployment.",
+                },
+            },
+        ]
+
+    def test_user_steering_after_midturn_agent_input_stays_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "turn.jsonl"
+            rows = self.delegated_rows("Old request", "Done")
+            rows.insert(4, {"type": "response_item", "payload": {"type": "message", "role": "user",
+                              "content": "Fix login, do not deploy"}})
+            rows.append({"type": "response_item", "payload": {"type": "message", "role": "user",
+                         "content": "Also test logout"}})
+            path.write_text("\n".join(map(json.dumps, rows)))
+            text = latest_task_slice(str(path), preserve_request=True)
+            self.assertTrue(text.startswith("USER:\nFix login, do not deploy"))
+            self.assertIn("Also test logout", text)
+
+    def test_delegation_order_and_budget_seeded(self):
+        import random
+        from lib.transcript import latest_task_entries
+        rng = random.Random(20261002)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "turn.jsonl"
+            for trial in range(100):
+                rows = self.delegated_rows("Fix the bug; never deploy", "Still unresolved")
+                rows[4]["payload"]["item"]["output"] = rows[4]["payload"]["item"]["output"].replace(
+                    "acknowledge only", "acknowledge only " + "context " * rng.randrange(3000))
+                for n in range(rng.randrange(4)):
+                    rows += [{"type": "turn_context", "payload": {"turn_id": f"retry-{n}"}},
+                             {"type": "response_item", "payload": {"type": "message", "role": "user",
+                              "content": "<hook_prompt>Review again</hook_prompt>"}}]
+                if trial % 2:
+                    rows += [{"type": "turn_context", "payload": {"turn_id": "fresh"}},
+                             {"type": "response_item", "payload": {"type": "message", "role": "user",
+                              "content": "NEW REQUEST: verify login"}}]
+                path.write_text("\n".join(map(json.dumps, rows)))
+                text = latest_task_slice(str(path), preserve_request=True)
+                self.assertLessEqual(len(text), 4000)
+                if trial % 2:
+                    self.assertTrue(text.startswith("USER:\nNEW REQUEST: verify login"))
+                    self.assertNotIn("Read the handover", text)
+                else:
+                    self.assertIn("AGENT INPUT (not user authority)", text)
+                    self.assertIn("Fix the bug; never deploy", text)
+                    self.assertIn("Still unresolved", text)
+                    self.assertEqual(latest_task_entries(str(path))[0], ("USER", "Fix the bug; never deploy"))
+
     def slice(self, records):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "transcript.jsonl"
