@@ -16,6 +16,45 @@ from lib.transcript import compact_latest_task, compact_task_entries, latest_tas
 
 
 class ReviewEvidenceTests(unittest.TestCase):
+    def test_review_correction_keeps_original_answer_and_later_evidence(self):
+        import random
+
+        rng = random.Random(71)
+        for _ in range(30):
+            entries = [("USER", "ETA to live?")]
+            entries += [
+                ("TOOL OUTPUT", "progress " * rng.randint(100, 800))
+                for _ in range(rng.randint(1, 8))
+            ]
+            entries += [
+                (
+                    "ASSISTANT",
+                    "ETA 15:40–15:50 conditional on final checks. All audio checks passed.",
+                ),
+                (
+                    "PRIOR REVIEW (not a new request)",
+                    "F1: listening approval is not established.",
+                ),
+                (
+                    "ASSISTANT",
+                    "[F1] fixed: playback passed; listening approval remains outstanding.",
+                ),
+            ]
+            with self.subTest(size=len(entries)):
+                for cap in (2000, 3000, 4000):
+                    text = compact_task_entries(entries, cap)
+                    self.assertIn("ETA 15:40–15:50", text)
+                    self.assertIn("listening approval remains outstanding", text)
+                    self.assertLessEqual(len(text), cap)
+                entries += [
+                    ("TOOL OUTPUT", "FAILED final_check; earlier ETA invalidated"),
+                    ("ASSISTANT", "The earlier ETA is no longer reliable."),
+                ]
+                text = compact_task_entries(entries, 4000)
+                self.assertIn("FAILED final_check", text)
+                self.assertIn("no longer reliable", text)
+                self.assertLessEqual(len(text), 4000)
+
     def test_middle_failure_survives_later_unrelated_green_output(self):
         entries = [('USER', 'Fix the swipe workflow'), ('TOOL OUTPUT', 'initial check passed')]
         entries += [('TOOL OUTPUT', '[browser] swipe test\nAssertionError: swipe heavy consumes stamina')]

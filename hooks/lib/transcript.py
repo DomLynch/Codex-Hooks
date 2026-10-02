@@ -246,6 +246,22 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
             "\n\nVERIFICATION HISTORY (ordered excerpts, not verdicts; check later reruns):\n"
             + "\n".join(receipts[-6:]), min(700, max_chars // 5)
         )
+    # A review correction amends the answer; keep what it already answered.
+    review = next(
+        (i for i, (role, _) in enumerate(entries) if role.startswith("PRIOR REVIEW")),
+        None,
+    )
+    if review is not None and max_chars >= 2000:
+        answer = next(
+            (body for role, body in reversed(entries[:review]) if role == "ASSISTANT"),
+            "",
+        )
+        if answer:
+            history += _bounded_compact(
+                "\n\nANSWER BEFORE REVIEW (historical; apply subsequent corrections):\n"
+                + sanitize(answer),
+                min(500, max_chars // 8),
+            )
     max_chars -= len(history)
     first_role, first_body = entries[0]
     head_budget = max_chars // (2 if first_role == AGENT_INPUT else 4)
