@@ -116,9 +116,16 @@ def test_loose_files_never_queue_workspace_gate_and_mixed_edits_all_get_checked(
     source.write_text('value = 1\n')
     (workspace / '.quality-gate.json').write_text(json.dumps({'commands': [
         [sys.executable, '-c', 'raise SystemExit("UNRELATED GAME")']]}))
+    subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Test', '-c',
+                    'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'initial'], check=True)
+    worktree = workspace / 'other-lane'
+    subprocess.run(['git', '-C', str(repo), 'worktree', 'add', '-q', '-b', 'lane', str(worktree)], check=True)
+    lane_source = worktree / 'lane.py'
+    lane_source.write_text('value = 1\n')
+    owners = {source: repo.resolve(), lane_source: worktree.resolve()}
     rng = random.Random(87)
-    cases = [[loose], [source], [source, loose]]
-    cases += [rng.sample([source, loose], 2) for _ in range(8)]
+    cases = [[loose], [source], [lane_source], [source, loose]]
+    cases += [rng.sample([source, loose, lane_source], 3) for _ in range(8)]
     with mock.patch.object(quality, 'PENDING_PATH', tmp_path / 'pending.json'), \
          mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'log'), \
          mock.patch.object(post_tool, 'sync_codegraph'):
@@ -129,9 +136,9 @@ def test_loose_files_never_queue_workspace_gate_and_mixed_edits_all_get_checked(
             with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
                  mock.patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}) as checks:
                 post_tool.main()
-            assert quality.pending_quality(sid) == ([str(repo.resolve())] if source in files else [])
+            assert quality.pending_quality(sid) == sorted(str(owners[p]) for p in files if p in owners)
             checked = {p: call.args[1] for call in checks.call_args_list for p in call.args[0]}
-            assert checked == {p: repo.resolve() if p == source else loose.parent.resolve() for p in files}
+            assert checked == {p: owners.get(p, loose.parent.resolve()) for p in files}
 
 
 def test_stop_rejects_workspace_assignment_but_enforces_actual_repositories(tmp_path):
