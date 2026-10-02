@@ -23,7 +23,9 @@ def test_wrapped_patch_registers_repo_and_readonly_does_not_check(tmp_path):
     target.write_text('def broken(:\n')
     patch = f'*** Begin Patch\n*** Add File: {target}\n+def broken(:\n*** End Patch'
     wrapped = f'text(await tools.apply_patch({json.dumps(patch)}));'
-    for tool_input in (patch, wrapped, {'code': wrapped}, {'input': patch}, {'patch': patch}):
+    single_quoted = 'tools.apply_patch(' + repr(patch) + ')'
+    template = 'tools.apply_patch(`' + patch + '`)'
+    for tool_input in (patch, wrapped, single_quoted, template, {'code': wrapped}, {'input': patch}, {'patch': patch}):
         payload = dict(cwd=str(tmp_path), session_id='wrapped', tool_name='exec', tool_input=tool_input)
         assert quality.changed_files_in_payload(payload) == [target]
         with mock.patch.object(quality, 'PENDING_PATH', tmp_path/'pending.json'), \

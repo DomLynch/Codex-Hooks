@@ -7,18 +7,6 @@ import signal
 from pathlib import Path
 
 
-def short_sid(session_id: str) -> str:
-    return (session_id or "unknown").replace("/", "-")[:8]
-
-
-def current_session_branch(session_id: str) -> str:
-    return f"codex/{short_sid(session_id)}/main"
-
-
-def task_branch(session_id: str, task_n: int) -> str:
-    return f"codex/{short_sid(session_id)}/task-{task_n}"
-
-
 KILL_DRAIN_S = 5  # how long to wait for the pipes after killing the group; bounded so this can never wedge
 
 
@@ -156,94 +144,9 @@ def resolve_git_cwd(
     return base
 
 
-def current_branch(cwd: str | Path) -> str:
-    rc, out, _ = safe_run(["git", "branch", "--show-current"], cwd=cwd)
-    return out.strip() if rc == 0 else ""
-
-
-def ensure_branch(branch: str, cwd: str | Path) -> bool:
-    if not is_git_repo(cwd):
-        return False
-    if current_branch(cwd) == branch:
-        return True
-    rc, target, _ = safe_run(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], cwd=cwd)
-    if rc == 0:
-        # Automatic checkpoints must never replace the checkout with another revision.
-        head_rc, head, _ = safe_run(["git", "rev-parse", "--verify", "HEAD"], cwd=cwd)
-        if head_rc != 0 or head.strip() != target.strip():
-            return False
-        rc, _, _ = safe_run(["git", "checkout", branch], cwd=cwd)
-        return rc == 0
-    rc, _, _ = safe_run(["git", "checkout", "-b", branch], cwd=cwd)
-    return rc == 0
-
-
-def has_staged_changes(cwd: str | Path) -> bool:
-    rc, _, _ = safe_run(["git", "diff", "--cached", "--quiet"], cwd=cwd)
-    return rc == 1
-
-
-def has_worktree_changes(cwd: str | Path) -> bool:
-    rc, out, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
-    return rc == 0 and bool(out.strip())
-
-
-def push(branch: str, cwd: str | Path) -> bool:
-    rc, _, _ = safe_run(["git", "push", "-u", "origin", branch], cwd=cwd, timeout=120)
-    return rc == 0
-
-
 def changed_files(cwd: str | Path) -> list[Path]:
     rc, out, _ = safe_run(["git", "diff", "--name-only"], cwd=cwd)
     if rc != 0:
         return []
     root = git_root(cwd) or Path(cwd)
     return [root / line.strip() for line in out.splitlines() if line.strip()]
-
-
-def files_changed_summary(cwd: str | Path) -> str:
-    rc, out, _ = safe_run(["git", "diff", "--stat"], cwd=cwd)
-    return out.strip() if rc == 0 else ""
-
-
-def github_env() -> dict[str, str] | None:
-    token_path = Path.home() / ".codex" / "secrets" / "github_token"
-    if token_path.exists():
-        try:
-            token = token_path.read_text().strip()
-            if token:
-                return {**os.environ, "GH_TOKEN": token}
-        except Exception:
-            return None
-    return None
-
-
-def github_pr_preflight(cwd: str | Path) -> tuple[bool, str]:
-    """Check PR creation prerequisites before local commit/push side effects."""
-    rc, out, err = safe_run(["git", "remote", "get-url", "origin"], cwd=cwd, timeout=10)
-    if rc != 0 or not out.strip():
-        return False, "missing git origin remote"
-    env = github_env()
-    for cmd, label in (
-        (["gh", "--version"], "gh CLI unavailable"),
-        (["gh", "auth", "status"], "gh auth unavailable"),
-        (["gh", "repo", "view", "--json", "nameWithOwner"], "gh repo unavailable"),
-    ):
-        rc, out, err = safe_run(cmd, cwd=cwd, timeout=20, env=env)
-        if rc != 0:
-            detail = (err or out).strip().splitlines()
-            return False, label + (f": {detail[-1]}" if detail else "")
-    return True, "ok"
-
-
-def open_pr(title: str, body: str, base: str = "main", cwd: str | Path | None = None) -> str:
-    env = github_env()
-    rc, out, err = safe_run(
-        ["gh", "pr", "create", "--base", base, "--title", title, "--body", body],
-        cwd=cwd,
-        timeout=120,
-        env=env,
-    )
-    if rc != 0:
-        return ""
-    return out.strip()

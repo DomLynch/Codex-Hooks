@@ -1,5 +1,10 @@
 # Project state — Codex Hooks
 
+## Codex quality routing and cleanup — 2 October 2026
+- Four audited defects repaired: static wrapped patches resolve their repository and register completion checks; read-only tools skip unrelated dirty-file checks; unresolved findings survive more than 40 sessions; repository gate timeout cleanup uses the shared bounded runner (up to five seconds of drain grace).
+- Removed unused Codex branch/checkpoint/PR helpers and the disabled secondary Anthropic review path. Claude-owned files and reviewer model/config are unchanged. Shortened duplicated prompt instructions while retaining authority, release and failure-closure requirements.
+- Regression fixtures reproduced all four baseline failures. Full Codex gate: 224 tests + 144 subtests and Ruff pass; direct/wrapped edits, fallback registration, read-only behavior, retained findings and escaped-child cleanup checked. Source/install release receipts live in the existing Codex handover. No broad rewrite or added automatic model calls/jobs.
+
 ## Codex delegated handover review — 2 October 2026
 - Native incoming Codex chat handovers now reach the reviewer as agent input without user authority. The excerpt retains prior user scope/completion evidence, stays within its existing evidence budget, and preserves later user steering. Ordinary tool output cannot impersonate an incoming handover. No model, timeout, config, dependency or Claude-owned changes.
 - One audit found a mid-turn steering ordering edge case and fixed it. New regressions reproduce the old omission; final gate passes 220 Codex tests + 49 subtests and Ruff, including 100 seeded ordering/budget cases. Four real Astra Low Stop replays: both observed false-block handovers PASS; unfinished user work and peer-authorized deployment remain ISSUES. Installed release receipts are in the existing Codex handover.

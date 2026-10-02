@@ -21,7 +21,6 @@ import user_prompt_submit  # noqa: E402
 import autonomy_daemon  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api  # noqa: E402
-from lib import git as gitlib  # noqa: E402
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -136,18 +135,6 @@ class AllHookBehaviorTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
         self.assertIn("lane=checkpoint", audit_log.call_args.args[1])
 
-    def test_api_response_extractors(self) -> None:
-        self.assertEqual(
-            api.anthropic_text({
-                "content": [
-                    {"type": "thinking", "thinking": "hidden"},
-                    {"type": "text", "text": "VERDICT: PASS"},
-                    {"type": "tool_use", "name": "noop"},
-                ]
-            }),
-            "VERDICT: PASS",
-        )
-
     def test_simple_prompt_still_gets_no_babysit_policy(self) -> None:
         with mock.patch.object(user_prompt_submit, "log"):
             rc, out = run_main_with_stdin(
@@ -203,7 +190,6 @@ class AllHookBehaviorTests(unittest.TestCase):
     def test_mid_run_prompts_check_semble_and_codegraph_routing(self) -> None:
         self.assertIn("three-query Semble discovery", post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn("Codegraph structural/impact analysis", post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn("Semble discovery plus Codegraph", Path(stop_orchestrator.__file__).read_text())
 
     def test_review_calibration_preserves_real_failure_gates(self) -> None:
         for phrase in ("exact URL/resource", "negative test", "proposed wording",
@@ -919,17 +905,6 @@ class AllHookBehaviorTests(unittest.TestCase):
 
         self.assertEqual(failures, [])
         safe_run.assert_called_once_with(["pnpm", "test", "--", "--watch=false"], cwd=repo, timeout=120)
-
-
-    def test_github_pr_preflight_requires_origin(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            init_git_repo(repo)
-
-            ok, reason = gitlib.github_pr_preflight(repo)
-
-        self.assertFalse(ok)
-        self.assertEqual(reason, "missing git origin remote")
 
 
     def test_autonomy_daemon_mines_local_tasks_only(self) -> None:
