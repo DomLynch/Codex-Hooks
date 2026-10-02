@@ -292,6 +292,48 @@ class ReviewEvidenceTests(unittest.TestCase):
             self.assertTrue(text.startswith("USER:\nFix login, do not deploy"))
             self.assertIn("Also test logout", text)
 
+    def test_steering_after_handover_retains_earlier_receipts(self):
+        from lib.transcript import AGENT_INPUT, latest_task_entries
+
+        def message(role, text):
+            return {"type": "response_item", "payload": {
+                "type": "message", "role": role, "content": text}}
+
+        def output(text):
+            return {"type": "response_item", "payload": {
+                "type": "function_call_output", "output": text}}
+
+        for repeats in (1, 3):
+            for include_previous in (False, True):
+                with self.subTest(repeats=repeats, stop=include_previous), tempfile.TemporaryDirectory() as tmp:
+                    rows = self.delegated_rows("Old request", "Done")[:4]
+                    rows += [message("user", "Create 18 tasks; do not publish"),
+                             output("Verified task count: 0")]
+                    handover = self.delegated_rows("", "")[4]
+                    for n in range(repeats):
+                        rows += [handover, output(f"Before steering {n}"),
+                                 message("user", "Keep it lean"), output(f"Formatting {n}: PASS")]
+                    rows += [message("assistant", "All 18 tasks created.")]
+                    path = Path(tmp) / "turn.jsonl"
+                    path.write_text("\n".join(map(json.dumps, rows)))
+                    text = latest_task_slice(str(path), include_previous=include_previous, preserve_request=True)
+                    self.assertTrue(text.startswith("USER:\nCreate 18 tasks; do not publish"))
+                    self.assertIn("Verified task count: 0", text)
+                    self.assertIn(AGENT_INPUT, text)
+                    self.assertIn("All 18 tasks created.", text)
+                    self.assertLessEqual(len(text), 4000)
+                    for n in range(repeats):
+                        self.assertIn(f"Before steering {n}", text)
+                        self.assertIn(f"Formatting {n}: PASS", text)
+                    entries = latest_task_entries(str(path), preserve_turn=True)
+                    self.assertEqual(entries[0][0], "USER")
+                    self.assertIn("Verified task count: 0", entries[1][1])
+                    # A subsequent handover is current until the user steers again.
+                    rows += [handover]
+                    path.write_text("\n".join(map(json.dumps, rows)))
+                    text = latest_task_slice(str(path), preserve_request=True)
+                    self.assertTrue(text.startswith(AGENT_INPUT))
+
     def test_delegation_order_and_budget_seeded(self):
         import random
         from lib.transcript import latest_task_entries

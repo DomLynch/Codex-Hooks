@@ -390,9 +390,10 @@ def latest_task_entries(transcript_path: str, current_only: bool = True, preserv
                     if request_index is not None:
                         # Steering belongs to the active turn; a new turn resets this index.
                         entries[request_index] = ("USER", entries[request_index][1] + "\n\nUSER UPDATE:\n" + text)
-                        if any(role == AGENT_INPUT for role, _ in entries[request_index + 1:]):
-                            entries.append(entries.pop(request_index))
-                            request_index = len(entries) - 1
+                        # Earlier handovers are context once the user steers; retain receipt order.
+                        for i in range(request_index + 1, len(entries)):
+                            if entries[i][0] == AGENT_INPUT:
+                                entries[i] = (f"EARLIER {AGENT_INPUT}", entries[i][1])
                         continue
                     request_index = len(entries)
                 entries.append((role, text))
