@@ -1,5 +1,10 @@
 # Project state — Codex Hooks
 
+## Lean reviewer lifecycle — 2 October 2026
+- Removed the periodic post-edit model reviewer and its counters/prompt. All seven event handlers remain distinct; only final review calls a model. Mechanical post-edit checks, completion gates, deploy guards, handoff/inbox and CodeGraph behavior remain covered.
+- Native user-turn outcome metadata survives later agent-only updates inside the existing excerpt budget. It is historical context, not automatic success or new authority. Added seeded multi-update/fresh-request and wrong-turn controls.
+- Installer rejects untracked runtime files before writes. Thirteen stale duplicate source/doc/test copies were hash-preserved outside the canonical checkout; deployment never contained them. Release/audit receipts are in the existing Codex handover.
+
 ## Codex quality routing and cleanup — 2 October 2026
 - Four audited defects repaired: static wrapped patches resolve their repository and register completion checks; read-only tools skip unrelated dirty-file checks; unresolved findings survive more than 40 sessions; repository gate timeout cleanup uses the shared bounded runner (up to five seconds of drain grace).
 - Removed unused Codex branch/checkpoint/PR helpers and the disabled secondary Anthropic review path. Claude-owned files and reviewer model/config are unchanged. Shortened duplicated prompt instructions while retaining authority, release and failure-closure requirements.

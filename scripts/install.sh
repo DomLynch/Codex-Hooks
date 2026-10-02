@@ -4,6 +4,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 
+# A tracked release archive has no .git; a checkout must not ship stray files.
+if [[ -e "$repo_root/.git" ]]; then
+  untracked_runtime=$(git -C "$repo_root" ls-files --others --exclude-standard -- hooks scripts)
+  if [[ -n "$untracked_runtime" ]]; then
+    echo "Refusing installation: untracked files under hooks/ or scripts/. Preserve them outside the checkout first." >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$codex_home/hooks" "$codex_home/scripts"
 rsync -a --delete \
   --exclude '__pycache__' \

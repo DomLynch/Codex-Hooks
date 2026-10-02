@@ -52,8 +52,6 @@ class AuditSafetyTests(unittest.TestCase):
                     stack.enter_context(mock.patch.object(module, 'remember_repo'))
                     stack.enter_context(mock.patch.object(module, 'log'))
                     stack.enter_context(mock.patch.object(module, 'pending_quality', return_value=[]))
-                for name in ('update_audit_state', 'maybe_mimo_checkpoint_audit'):
-                    stack.enter_context(mock.patch.object(post_tool, name, create=True))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'latest_task_slice', return_value='USER:\n' + request))
                 stack.enter_context(mock.patch.object(post_tool, 'sync_codegraph'))
                 for module in (post_tool, stop_orchestrator):

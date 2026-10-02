@@ -59,9 +59,7 @@ def test_edit_fallback_registers_completion_gate(tmp_path):
          mock.patch.object(post_tool, 'changed_files', return_value=[tmp_path/'new.py']), \
          mock.patch.object(post_tool, 'run_quality_checks', return_value={'ok':True}), \
          mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'sync_codegraph'), \
-         mock.patch.object(post_tool, 'log'), mock.patch.object(post_tool, 'update_audit_state'), \
-         mock.patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), \
-         mock.patch.object(quality, 'PENDING_PATH', tmp_path/'pending.json'):
+         mock.patch.object(post_tool, 'log'), mock.patch.object(quality, 'PENDING_PATH', tmp_path/'pending.json'):
         post_tool.main()
         assert quality.pending_quality('fallback') == [str(tmp_path)]
 

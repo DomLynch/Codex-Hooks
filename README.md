@@ -62,6 +62,22 @@ Stop switch:
 touch ~/.codex/state/AUTONOMY_STOP
 ```
 
+## Hook footprint
+
+Seven event handlers have separate jobs: deployment guard, fresh CodeGraph reads,
+post-edit quality checks, session handoff, prompt routing/inbox, final AI review,
+and repository completion gates. Only the final reviewer calls a model; the old
+periodic post-edit AI checkpoint has been removed. Keeping separate handlers
+preserves independent hook errors and timeouts; merging labels alone saves little.
+
+Incoming agent updates retain the preceding user-turn outcome as bounded historical
+context. This is evidence for review, not an automatic success/permission override.
+Unfinished work, contradictions and explicit user restrictions remain reviewable.
+
+Install from a tracked release archive or a checkout without untracked files under
+`hooks/` and `scripts/`. The installer refuses stray runtime files before writing.
+Preserve sync/conflict copies outside the repository; do not silently delete them.
+
 ## Verify
 
 ```bash
