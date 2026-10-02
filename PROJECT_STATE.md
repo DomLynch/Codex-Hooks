@@ -1,5 +1,9 @@
 # Project state — Codex Hooks
 
+## Codex delegated handover review — 2 October 2026
+- Native incoming Codex chat handovers now reach the reviewer as agent input without user authority. The excerpt retains prior user scope/completion evidence, stays within its existing evidence budget, and preserves later user steering. Ordinary tool output cannot impersonate an incoming handover. No model, timeout, config, dependency or Claude-owned changes.
+- One audit found a mid-turn steering ordering edge case and fixed it. New regressions reproduce the old omission; final gate passes 220 Codex tests + 49 subtests and Ruff, including 100 seeded ordering/budget cases. Four real Astra Low Stop replays: both observed false-block handovers PASS; unfinished user work and peer-authorized deployment remain ISSUES. Installed release receipts are in the existing Codex handover.
+
 ## Codex safe formatting — 1 October 2026
 - Explicit edit targets now receive Ruff formatting and isolated, safe E401 import splitting before the existing checks. Read-only commands, fallback dirty-file discovery and Stop verification do not autofix. Final lint explicitly disables project-configured fix/fix-only modes; unsafe transformations, remaining lint errors, missing tools, deadlines and failing tests still block.
 - CodeGraph refresh follows formatting. Reviewer model/config and Claude files are unchanged. One audit caught the shared checker's read-only mutation risk; opt-in formatting and regression coverage close it.
