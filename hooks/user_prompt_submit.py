@@ -18,18 +18,16 @@ from lib.log import log
 COMPONENT = "user_prompt_submit"
 
 RELEASE_POLICY = """# Release Close-out
-- After major code changes, complete required checks/review, scoped commit/push, the repository's configured deployment workflow, and live verification before declaring done.
-- This is the default for implementation, not permission to invent deployment targets or bypass release safeguards. Explicit local-only, no-commit, no-push, no-deploy, review-only and stop requests override it; no configured deployment is a valid not-applicable case.
-- Verify git status --porcelain, local/remote/deployed revision or artifact parity, active config/service and relevant user-visible behavior. A clean checkout or matching SHA alone is not proof the release is live. Report exact blockers or exceptions; never call partial sync clean.
-- Commit only task-owned changes; do not delete, stash or commit unrelated work to manufacture no dirt. Isolate or coordinate safely. If the correct change is already committed, verify it rather than creating an empty commit.
+- Major implementation includes required checks/review, scoped commit/push, the configured deployment workflow and live verification. Honor local-only/no-commit/no-push/no-deploy, audit/review-only and stop requests; no configured deploy target means not applicable. Never invent targets or bypass failed safeguards.
+- Verify git status --porcelain, local/remote/deployed parity, active config/service and affected user-visible behavior; matching SHAs alone are insufficient. Report blockers and partial sync honestly.
+- Commit only task-owned changes. Preserve unrelated work; never delete/stash/commit it for cleanliness or create an empty commit when the change is already committed.
 """
 
 COMPLETION_POLICY = """# Finding Closure
-- On implementation tasks, keep current-task failures open until the same check/workflow passes on the changed code, or concrete evidence establishes an expected/unrelated result. Track check/resource, failing receipt, disposition and confirming receipt in task notes.
-- Reporting, delegating, acknowledging or resolving a Sentry issue is not a fix. Do not substitute unrelated green tests, weakened assertions, deleted checks or raised baselines for closure.
-- Put repeatable browser/workflow checks in .quality-gate.json completion_commands (argv lists) so Stop runs them alongside commands; manual check descriptions alone are not executable gates. No production writes or paid calls in automatic checks.
-- Before claiming live resolution, verify the deployed revision and affected workflow; inspect relevant older Sentry issues as well as the latest release. Do not require zero historical issues: document evidence-based dispositions.
-- Preserve explicit stop/pause, audit-only, plan-only and status-only modes. A genuine access/input/ownership blocker needs its failed check and owner/next step; do not loop forever or start unrelated repairs.
+- Keep current implementation failures open until the same check/workflow passes on changed code or evidence proves it expected/unrelated. Record the failure, disposition and confirming receipt. Reporting, delegation or Sentry resolution is not a fix; no unrelated green checks, weakened assertions, deleted checks or raised baselines.
+- Put repeatable browser/workflow checks in .quality-gate.json completion_commands as argv lists; no production writes or paid calls in automatic checks.
+- Verify deployed revision and affected behavior, including relevant older Sentry issues. Document historical issue dispositions; zero historical issues is not required.
+- Honor stop/pause, audit-only, plan-only and status-only scope. A genuine blocker needs the failed check and owner/next step; avoid endless retries or unrelated repairs.
 """
 
 AUTONOMY_POLICY = "\n".join(
@@ -54,8 +52,7 @@ SENTRY_POLICY = "- For new deployable apps, configure a project-specific Sentry 
 WORK_QUALITY_POLICY = "\n".join(
     [
         "# General Work Quality Contract",
-        "- Prefer the smallest surgical change that solves the root problem; avoid speculative abstractions, broad rewrites, and file/module sprawl.",
-        "- Prefer minimal LOC: delete/refactor before adding; avoid hardcoded or silo-specific fixes unless scoped.",
+        "- Prefer the smallest surgical change and minimal LOC; delete/refactor before adding. Avoid speculative abstractions, broad rewrites, and file/module sprawl.",
         "- Use boring explicit code. When debugging, reproduce or cite the concrete failure, localize, fix minimally, verify gone.",
         "- Respect mode: audit-only means no edits; implementation means changed files and checks.",
         SENTRY_POLICY,
@@ -100,7 +97,10 @@ def context_for(prompt: str, cwd: Path) -> str:
             "- Treat this as the current task only; do not trawl old history unless needed.\n"
             "- For simple chat, answer directly and keep it concise.\n"
             "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.\n\n"
-            + AUTONOMY_POLICY
+            + "# Autonomous Execution Contract\n"
+            "- Use existing authorization and reasonable reversible defaults; do not ask whether to continue.\n"
+            "- Ask the user only for true blockers or actions outside that authorization.\n"
+            "- Respect explicit stop/pause, audit-only and status-only scope; do not resume unrelated work.\n"
         )
 
     lessons = active_lessons(cwd=cwd)
@@ -119,7 +119,6 @@ def context_for(prompt: str, cwd: Path) -> str:
             AUTONOMY_POLICY,
             WORK_QUALITY_POLICY,
             CONTEXT_EFFICIENCY_POLICY,
-            "- Scope to current task; do not trawl history unless needed.",
             "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
             "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
             "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",

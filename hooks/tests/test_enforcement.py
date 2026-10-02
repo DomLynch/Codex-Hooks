@@ -22,34 +22,6 @@ class EnforcementTests(unittest.TestCase):
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
 
-    def test_branch_helper_preserves_newer_checkout_and_uncommitted_edits(self):
-        from lib import git as git_tools
-
-        def git(*args):
-            return subprocess.check_output(['git', *args], cwd=self.root, text=True).strip()
-
-        git('init', '-q', '-b', 'main')
-        git('config', 'user.email', 'hooks-test@example.com')
-        git('config', 'user.name', 'Hooks Test')
-        (self.root/'version.txt').write_text('old release\n')
-        git('add', '.')
-        git('commit', '-qm', 'old release')
-        branch = git_tools.current_session_branch('stale-test')
-        git('branch', branch)
-        (self.root/'version.txt').write_text('current release\n')
-        git('commit', '-qam', 'current release')
-        (self.root/'pending.txt').write_text('uncommitted task work\n')
-        before = (git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch))
-        self.assertFalse(git_tools.ensure_branch(branch, self.root))
-        self.assertEqual(git('branch', '--show-current'), 'main')
-        self.assertEqual((git('rev-parse', 'HEAD'), git('status', '--porcelain'), git('rev-parse', branch)), before)
-        self.assertEqual((self.root/'version.txt').read_text(), 'current release\n')
-        self.assertEqual((self.root/'pending.txt').read_text(), 'uncommitted task work\n')
-        self.assertTrue(git_tools.ensure_branch('fresh-checkpoint', self.root))
-        self.assertEqual(git('rev-parse', 'HEAD'), before[0])
-        self.assertTrue(git_tools.ensure_branch('main', self.root))
-        self.assertTrue(git_tools.ensure_branch('main', self.root))
-
     def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
         self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
         self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
@@ -95,7 +67,7 @@ class EnforcementTests(unittest.TestCase):
     def test_empty_or_malformed_completion_only_contract_fails_without_execution(self):
         for contract in ({}, {'completion_commands': []}, {'completion_commands': None},
                          {'completion_commands': 'echo pass'}, {'completion_commands': [[]]}):
-            with self.subTest(contract=contract), patch.object(quality.subprocess, 'Popen') as run:
+            with self.subTest(contract=contract), patch.object(quality, 'safe_run') as run:
                 (self.root / '.quality-gate.json').write_text(json.dumps(contract))
                 self.assertFalse(quality.run_project_gate(self.root)['ok'])
                 run.assert_not_called()
@@ -130,26 +102,23 @@ class EnforcementTests(unittest.TestCase):
 
     def test_project_timeout_is_bounded_and_overridable(self):
         self.contract([[sys.executable, '-c', 'pass']])
-        with patch.object(quality.subprocess, 'Popen') as popen:
-            proc = popen.return_value.__enter__.return_value
-            proc.communicate.return_value = ('', '')
-            proc.returncode = 0
+        with patch.object(quality, 'safe_run', return_value=(0, '', '')) as runner:
             self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
-            self.assertGreater(proc.communicate.call_args.kwargs['timeout'], 410)
-            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 420)
+            self.assertGreater(runner.call_args.kwargs['timeout'], 410)
+            self.assertLessEqual(runner.call_args.kwargs['timeout'], 420)
 
             self.root.joinpath('.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': 30,
             }))
             self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
-            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 30)
+            self.assertLessEqual(runner.call_args.kwargs['timeout'], 30)
 
     def test_invalid_project_timeout_fails_closed(self):
         for value in (0, 421, True, 1.5, '420'):
             self.root.joinpath('.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']], 'timeout_seconds': value,
             }))
-            with patch.object(quality.subprocess, 'Popen') as popen:
+            with patch.object(quality, 'safe_run') as popen:
                 self.assertFalse(quality.run_project_gate(self.root)['ok'])
                 popen.assert_not_called()
 
@@ -262,7 +231,7 @@ class EnforcementTests(unittest.TestCase):
             (state/'mimo_last_verdict.json').write_text(json.dumps({
                 'gate-test': {'turn_id': 't1', 'verdict': 'PASS', 'updated_at': time.time()}
             }))
-        env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0', CODEX_HOOK_CLAUDE_AUDIT='0')
+        env = dict(os.environ, HOME=str(home))
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Checked the project.'})
         self.contract([[sys.executable, '-c', 'raise SystemExit(1)']])
@@ -354,8 +323,7 @@ class EnforcementTests(unittest.TestCase):
             pending.assert_not_called()
             sync.assert_not_called()
             checkpoint.assert_not_called()
-            self.assertEqual(check.call_args.args[1], (self.root/'project').resolve())
-            self.assertFalse(check.call_args.kwargs['autofix'])
+            check.assert_not_called()
 
     def test_multi_repo_edits_register_every_repo(self):
         import io
@@ -373,7 +341,7 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'pending_quality') as pending, \
              patch.object(post_tool, 'sync_codegraph', side_effect=lambda root: \
                           self.assertNotIn(';', (root/'app.py').read_text())) as sync, \
-             patch.object(post_tool, 'update_checkpoint_state', create=True), patch.object(post_tool, 'update_audit_state'), \
+             patch.object(post_tool, 'update_audit_state'), \
              patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint', create=True):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})

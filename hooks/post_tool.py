@@ -247,21 +247,23 @@ def main() -> None:
         workdir = tool_input.get("workdir") if isinstance(tool_input, dict) else None
         cwd = Path(workdir or payload.get("cwd") or ".").resolve()
         is_edit = tool_name.rsplit("__", 1)[-1] in EDIT_TOOLS or "*** Begin Patch" in str(tool_input)
-        files = changed_files_in_payload(payload) if is_edit else []
+        if not is_edit:
+            return
+        files = changed_files_in_payload(payload)
         autofix = bool(files)  # Never rewrite unrelated dirt discovered by the fallback.
         targets = {}
         for file in files:
             root = git_root(file.parent)
             if root:
                 targets.setdefault(root, []).append(file)
-        for root in targets:
-            pending_quality(session_id, root)
         cwd = resolve_git_cwd(cwd, files)
         remember_repo(cwd)
         if not files and is_git_repo(cwd):
             files = changed_files(cwd)
         if not targets and files:
             targets[cwd] = files
+        for root in targets:
+            pending_quality(session_id, root)
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
         for root, target_files in targets.items():
             result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic(), autofix=autofix)

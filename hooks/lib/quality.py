@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
+import ast
 import configparser
 import os
 import re
 import shutil
-import subprocess
 import time
 import tomllib
 from pathlib import Path
@@ -65,10 +65,24 @@ def changed_files_in_payload(payload: dict[str, Any]) -> list[Path]:
         for key in ("path", "file_path", "filename"):
             if tool_input.get(key):
                 files.append((cwd / str(tool_input[key])).resolve())
-        command = str(tool_input.get("command") or tool_input.get("cmd") or "")
-        files.extend(_paths_from_patch(command, cwd))
-    elif isinstance(tool_input, str):
-        files.extend(_paths_from_patch(tool_input, cwd))
+        command = str(tool_input.get("command") or tool_input.get("cmd") or
+                      tool_input.get("code") or tool_input.get("input") or tool_input.get("patch") or "")
+    else:
+        command = str(tool_input)
+    files.extend(_paths_from_patch(command, cwd))
+    # Decode static patch arguments in the desktop JS wrapper; never execute JS.
+    for match in re.finditer(r"\bapply_patch\s*\(\s*(\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|`[^`]*`)\s*\)", command, re.DOTALL):
+        literal = match.group(1)
+        try:
+            if literal.startswith('`'):
+                if '${' in literal:
+                    continue
+                patch = literal[1:-1]
+            else:
+                patch = ast.literal_eval(literal)
+            files.extend(_paths_from_patch(patch, cwd))
+        except (SyntaxError, ValueError):
+            continue
     seen = set()
     out = []
     for path in files:
@@ -138,17 +152,8 @@ def run_project_gate(cwd: Path, timeout: float = 420) -> dict:
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
                 raise TimeoutError("repository quality deadline exceeded")
-            # Kill the whole check process group on timeout, including npm/make children.
-            with subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, start_new_session=True) as proc:
-                try:
-                    out, err = proc.communicate(timeout=remaining)
-                except subprocess.TimeoutExpired:
-                    import signal
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    proc.communicate()
-                    raise TimeoutError("repository quality deadline exceeded") from None
-                rc = proc.returncode
+            # Shared runner kills the process group and bounds pipe cleanup.
+            rc, out, err = safe_run(command, cwd=cwd, timeout=remaining)
             results.append(_result(path, " ".join(command), rc == 0, out + err))
             if rc != 0:
                 break

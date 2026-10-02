@@ -17,8 +17,7 @@ import stop_orchestrator  # noqa: E402
 class AuditSafetyTests(unittest.TestCase):
     def test_quality_orchestrator_does_not_poll_the_independent_reviewer(self):
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
-            for name, value in [('pending_quality', []), ('read_session_spec', {}),
-                                ('audit_with_claude', True)]:
+            for name, value in [('pending_quality', [])]:
                 stack.enter_context(mock.patch.object(stop_orchestrator, name, return_value=value))
             stack.enter_context(mock.patch.object(stop_orchestrator, 'remember_repo'))
             stack.enter_context(mock.patch.object(stop_orchestrator, 'log'))
@@ -53,10 +52,8 @@ class AuditSafetyTests(unittest.TestCase):
                     stack.enter_context(mock.patch.object(module, 'remember_repo'))
                     stack.enter_context(mock.patch.object(module, 'log'))
                     stack.enter_context(mock.patch.object(module, 'pending_quality', return_value=[]))
-                for name in ('update_checkpoint_state', 'update_audit_state', 'maybe_mimo_checkpoint_audit'):
+                for name in ('update_audit_state', 'maybe_mimo_checkpoint_audit'):
                     stack.enter_context(mock.patch.object(post_tool, name, create=True))
-                stack.enter_context(mock.patch.object(stop_orchestrator, 'read_session_spec', return_value={}))
-                stack.enter_context(mock.patch.object(stop_orchestrator, 'audit_with_claude', return_value=True))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'latest_task_slice', return_value='USER:\n' + request))
                 stack.enter_context(mock.patch.object(post_tool, 'sync_codegraph'))
                 for module in (post_tool, stop_orchestrator):

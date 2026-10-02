@@ -52,7 +52,6 @@ Runtime feature flags live in:
 Example:
 
 ```text
-CODEX_HOOK_CLAUDE_AUDIT=0
 CODEX_HOOK_AUTONOMY=1
 CODEX_HOOK_AUTONOMY_LEVEL=standard
 ```

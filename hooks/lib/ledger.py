@@ -27,8 +27,13 @@ def _state(session_id: str) -> dict:
 
 def _save(session_id: str, state: dict) -> None:
     def updater(data: dict) -> dict:
+        data.pop(session_id, None)
         data[session_id] = state
-        return dict(list(data.items())[-40:])
+        # Unresolved requirements must survive any number/order of active sessions.
+        active = {key: value for key, value in data.items()
+                  if any(f.get("status") in {"open", "reopened"} for f in value.get("findings", []))}
+        closed = {key: value for key, value in data.items() if key not in active}
+        return {**dict(list(closed.items())[-40:]), **active}
 
     update_json_locked(LEDGER_PATH, updater)
 
