@@ -75,9 +75,8 @@ def main() -> None:
         autofix = bool(files)  # Never rewrite unrelated dirt discovered by the fallback.
         targets = {}
         for file in files:
-            root = git_root(file.parent)
-            if root:
-                targets.setdefault(root, []).append(file)
+            root = git_root(file.parent) or file.parent
+            targets.setdefault(root, []).append(file)
         cwd = resolve_git_cwd(cwd, files)
         remember_repo(cwd)
         if not files and is_git_repo(cwd):
@@ -85,7 +84,8 @@ def main() -> None:
         if not targets and files:
             targets[cwd] = files
         for root in targets:
-            pending_quality(session_id, root)
+            if git_root(root) == root:
+                pending_quality(session_id, root)
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
         for root, target_files in targets.items():
             result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic(), autofix=autofix)

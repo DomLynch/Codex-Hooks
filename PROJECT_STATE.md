@@ -1,5 +1,9 @@
 # Project state — Codex Hooks
 
+## Codex repository gate isolation — 2 October 2026
+- Loose character scripts incorrectly queued the shared Business gate and ran another game's checks. Post-edit checks now group every file under its real Git root or own directory and only queue actual Git roots for completion.
+- Stop discards legacy non-repository assignments, avoids prose-inferred project selection, and gives edited repositories precedence over the launch directory. No project contract, reviewer model or Claude-owned change. Regression covers the original contamination, mixed edits, retained real failures, missing contracts and actual repo milestones.
+
 ## Lean reviewer lifecycle — 2 October 2026
 - Removed the periodic post-edit model reviewer and its counters/prompt. All seven event handlers remain distinct; only final review calls a model. Mechanical post-edit checks, completion gates, deploy guards, handoff/inbox and CodeGraph behavior remain covered.
 - Native user-turn outcome metadata survives later agent-only updates inside the existing excerpt budget. It is historical context, not automatic success or new authority. Added seeded multi-update/fresh-request and wrong-turn controls.

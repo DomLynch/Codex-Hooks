@@ -164,3 +164,6 @@ explicit agent action scoped to the user's task.
 Review evidence is compacted separately from the complete current user request.
 Findings are not discarded merely for containing words such as "verify".
 Post-tool CodeGraph updates run only at a verified Git repository/worktree root.
+
+### Codex repository isolation
+Completion gates are queued only for the actual Git roots of edited files. Loose files keep per-file checks in their own directories; they do not inherit a shared workspace completion gate. Stop drops legacy non-repository assignments, does not infer a target from prose, and uses edited repositories before the launch directory. Genuine repository failures and missing contracts still block.
