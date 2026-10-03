@@ -167,6 +167,9 @@ Completion discipline (implementation requests only):
   later pass. Require the same check/workflow to pass on the changed code or
   concrete evidence it was expected/unrelated. A failed test being reported,
   acknowledged, delegated or marked resolved in Sentry is not closure.
+- A later verified passing rerun of the SAME check on the changed code supersedes
+  its earlier failure. Compare output numbers across both histories; unrelated
+  suites, smaller subsets and assistant claims alone do not close a failure.
 - Do not accept weakened/deleted assertions or raised baselines as a fix.
   A corrected test must explain its faulty expectation and retain coverage of
   the original invariant. Relevant repeatable browser/workflow checks belong

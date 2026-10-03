@@ -81,8 +81,10 @@ def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
         output = payload.get("output") or ""
         text = _tool_output_text(output)
         command = _bounded_compact(calls.get(call_id, "command outside slice"), 120)
-        failure = _failure_excerpt(text, 350) if len(text) > 1000 else ""
-        return "TOOL OUTPUT", f"[{call_id}] {command}\n{failure}\n{compact(text, 1000)}"
+        receipts = ""
+        if len(text) > 1000:
+            receipts = _failure_excerpt(text, 350) + "\n" + _success_excerpt(text, 350)
+        return "TOOL OUTPUT", f"[{call_id}] {command}\n{receipts}\n{compact(text, 1000)}"
     return None
 
 
@@ -118,8 +120,13 @@ _TEST_RUNNER_RE = re.compile(
 _ACK_RE = re.compile(r"\b(fail(?:ed|ing|ure|s)?|error|broken|red|unresolved|regression)\b", re.IGNORECASE)
 _SUCCESS_RECEIPT_RE = re.compile(
     r"\bRan\s+\d+\s+tests\b|^OK$|All checks passed|parity|no differences|"
-    r'"conclusion"\s*:\s*"success"', re.IGNORECASE
+    r'"conclusion"\s*:\s*"success"|^PASS\b|\b\d+ passed\b|[\"\']passed[\"\']\s*:\s*\d+', re.IGNORECASE
 )
+
+
+def _success_excerpt(text: str, limit: int) -> str:
+    lines = [line.strip() for line in text.splitlines() if _SUCCESS_RECEIPT_RE.search(line.strip())]
+    return _bounded_compact("\n".join(lines), limit) if lines else ""
 
 
 def edited_paths(entries: list[tuple[str, str]]) -> list[str]:
@@ -227,25 +234,29 @@ def compact_task_entries(entries: list[tuple[str, str]], max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     outputs = [body for role, body in entries if role == "TOOL OUTPUT"]
-    failures = [(body, _failure_excerpt(body, 220)) for role, body in entries if role == "TOOL OUTPUT"]
-    failures = [(body, excerpt) for body, excerpt in failures if excerpt]
+    failures = [(i, body, _failure_excerpt(body, 220)) for i, body in enumerate(outputs, 1)]
+    failures = [(i, body, excerpt) for i, body, excerpt in failures if excerpt]
     history = ""
     if failures and max_chars >= 1600:
         history = "\n\nCHECK HISTORY (excerpts, not verdicts; match later reruns and expected outcomes):\n"
-        history += "\n".join(_bounded_compact(body.splitlines()[0], 100) + "\n" + excerpt
-                             for body, excerpt in failures[-4:])
+        history += "\n".join(f"[output {i}] " + _bounded_compact(body.splitlines()[0], 100) + "\n" + excerpt
+                             for i, body, excerpt in failures[-4:])
         history = _bounded_compact(history, min(900, max_chars // 4))
-    middle = outputs[1:-3] if len(outputs) > 4 else []
     receipts = []
-    for body in middle:
-        lines = [line.strip() for line in body.splitlines() if _SUCCESS_RECEIPT_RE.search(line.strip())]
-        if lines:
-            receipts.append(_bounded_compact(body.splitlines()[0], 80) + " " + _bounded_compact("; ".join(lines[:3]), 220))
+    for i, body in enumerate(outputs, 1):
+        excerpt = _success_excerpt(body, 220)
+        if excerpt:
+            receipts.append(f"[output {i}] " + _bounded_compact(body.splitlines()[0], 80) + " " + excerpt)
     if receipts and max_chars >= 2000:
-        history += _bounded_compact(
-            "\n\nVERIFICATION HISTORY (ordered excerpts, not verdicts; check later reruns):\n"
-            + "\n".join(receipts[-6:]), min(700, max_chars // 5)
-        )
+        verification = "\n\nVERIFICATION HISTORY (ordered excerpts, not verdicts; check later reruns):\n"
+        budget = min(700, max_chars // 5) - len(verification)
+        selected_receipts = []
+        for receipt in reversed(receipts[-6:]):
+            if len(receipt) + 1 > budget:
+                break
+            selected_receipts.insert(0, receipt)
+            budget -= len(receipt) + 1
+        history += verification + "\n".join(selected_receipts)
     # A review correction amends the answer; keep what it already answered.
     review = next(
         (i for i, (role, _) in enumerate(entries) if role.startswith("PRIOR REVIEW")),

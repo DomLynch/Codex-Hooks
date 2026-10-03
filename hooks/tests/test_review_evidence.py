@@ -77,6 +77,60 @@ class ReviewEvidenceTests(unittest.TestCase):
         ])
         self.assertIn('AssertionError: WORKFLOW_FAILED', text)
 
+    def test_passing_rerun_survives_both_compaction_stages(self):
+        for result in (
+            "PASS: real Unity Play Mode suite {'total': 18, 'passed': 18, 'failed': 0}",
+            "18 passed in 2.31s",
+            '{"summary": {"total": 18, "passed": 18, "failed": 0}}',
+        ):
+            with self.subTest(result=result):
+                rows = [
+                    {'type': 'message', 'role': 'user', 'content': 'Fix and verify the game'},
+                    {'type': 'function_call_output', 'call_id': 'failed',
+                     'output': 'AssertionError: full suite had 17 passed, 1 failed'},
+                    {'type': 'function_call_output', 'call_id': 'rerun',
+                     'output': 'before ' * 300 + '\n' + result + '\n' + 'after ' * 300},
+                ]
+                rows += [{'type': 'function_call_output', 'call_id': f'progress-{i}',
+                          'output': 'progress ' * 300} for i in range(8)]
+                rows += [{'type': 'message', 'role': 'assistant', 'content': '18 tests pass.'}]
+                text = self.slice(rows)
+                self.assertIn(result, text)
+                self.assertIn('AssertionError: full suite had 17 passed, 1 failed', text)
+                self.assertIn('[output 1]', text)
+                self.assertIn('[output 2]', text)
+                self.assertLessEqual(len(text), 4000)
+
+    def test_recent_receipts_are_not_split_by_history_budget(self):
+        rerun = "PASS: real Unity Play Mode suite {'total': 18, 'passed': 18, 'failed': 0}"
+        entries = [('USER', 'Verify the game'), ('TOOL OUTPUT', 'initial output')]
+        entries += [('TOOL OUTPUT', f'[check {i}] ' + 'command ' * 15 + '\n' + result)
+                    for i, result in enumerate(['Ran 6 tests\nOK', rerun, 'PASS: standalone smoke'])]
+        entries += [('TOOL OUTPUT', 'progress ' * 400) for _ in range(8)]
+        entries += [('ASSISTANT', '18 tests pass.')]
+        for cap in (2667, 4000):
+            text = compact_task_entries(entries, cap)
+            self.assertIn(rerun, text)
+            self.assertIn('PASS: standalone smoke', text)
+            self.assertLessEqual(len(text), cap)
+
+    def test_check_history_retains_order_and_does_not_clear_failures(self):
+        failure = 'AssertionError: full suite integration failed'
+        for earlier, later in (
+            (failure, 'PASS: unrelated six-test subset'),
+            ('PASS: full suite 18/18', failure),
+        ):
+            entries = [('USER', 'Verify the full suite'),
+                       ('TOOL OUTPUT', '[early] verify.py\n' + earlier),
+                       ('TOOL OUTPUT', '[later] verify.py\n' + later)]
+            entries += [('TOOL OUTPUT', f'progress-{i} ' + 'waiting ' * 300) for i in range(8)]
+            entries += [('ASSISTANT', 'All passed.')]
+            text = compact_task_entries(entries, 4000)
+            self.assertIn(earlier, text)
+            self.assertIn(later, text)
+            self.assertIn('[output 1]', text)
+            self.assertIn('[output 2]', text)
+
     def test_short_completion_is_audited_but_chat_still_skips(self):
         for message, expected in (("I deployed it.", "ISSUES"), ("Thanks.", "SKIP_TOO_SHORT")):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
