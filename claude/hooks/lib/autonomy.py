@@ -30,7 +30,9 @@ MAX_ACTIVE_LESSONS = 8  # per lane; ~60 tokens each per turn
 # 2026-09-26: 171 lessons a day across ~20 lanes meant each lane saw other lanes' one-off slips for about an hour.
 # A lesson now reaches only the lane that earned it; lane "" (the daemon watchdog) reaches every lane.
 MAX_STORED_LESSONS = 240
-DEFAULT_LESSON_TTL_DAYS = 14
+# 2026-10-03 (Dom): 14 -> 1. A one-off slip from 1 Oct was still on every prompt of that lane two days later;
+# a day covers the lane's next clear, after that the lesson is noise.
+DEFAULT_LESSON_TTL_DAYS = 1
 SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
 RISKY_TASK_RE = re.compile(
     r"\b("
