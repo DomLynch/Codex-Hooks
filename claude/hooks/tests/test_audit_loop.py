@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 import tempfile
 import time
@@ -143,6 +144,21 @@ class FixtureLessonGuardTests(unittest.TestCase):
             state["lessons"].insert(0, {"lesson": "old shared `slip`", "source": "mimo_stop", "ts": time.time()})
             (Path(tmp) / "s.json").write_text(json.dumps(state))
             self.assertNotIn("old shared `slip`", autonomy.active_lessons("strategy"))
+
+    def test_a_lesson_older_than_a_day_is_not_shown(self) -> None:
+        # 2026-10-03 (Dom: "yes"): a table miscount from 1 Oct was still on every prompt two days later.
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
+             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
+             mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"), \
+             mock.patch.dict(os.environ, {"CODEX_HOOK_LESSON_TTL_DAYS": ""}):
+            autonomy.record_lesson("mimo_stop", "fresh `slip`", "s1", "web")
+            state = json.loads((Path(tmp) / "s.json").read_text())
+            state["lessons"].append({"lesson": "stale `slip`", "source": "mimo_stop", "ts": time.time() - 25 * 3600,
+                                     "lane": "web"})
+            (Path(tmp) / "s.json").write_text(json.dumps(state))
+            self.assertEqual(autonomy.active_lessons("web"), ["fresh `slip`"])
 
     def test_session_lane_is_the_frankendom_lane_else_the_session(self) -> None:
 
