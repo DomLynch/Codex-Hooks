@@ -1,5 +1,9 @@
 # Project state — Codex Hooks
 
+## Codex rerun evidence — 3 October 2026
+- Reproduced the stale-failure false block: transcript compaction kept the old 17/18 failure but omitted the later verified 18/18 result. Passing test receipts now survive both compaction stages, carry output order, and remain bounded by the existing evidence budget. The reviewer explicitly compares the same check and changed code.
+- No automatic success override: unrelated subsets, later regressions and assistant claims do not close failures. Regression tests and real reviewer replay cover these opposing cases. Model, settings, Claude and game code unchanged; release receipts belong in the Codex handover.
+
 ## Codex repository gate isolation — 2 October 2026
 - Loose character scripts incorrectly queued the shared Business gate and ran another game's checks. Post-edit checks now group every file under its real Git root or own directory and only queue actual Git roots for completion.
 - Stop discards legacy non-repository assignments, avoids prose-inferred project selection, and gives edited repositories precedence over the launch directory. No project contract, reviewer model or Claude-owned change. Regression covers the original contamination, mixed edits, retained real failures, missing contracts and actual repo milestones.
