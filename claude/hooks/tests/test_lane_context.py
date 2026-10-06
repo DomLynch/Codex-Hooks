@@ -448,3 +448,28 @@ def test_handoff_check_failure_log_names_the_raising_line(tmp_path, monkeypatch)
     monkeypatch.setattr(u, "log", lambda _component, message: logged.append(message))
     assert u.with_context_notice("BODY", str(tmp_path / "t.jsonl"), Path("/x/frankendom-combat")).endswith("# Context")
     assert "division by zero" in logged[0] and "test_lane_context.py:" in logged[0] and "boom" in logged[0]
+
+
+def test_iteration_count_survives_the_cap_when_its_key_sorts_low(tmp_path, monkeypatch):
+    # Same sort_keys flaw as the verdict file: a low-sorting turn key was evicted as it was written, so its count
+    # stayed at 0 and the "max iterations" stop could never be reached on that turn.
+    from lib import audit_state
+    monkeypatch.setattr(audit_state, "STATE_FILE", tmp_path / "iterations.json")
+    for n in range(50):
+        audit_state.save_iterations(f"z{n:02d}", "t", 1)
+    audit_state.save_iterations("a", "t", 2)
+    audit_state.save_iterations("a", "t", 3)
+    audit_state.save_iterations("z50", "t", 1)   # a new key pushes the cap: the front of the sorted file goes
+    assert audit_state.load_iterations("a", "t") == 3
+
+
+def test_policy_pointer_not_full_contract_when_the_session_id_sorts_low(tmp_path, monkeypatch):
+    # Same flaw: a low-sorting session fell out of prompt_policy.json at once, so every prompt re-sent the 2 KB contract.
+    import user_prompt_submit as u
+    monkeypatch.setattr(u, "POLICY_STATE", tmp_path / "policy.json")
+    for n in range(60):
+        u.policy_due(f"z{n:02d}")
+    assert u.policy_due("000") is True        # first prompt of a new session: full contract
+    assert u.policy_due("000") is False       # second: the pointer, not the full text again
+    u.policy_due("z60")                        # a new session pushes the cap: the front of the sorted file goes
+    assert u.policy_due("000") is False       # still the pointer: "000" is recent, not the evicted one

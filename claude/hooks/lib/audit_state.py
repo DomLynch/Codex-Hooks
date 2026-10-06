@@ -23,12 +23,20 @@ def iteration_key(session_id: str, turn_id: str) -> str:
 def load_iterations(session_id: str, turn_id: str) -> int:
     data = load_json_locked(STATE_FILE, {})
     key = iteration_key(session_id, turn_id)
-    return int(data.get(key, 0))
+    return _count(data.get(key))
+
+
+def _count(value) -> int:
+    return int(value.get("n", 0)) if isinstance(value, dict) else int(value or 0)
+
+
+def _stamp(value) -> float:
+    return float(value.get("t", 0)) if isinstance(value, dict) else 0.0   # legacy plain ints are the oldest
 
 
 def save_iterations(session_id: str, turn_id: str, count: int) -> None:
     def updater(data: dict) -> dict:
-        data[iteration_key(session_id, turn_id)] = count
+        data[iteration_key(session_id, turn_id)] = {"n": count, "t": time.time()}
         # Remove legacy session-wide counters so old failures cannot poison new turns.
         data.pop(session_id, None)
         if len(data) > 50:
@@ -36,7 +44,9 @@ def save_iterations(session_id: str, turn_id: str, count: int) -> None:
             # otherwise be the first thing evicted, silently disabling the block-chain damper.
             dampers = {k: v for k, v in data.items() if k.startswith(PRESERVED_PREFIXES)}
             turns = {k: v for k, v in data.items() if not k.startswith(PRESERVED_PREFIXES)}
-            data = {**dampers, **dict(list(turns.items())[-50:])}
+            # By recency: the file is saved with sort_keys, so dict order is key order, and a low-sorting turn key
+            # was evicted the moment it was written (its count reset, so the iteration cap never counted up).
+            data = {**dampers, **dict(sorted(turns.items(), key=lambda kv: _stamp(kv[1]))[-50:])}
         return data
 
     update_json_locked(STATE_FILE, updater)
