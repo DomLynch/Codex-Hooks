@@ -128,8 +128,8 @@ def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "")
             "preview": preview[:500],
             "updated_at": time.time(),
         }
-        if len(data) > 50:
-            data = dict(list(data.items())[-50:])
+        if len(data) > 50:   # by recency: the file is saved with sort_keys, so dict order is session-id order, not age
+            data = dict(sorted(data.items(), key=lambda kv: float(kv[1].get("updated_at") or 0) if isinstance(kv[1], dict) else 0.0)[-50:])
         return data
 
     update_json_locked(VERDICT_FILE, updater)

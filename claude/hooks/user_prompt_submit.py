@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sys
+import traceback
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent
@@ -68,7 +69,8 @@ def with_context_notice(context: str, transcript_path: str, cwd: Path) -> str:
     try:
         handoff = prompt_handoff_notice(transcript_path, cwd)
     except Exception as exc:   # the report must never cost the prompt its context
-        log(COMPONENT, f"handoff check failed: {exc}")
+        where = traceback.extract_tb(exc.__traceback__)[-1]   # 2026-10-06: "division by zero" x5 named no line
+        log(COMPONENT, f"handoff check failed: {exc} at {Path(where.filename).name}:{where.lineno} in {where.name}")
         handoff = ""
     if handoff:
         line = f"{line}\n{handoff}"

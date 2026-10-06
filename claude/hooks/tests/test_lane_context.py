@@ -420,3 +420,31 @@ def test_handoff_check_names_worktree_lanes_by_title_and_finds_their_memory(tmp_
     assert hc.prompt_handoff_notice(str(t), wt) == "", "under Lead's own 750k: silent"
     t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": 900_000}}}) + "\n")
     assert hc.prompt_handoff_notice(str(t), wt) == "", "no title and no lane folder: not a lane, silent as before"
+
+
+def test_a_rewritten_verdict_survives_the_50_session_cap(tmp_path, monkeypatch):
+    # 2026-10-06: 147 Stop hooks sat ~215 s each (11 h in all) on "mimo gate timeout ... observed_turn=": the verdict
+    # was written, then evicted at once. The file is saved with sort_keys, so the [-50:] cap kept the 50 largest
+    # session ids and dropped a just-written verdict whenever its id sorted low.
+    from lib import audit_state
+    monkeypatch.setattr(audit_state, "VERDICT_FILE", tmp_path / "verdict.json")
+    for n in range(50):
+        audit_state.save_verdict(f"s{n}", "t", "PASS")
+    audit_state.save_verdict("s0", "t2", "PASS")   # the oldest key reviews again: now the freshest
+    audit_state.save_verdict("new", "t", "PASS")   # a 51st session pushes the cap
+    saved = json.loads((tmp_path / "verdict.json").read_text())
+    assert saved["s0"]["turn_id"] == "t2" and "s1" not in saved and len(saved) == 50
+
+
+def test_handoff_check_failure_log_names_the_raising_line(tmp_path, monkeypatch):
+    # 2026-10-06: "handoff check failed: division by zero" x5 and nothing to say where; log file:line of the raise.
+    import user_prompt_submit as u
+    logged = []
+    monkeypatch.setattr(u, "context_notice", lambda *_: ("# Context", False))
+
+    def boom(*_):
+        return 1 / 0
+    monkeypatch.setattr(u, "prompt_handoff_notice", boom)
+    monkeypatch.setattr(u, "log", lambda _component, message: logged.append(message))
+    assert u.with_context_notice("BODY", str(tmp_path / "t.jsonl"), Path("/x/frankendom-combat")).endswith("# Context")
+    assert "division by zero" in logged[0] and "test_lane_context.py:" in logged[0] and "boom" in logged[0]
