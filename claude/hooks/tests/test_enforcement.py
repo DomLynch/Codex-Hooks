@@ -34,6 +34,10 @@ class EnforcementTests(unittest.TestCase):
             quiet = patch.object(stop_orchestrator, name, return_value=None)
             quiet.start()
             self.addCleanup(quiet.stop)
+        # run_project_gate re-reads load before each completion command, so a busy Mac must not defer these tests.
+        calm = patch.object(quality.os, 'getloadavg', return_value=(5.0, 5.0, 5.0))
+        calm.start()
+        self.addCleanup(calm.stop)
 
     def contract(self, commands):
         (self.root / '.quality-gate.json').write_text(json.dumps({'commands': commands}))
@@ -458,6 +462,33 @@ class EnforcementTests(unittest.TestCase):
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
             self.assertIn('deferred: the Mac is overloaded (load 386', out.getvalue())
             run_gate.assert_not_called()
+
+    def test_browser_completion_command_defers_when_load_rises_after_the_gate_started(self):
+        # Strategy for Auditor, 2026-10-06: the gate sampled load once at its start, then ran Chromium rows
+        # (sparring-browser-check.mjs) while load climbed to 60-180; real-time waits failed (two false reds, src/
+        # unchanged). Load is re-read before each completion command (where repeatable browser checks live).
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=self.root, check=True)
+        subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init', '--allow-empty'], cwd=self.root, check=True)
+        first, second = self.root / 'first', self.root / 'second'
+        def touch(m):
+            return [sys.executable, '-c', f'open({str(m)!r}, "w").write("x")']
+
+        (self.root / '.quality-gate.json').write_text(json.dumps({'commands': [touch(first)], 'completion_commands': [touch(second)]}))
+        def busy():
+            return (500.0, 100.0, 50.0) if first.exists() else (5.0, 5.0, 5.0)
+
+        with patch.object(quality.os, 'getloadavg', side_effect=busy), patch.object(quality, 'GATE_LOCK_PATH', self.root / 'lock'), \
+                patch.object(quality, 'GATE_CACHE_PATH', self.root / 'cache'), patch.object(quality, 'DEPLOY_HOLD_PATH', self.root / 'no-hold'):
+            result = quality.run_project_gate(self.root)
+        self.assertIn('overloaded (load 500', result['deferred']['reason'])
+        self.assertTrue(first.exists(), 'the first command ran: load was fine when the gate started')
+        self.assertFalse(second.exists(), 'the browser row did not run under load')
+        second.unlink(missing_ok=True)
+        first.unlink()
+        with patch.object(quality.os, 'getloadavg', return_value=(5.0, 5.0, 5.0)), patch.object(quality, 'GATE_LOCK_PATH', self.root / 'lock'), \
+                patch.object(quality, 'GATE_CACHE_PATH', self.root / 'cache2'), patch.object(quality, 'DEPLOY_HOLD_PATH', self.root / 'no-hold'):
+            result = quality.run_project_gate(self.root)
+        self.assertTrue(result['ok'] and not result.get('deferred') and second.exists(), 'low load: every command runs')
 
     def test_one_repository_gate_per_mac(self):
         # Lead, 2026-09-27: 8-12 `quality-stop-targeted.mjs` runs at once, 9 min each against a 420 s budget. The

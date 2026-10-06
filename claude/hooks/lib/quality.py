@@ -445,6 +445,7 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
         completion = contract.get("completion_commands", [])
         if not isinstance(completion, list):
             raise ValueError("completion_commands must be a list of argv lists")
+        browser_from = len(commands)   # completion commands start here
         commands = commands + completion
         for command in commands:
             if not isinstance(command, list) or not command or not all(isinstance(arg, str) and arg for arg in command):
@@ -457,11 +458,15 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             return {"ok": True, "deferred": gate_busy(cwd) or {"reason": "another repository gate took the Mac-wide lock first"},
                     "results": results}
         started = time.monotonic()
-        for command in commands:
+        for index, command in enumerate(commands):
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
                 raise _deadline(command, time.monotonic() - started, timeout)
             lock = defer_to() if defer_to else None
+            if not lock and index >= browser_from and (load := os.getloadavg()[0]) > GATE_MAX_LOAD:
+                # Strategy/Auditor, 2026-10-06: load was sampled once at the gate's start; Chromium rows then failed on
+                # real-time waits at load 60-180 (false reds, no trunk change). Re-read it before each completion command.
+                lock = {"reason": f"the Mac is overloaded (load {load:.0f}, limit {GATE_MAX_LOAD:.0f}) before {' '.join(command)[:80]}"}
             if lock:
                 return {"ok": True, "deferred": lock, "results": results}
             # Kill the whole check process group on timeout or a deploy, including npm/node --test children.
