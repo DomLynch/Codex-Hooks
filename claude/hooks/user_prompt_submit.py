@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import sys
+import time
+import traceback
 from pathlib import Path
 
 HOOKS_DIR = Path(__file__).resolve().parent
@@ -43,19 +45,23 @@ POINTER = ("# V4/MCP Task Routing Contract\n"
            "Semble + Codegraph before non-trivial edits, scope to the current task).")
 
 
+def _policy_count(value) -> int:
+    return int(value.get("n", 0)) if isinstance(value, dict) else int(value or 0)
+
+
 def policy_due(session_id: str) -> bool:
     """True when the full contract should be re-sent (first project prompt, or every REFRESH_EVERY)."""
     if not session_id:
         return True
     try:
         def updater(data: dict) -> dict:
-            n = int(data.get(session_id, 0)) + 1
-            data[session_id] = n
-            if len(data) > 60:
-                data = dict(list(data.items())[-60:])
+            n = _policy_count(data.get(session_id)) + 1
+            data[session_id] = {"n": n, "t": time.time()}
+            if len(data) > 60:   # by recency: saved with sort_keys, so dict order is id order and low ids were dropped
+                data = dict(sorted(data.items(), key=lambda kv: kv[1].get("t", 0) if isinstance(kv[1], dict) else 0)[-60:])
             return data
         after = update_json_locked(POLICY_STATE, updater)
-        return (int(after.get(session_id, 1)) - 1) % REFRESH_EVERY == 0
+        return (_policy_count(after.get(session_id)) - 1) % REFRESH_EVERY == 0
     except Exception:
         return True
 
@@ -68,7 +74,8 @@ def with_context_notice(context: str, transcript_path: str, cwd: Path) -> str:
     try:
         handoff = prompt_handoff_notice(transcript_path, cwd)
     except Exception as exc:   # the report must never cost the prompt its context
-        log(COMPONENT, f"handoff check failed: {exc}")
+        where = traceback.extract_tb(exc.__traceback__)[-1]   # 2026-10-06: "division by zero" x5 named no line
+        log(COMPONENT, f"handoff check failed: {exc} at {Path(where.filename).name}:{where.lineno} in {where.name}")
         handoff = ""
     if handoff:
         line = f"{line}\n{handoff}"
