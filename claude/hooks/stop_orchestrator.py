@@ -143,7 +143,8 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
             return False
         return True
     if not milestone_detected(transcript):
-        return True
+        # a repo owed for not_run stays owed on a plain Stop; only a real gate run may clear it
+        return DEFERRED if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{cwd}") else True
     protocol = ""
     try:
         protocol = AAA_PROTOCOL_PATH.read_text()
@@ -153,11 +154,11 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
     rc, out, err = safe_run(["git", "diff", "--name-only"], cwd=cwd)
     changed = [cwd / line for line in out.splitlines() if line.strip()] if rc == 0 else []
     quality = run_quality_checks(changed, cwd, timeout=120) if changed else {"ok": True, "results": []}
-    if not quality.get("ok"):
+    if quality.get("status") == "failed":
         checks.append("Quality checks failed:\n" + "\n".join(
             f"- {item['tool']} {item['file']}: {item['output'][:1000]}"
             for item in quality.get("results", []) if not item.get("ok")
-        ))
+        ) + ("\n" + quality["note"] if quality.get("not_run") else ""))
     if changed and not protocol:
         log(COMPONENT, "AAA gate ran with cached protocol missing")
     project_failures = run_project_aaa_checks(cwd, changed)
@@ -165,6 +166,10 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
     if checks:
         block("[AAA Milestone Gate]\n\n" + "\n\n".join(checks))
         return False
+    if quality.get("status") == "not_run":   # not run is not passed: tell the user, keep the repo owed a gate
+        _SYSTEM_MESSAGES.append("[Quality Floor] " + quality["note"])
+        update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, f"not_run:{session_id}:{cwd}": True})
+        return DEFERRED
     log(COMPONENT, "AAA gate passed")
     return True
 
@@ -265,13 +270,16 @@ def main() -> None:
         deferred: list[str] = []
         for project in pending:
             target = Path(project)
-            if not (target / ".quality-gate.json").exists():
+            owed = load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{target}")
+            if not (target / ".quality-gate.json").exists() and not owed:   # owed: deferred as not_run, re-check below
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
             outcome = run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
             if not outcome:
                 return
             if outcome == DEFERRED:
                 deferred.append(project)
+            elif owed:
+                update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, f"not_run:{session_id}:{target}": False})
         if str(cwd) not in pending and is_git_repo(cwd):
             outcome = run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
             if not outcome:

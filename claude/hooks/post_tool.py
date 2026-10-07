@@ -57,12 +57,18 @@ def seconds_since(iso: str) -> int:
         return 10**9
 
 
+def note(text: str) -> None:
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
+
+
 def format_quality_failures(result: dict) -> str:
     lines = ["[Quality Floor] Tool result introduced failing checks. Fix before continuing."]
     for item in result.get("results", []):
         if item.get("ok"):
             continue
         lines.append(f"\n{item.get('tool')} failed for {item.get('file')}:\n{item.get('output', '').strip()}")
+    if result.get("not_run"):
+        lines.append("\n" + result["note"])
     return "\n".join(lines)[:8000]
 
 
@@ -120,11 +126,16 @@ def main() -> None:
         if not targets and files:
             targets[cwd] = files
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
+        notes: list[str] = []
         for root, target_files in targets.items():
             result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic())
-            log(COMPONENT, f"quality files={len(target_files)} ok={result.get('ok')} cwd={root}")
-            if not result.get("ok"):
+            log(COMPONENT, f"quality files={len(target_files)} status={result.get('status')} cwd={root}")
+            if result.get("status") == "failed":
                 block(format_quality_failures(result))
+            if result.get("status") == "not_run":
+                notes.append(result["note"])
+        if is_edit and notes:   # not run is not passed: say so once, never block, never on Read/Bash/Grep
+            note("[Quality Floor] " + " | ".join(notes))
         if is_edit:
             update_checkpoint_state(session_id, edits=1, files=files)
             maybe_checkpoint(session_id, cwd)

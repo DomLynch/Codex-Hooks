@@ -39,6 +39,13 @@ def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = Fals
     return update_json_locked(PENDING_PATH, update).get(session_id, [])
 
 
+# Files that need no code check. Anything else no checker covered is reported not_run, never passed.
+_CHECKED_SUFFIXES = {".json", ".jsonc", ".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
+_NO_CHECK_SUFFIXES = {".md", ".txt", ".rst", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".lock",
+                      ".pdf", ".csv", ".yaml", ".yml", ".toml", ".gitignore", ".mdx", ".log"}
+_NO_CHECK_NAMES = {".gitignore", ".gitattributes", "LICENSE", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"}
+
+
 SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -623,10 +630,22 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
 
     files = [p for p in files if p.exists() and p.is_file()]
     py_files = [p for p in files if p.suffix == ".py"]
+    not_run: list[dict] = []   # edited files no checker covered, with the cause (never reported as passed)
+    for file in (p for p in files if p.suffix in {".json", ".jsonc"}):
+        if file.suffix == ".jsonc" or file.name.startswith(("tsconfig", "jsconfig")) or file.name.endswith("devcontainer.json") \
+                or file.parent.name == ".vscode":   # JSONC allows comments and trailing commas: json.loads would falsely fail
+            not_run.append({"file": file.name, "cause": "JSONC: no checker"})
+            continue
+        try:
+            json.loads(file.read_text())
+            results.append(_result(file, "json", True))
+        except ValueError as exc:
+            results.append(_result(file, "json", False, str(exc)))
     ts_files = [p for p in files if p.suffix in {".ts", ".tsx"}]
     go_files = [p for p in files if p.suffix == ".go"]
     rs_files = [p for p in files if p.suffix == ".rs"]
     js_files = [p for p in files if p.suffix in {".js", ".mjs", ".cjs"}]
+    jsx_files = [p for p in files if p.suffix == ".jsx"]
 
     required = (["ruff"] if py_files else []) + (["tsc", "eslint"] if ts_files else [])
     if py_files and has_mypy_config(cwd):
@@ -654,9 +673,17 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
     if ts_files and _tool_exists(project_tool("tsc", cwd)) and _has_file_upwards(cwd, {"tsconfig.json"}):
         rc, out, err = run([project_tool("tsc", cwd), "--noEmit"])
         results.append(_result(ts_files[0], "tsc", rc == 0, out + err))
-    if ts_files and _tool_exists(project_tool("eslint", cwd)):
-        rc, out, err = run([project_tool("eslint", cwd), *map(str, ts_files)])
-        results.append(_result(ts_files[0], "eslint", rc == 0, out + err))
+    lint_files = ts_files + (jsx_files if _tool_exists(project_tool("eslint", cwd)) else [])
+    if lint_files and _tool_exists(project_tool("eslint", cwd)):
+        rc, out, err = run([project_tool("eslint", cwd), *map(str, lint_files)])
+        results.append(_result(lint_files[0], "eslint", rc == 0, out + err))
+    if ts_files and not (_tool_exists(project_tool("tsc", cwd)) and _has_file_upwards(cwd, {"tsconfig.json"})):
+        not_run += [{"file": p.name, "cause": "no tsconfig.json or tsc: type check skipped"} for p in ts_files]
+    if rs_files and not _has_file_upwards(cwd, {"Cargo.toml"}):
+        not_run += [{"file": p.name, "cause": "no Cargo.toml"} for p in rs_files]
+    if jsx_files and not _tool_exists(project_tool("eslint", cwd)):
+        gate = "; the repository gate covers it" if (cwd / ".quality-gate.json").exists() else ""
+        not_run += [{"file": p.name, "cause": ".jsx has no checker (no eslint)" + gate} for p in jsx_files]
 
     for file in go_files:
         rc, out, err = run(["go", "test", f"./{file.parent.relative_to(cwd)}"])
@@ -669,12 +696,19 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
         for file in js_files:
             rc, out, err = run(["node", "--check", str(file)])
             results.append(_result(file, "node --check", rc == 0, out + err))
+    elif js_files:
+        not_run += [{"file": p.name, "cause": "node not on PATH"} for p in js_files]
 
+    not_run += [{"file": p.name, "cause": f"no checker for {p.suffix or p.name} files"} for p in files
+                if p.suffix not in _CHECKED_SUFFIXES | _NO_CHECK_SUFFIXES and p.name not in _NO_CHECK_NAMES]
     ok = all(item["ok"] for item in results)
-    if not results:   # audit F17: "passed" and "nothing applicable ran" are different answers
-        return {"ok": ok, "results": results, "no_checks": True,
-                "note": "no checks ran: no applicable checker for the edited files (nothing was verified)"}
-    return {"ok": ok, "results": results}
+    status = "failed" if not ok else "not_run" if not_run else "passed"   # ok kept for compatibility; branch on status
+    out = {"ok": ok, "status": status, "results": results}
+    if not results and not not_run:   # audit F17: nothing applicable ran
+        out.update(no_checks=True, note="no checks ran: no applicable checker for the edited files (nothing was verified)")
+    if not_run:
+        out.update(not_run=not_run, note="not checked: " + "; ".join(f"{i['file']} ({i['cause']})" for i in not_run))
+    return out
 
 
 def mine_backlog(cwd: Path, max_items: int = 10) -> list[dict]:
