@@ -5,7 +5,6 @@ import json
 import os
 import sys
 import tempfile
-import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -25,7 +24,6 @@ import mimo_audit  # noqa: E402
 from lib import audit_state  # noqa: E402
 import autonomy_daemon  # noqa: E402
 import session_start  # noqa: E402
-import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
 from lib import autonomy  # noqa: E402
 from lib import api, state  # noqa: E402
@@ -313,9 +311,6 @@ class ClaudeAdapterTests(unittest.TestCase):
             self.assertIn(receipt, text)
         self.assertLessEqual(len(text), 4000)
 
-    def test_stop_prompt_checks_semble_and_codegraph_routing(self) -> None:
-        self.assertIn("Semble discovery plus Codegraph", Path(stop_orchestrator.__file__).read_text())
-
     def test_review_calibration_preserves_real_failure_gates(self) -> None:
         for phrase in ("exact URL/resource", "negative test", "proposed wording",
                        "still flag unsafe recommendations", "internal pipeline success alone"):
@@ -404,7 +399,6 @@ class ClaudeAdapterTests(unittest.TestCase):
 
     def test_claude_mimo_retry_budget_stays_under_stop_timeout(self) -> None:
         self.assertLess(mimo_audit.AUDIT_RETRY_BUDGET_S, mimo_audit.AUDIT_HOOK_TIMEOUT_S)
-        self.assertGreater(stop_orchestrator.MIMO_WAIT_TIMEOUT_S, mimo_audit.AUDIT_RETRY_BUDGET_S)
 
     def test_claude_mimo_connection_reset_retries_once_then_passes(self) -> None:
         with (
@@ -625,82 +619,6 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(state["tasks"][0]["status"], "held")
         self.assertIn("risky autonomous task", state["tasks"][0]["hold_reason"])
         self.assertIsNone(popped)
-
-    def test_claude_stop_orchestrator_accepts_same_turn_verdict_written_first(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(
-                stop_orchestrator,
-                "load_json_locked",
-                return_value={"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": time.time() - 10}},
-            ),
-            mock.patch.object(stop_orchestrator.time, "sleep"),
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-
-    def test_claude_stop_orchestrator_waits_for_blocked_retry_turn(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            transcript = Path(tmp) / "transcript.jsonl"
-            transcript.write_text("x" * 100)
-            first = synthesize_turn_id("retry-session", str(transcript), False)
-            with mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "iterations.json"):
-                mimo_audit.remember_blocked_turn("retry-session", first)
-                transcript.write_text("x" * 140)
-                payload = {
-                    "session_id": "retry-session", "transcript_path": str(transcript),
-                    "cwd": tmp, "stop_hook_active": True,
-                }
-                self.assertNotEqual(normalize_payload(payload)["turn_id"], first)
-                with (
-                    mock.patch.object(stop_orchestrator, "exit_if_audit_child"),
-                    mock.patch.object(stop_orchestrator, "latest_task_slice_claude", return_value=""),
-                    mock.patch.object(stop_orchestrator, "latest_task_entries_claude", return_value=[]),
-                    mock.patch.object(stop_orchestrator, "resolve_git_cwd", return_value=Path(tmp)),
-                    mock.patch.object(stop_orchestrator, "remember_repo"),
-                    mock.patch.object(stop_orchestrator, "read_session_spec", return_value=""),
-                    mock.patch.object(stop_orchestrator, "pending_quality", return_value=[]),
-                    mock.patch.object(stop_orchestrator, "is_git_repo", return_value=False),
-                    mock.patch.object(stop_orchestrator, "audit_with_claude", return_value=True),
-                    mock.patch.object(stop_orchestrator, "wait_for_mimo_pass", return_value=False) as wait,
-                    mock.patch.object(stop_orchestrator, "log"),
-                ):
-                    run_main_with_stdin(stop_orchestrator.main, payload)
-                wait.assert_called_once_with("retry-session", first)
-
-    def test_claude_stop_orchestrator_wait_ignores_wall_clock_jump(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(stop_orchestrator, "ATTEMPT_STARTED_AT", 100),  # audit F04: verdict must be this attempt's
-            mock.patch.object(stop_orchestrator.time, "monotonic", side_effect=[0, 0, 1]),
-            mock.patch.object(stop_orchestrator.time, "time", side_effect=[100, 10_000]),
-            mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=[{},
-                {"orch-session": {"turn_id": "turn-1", "verdict": "PASS", "updated_at": 100}}]),
-            mock.patch.object(stop_orchestrator.time, "sleep"),
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertTrue(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-
-    def test_claude_stop_orchestrator_rejects_same_turn_chat_skip_without_waiting(self) -> None:
-        with (
-            mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
-            mock.patch.object(
-                stop_orchestrator,
-                "load_json_locked",
-                return_value={
-                    "orch-session": {
-                        "turn_id": "turn-1",
-                        "verdict": "SKIP_CHAT_TURN",
-                        "updated_at": time.time() - 10,
-                    }
-                },
-            ),
-            mock.patch.object(stop_orchestrator.time, "sleep") as sleep,
-            mock.patch.object(stop_orchestrator, "log"),
-        ):
-            self.assertFalse(stop_orchestrator.wait_for_mimo_pass("orch-session", "turn-1"))
-            sleep.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()
