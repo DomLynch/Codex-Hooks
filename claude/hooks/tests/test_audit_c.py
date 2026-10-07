@@ -109,6 +109,13 @@ class CheckIdentityTests(unittest.TestCase):
             (run("a", "(cd /tmp/a && pytest tests/test_api.py)", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
             (run("a", "pushd /tmp/a && pytest tests/test_api.py", FAIL, True), run("b", "pushd /tmp/b && pytest tests/test_api.py", PASS, False)),
             (run("a", "cd projA && pytest tests/test_api.py", FAIL, True), run("b", "cd ../projB && pytest tests/test_api.py", PASS, False)),
+            # somewhere else entirely: a different command there is a different place
+            (run("a", "bash -c 'cd /A && pytest tests/test_api.py'", FAIL, True), run("b", "bash -c 'cd /B && pytest tests/test_api.py'", PASS, False)),
+            (run("a", "ssh h1 'cd /A && pytest tests/test_api.py'", FAIL, True), run("b", "ssh h2 'cd /B && pytest tests/test_api.py'", PASS, False)),
+            (run("a", "cd /A && pytest tests/test_api.py", FAIL, True), run("b", "cd && pytest tests/test_api.py", PASS, False)),
+            (run("a", "cd /A && pytest tests/test_api.py", FAIL, True), run("b", "env -C /B pytest tests/test_api.py", PASS, False)),
+            (run("a", "A=/x; cd $A && pytest tests/test_api.py", FAIL, True), run("b", "A=/y; cd $A && pytest tests/test_api.py", PASS, False)),
+            (run("a", "docker exec c pytest tests/test_api.py", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
         ):
             self.assertNotEqual(gate(turn(*runs), "Done."), "", runs[0][0]["message"]["content"][0]["input"]["command"])
 
@@ -117,6 +124,8 @@ class CheckIdentityTests(unittest.TestCase):
             (run("a", "cd /tmp/a && pytest tests/test_api.py -q", FAIL, True), run("b", "cd /tmp/a/ && pytest tests/test_api.py -q", PASS, False)),
             (run("a", "cd /tmp/a && pytest tests/test_api.py", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False, cwd="/tmp/a")),
             (run("a", "pytest tests/test_api.py", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
+            # the identical command somewhere unresolved is the same place
+            (run("a", "ssh h1 'cd /A && pytest tests/test_api.py'", FAIL, True), run("b", "ssh h1 'cd /A && pytest tests/test_api.py'", PASS, False)),
             # the Bash shell keeps its directory: a rerun after `cd /tmp/a &&` needs no cd of its own
             (run("a", "cd /tmp/a && pytest tests/test_api.py", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
             # a variable or relative-without-base target is unknown, never an accumulating guess: repeating it matches itself

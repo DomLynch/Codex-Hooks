@@ -307,11 +307,25 @@ def _apply_cds(command: str, cwd: str, persist: bool = False) -> str:
     return cwd if cwd.startswith("?") else (os.path.normpath(cwd) if cwd else "")
 
 
+_OPAQUE_CONTEXT_RE = re.compile(
+    r"\b(?:ssh|docker|podman|kubectl|nsenter|chroot|su)\b|\b(?:ba|z|da)?sh\s+-c\b|\benv\s+-C\b"   # runs somewhere else
+    r"|\bcd\s*(?:&&|;|\||$)")                                                                        # bare cd goes home
+_ASSIGNMENT_RE = re.compile(r"\b[A-Za-z_]\w*=\S*\s*[;&]")
+
+
 def _check_cwd(command: str, tool_cwd: str | None, shell_cwd: str) -> str:
     """Where a check ran: the `cd`s before it, applied to the tool's cwd or else the cwd this turn's earlier commands
-    left the shell in. '' = unknown, and unknown never equals a known directory."""
+    left the shell in. '' = the session's own directory. A check run somewhere we cannot resolve (inside ssh / docker /
+    `bash -c '...'`, after a bare `cd` or `env -C`, a quoted cd, or `VAR=x; cd $VAR`) is '?'+everything before the check
+    command: the same ssh host and directory is the same place whatever options the check then has, and two different
+    unresolved places never clear each other."""
     runner = TEST_RUNNER_RE.search(command)
-    return _apply_cds(command[: runner.start()] if runner else command, tool_cwd or shell_cwd)
+    head = command[: runner.start()] if runner else command
+    quoted_cd = any(m.string[: m.start()].count("'") % 2 or m.string[: m.start()].count('"') % 2 for m in _CD_RE.finditer(head))
+    where = _apply_cds(head, tool_cwd or shell_cwd)
+    if quoted_cd or _OPAQUE_CONTEXT_RE.search(head) or (where.startswith("?") and "$" in where and _ASSIGNMENT_RE.search(head)):
+        return "?" + head.strip()
+    return where
 
 
 def _native_failure(body: str, command: str | None) -> bool:
