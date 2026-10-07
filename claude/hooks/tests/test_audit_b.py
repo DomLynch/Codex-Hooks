@@ -132,7 +132,9 @@ def test_f12_prefix_verdicts_are_not_accepted(text):
     "VERDICT: PASS or VERDICT: ISSUES",
     "PASS or ISSUES",
     "VERDICT: PASS\nVERDICT: ISSUES\n1. a real problem",
-    "VERDICT: ISSUES\n1. a real problem\nVERDICT: PASS",
+    "VERDICT: PASS\nExample of a bad reply: VERDICT: ISSUES",
+    "VERDICT: PASS\n- VERDICT: ISSUES", "VERDICT: PASS\n> VERDICT: ISSUES", "VERDICT: PASS\n**VERDICT: ISSUES**",
+    "VERDICT: PASS\nStatus: ISSUES",
     "PASS\nVERDICT: ISSUES\n1. a real problem",
     "VERDICT: PASS - or ISSUES",
     "VERDICT: PASS (ISSUES found below)",
@@ -142,11 +144,38 @@ def test_f12_only_a_clean_first_line_verdict_is_approval(text):
     assert verdict_status(normalize_verdict(text)) == ""
 
 
+def test_f12_a_format_repair_can_block_but_never_approve(tmp_path, monkeypatch, capsys):
+    # Rule: an invalid reply is repaired by a second model call only toward ISSUES; a repaired PASS is a format error
+    # (block), so the prose-rescue the audit removed cannot return through the repair prompt.
+    path = _jl(tmp_path / "t.jsonl", [
+        _user("add the feature to calc.py and run the tests"),
+        _tool("Edit", file_path=str(tmp_path / "calc.py"), old_string="a", new_string="b"), _result("ok"),
+        _say("Implemented the feature; all tests pass."),
+    ])
+    calls = []
+    monkeypatch.setattr(mimo_audit, "call_mimo", lambda prompt, **k: calls.append(k.get("lane")) or (
+        "VERDICT: PASS" if k.get("lane") == "format_repair" else "I could not review the code.\nVERDICT: PASS"))
+    monkeypatch.setattr(mimo_audit, "exit_if_audit_child", lambda: None)
+    monkeypatch.setattr(mimo_audit, "log", lambda *a, **k: None)
+    monkeypatch.setattr(mimo_audit, "record_lesson", lambda *a, **k: None)
+    monkeypatch.setattr(audit_state, "STATE_FILE", tmp_path / "s.json")
+    monkeypatch.setattr(audit_state, "VERDICT_FILE", tmp_path / "v.json")
+    monkeypatch.setattr(ledger, "LEDGER_PATH", tmp_path / "l.json")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(
+        {"session_id": "f12", "turn_id": "t", "cwd": str(tmp_path), "transcript_path": path,
+         "last_assistant_message": "Implemented the feature; all tests pass."})))
+    with pytest.raises(SystemExit):
+        mimo_audit.main()
+    assert "format_repair" in calls, "the disclaimer reply must reach the repair step"
+    assert '"decision": "block"' in capsys.readouterr().out, "a repaired PASS must not approve"
+
+
 @pytest.mark.parametrize("text, status", [
     ("VERDICT: PASS", "PASS"), ("PASS.", "PASS"), ("PASS\nnotes that mention the word PASS", "PASS"),
-    ("VERDICT: PASS\nVERDICT: PASS", "PASS"), ("VERDICT: ISSUES\n1. a finding", "ISSUES"),
+    ("VERDICT: ISSUES\n1. a finding", "ISSUES"),
     # a short remark on the verdict line is how real reviewers write it; it is not a second status
     ("VERDICT: PASS - no issues found", "PASS"), ("VERDICT: PASS (all good)", "PASS"), ("VERDICT: ISSUES (2)\n1. a finding", "ISSUES"),
+    ("VERDICT: ISSUES\n1. a real problem\nVERDICT: PASS", "ISSUES"),   # a contradiction on the blocking side stays blocked
     ("VERDICT : PASS", "PASS"), ("PASS: looks fine", "PASS"), ("\ufeffVERDICT: PASS", "PASS"),
 ])
 def test_f12_controls_stay_accepted(text, status):

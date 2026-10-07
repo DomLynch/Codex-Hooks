@@ -6,7 +6,7 @@ import re
 
 _FIRST_LINE_RE = re.compile(r"(?:VERDICT\s*:\s*)?(PASS|ISSUES)((?:\s*[.:](?:\s+.*)?|\s+[-\u2013\u2014(].*)?)", re.IGNORECASE)
 _STATUS_WORD_RE = re.compile(r"\b(PASS|ISSUES)\b")   # case-sensitive: 'no issues found' is prose, 'PASS or ISSUES' is a template
-_ANY_STATUS_RE = re.compile(r"(?im)^\s*VERDICT:\s*(PASS|ISSUES)\b")
+_STATUS_CLAIM_RE = re.compile(r"(?i)\b(?:VERDICT|STATUS|RESULT)\s*:\s*\W*(?:PASS|ISSUES)\b")   # in any form: bold, quoted, listed, mid-line
 
 
 def normalize_verdict(text: str) -> str:
@@ -24,13 +24,12 @@ def normalize_verdict(text: str) -> str:
 
 def verdict_status(text: str) -> str:
     """The one status enum: 'PASS', 'ISSUES' or '' (anything else). The first line must be exactly
-    'VERDICT: PASS' or 'VERDICT: ISSUES' (a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS) and no
-    later line may name another status."""
+    'VERDICT: PASS' or 'VERDICT: ISSUES' (a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS). A PASS may
+    not name a status anywhere after line 1 ('Example of a bad reply: VERDICT: ISSUES', '**VERDICT: ISSUES**',
+    'Status: ISSUES'); an ISSUES that also says PASS stays ISSUES, because a blocked stop is the safe side."""
     first_line, _, rest = (text or "").strip().partition("\n")
-    if first_line.strip() not in ("VERDICT: PASS", "VERDICT: ISSUES"):
-        return ""
-    status = first_line.strip().rpartition(" ")[2]
-    return "" if any(m != status for m in _ANY_STATUS_RE.findall(rest)) else status
+    status = first_line.strip().rpartition(" ")[2] if first_line.strip() in ("VERDICT: PASS", "VERDICT: ISSUES") else ""
+    return "" if status == "PASS" and _STATUS_CLAIM_RE.search(rest) else status
 
 
 def valid_verdict(text: str) -> bool:
