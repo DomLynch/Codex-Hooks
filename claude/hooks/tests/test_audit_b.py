@@ -292,6 +292,21 @@ def test_f08_dirty_edit_after_an_in_turn_commit_is_in_the_diff(tmp_path, monkeyp
     assert "return a * b" in prompts[0] and "return a - b" in prompts[0]
 
 
+def test_f08_one_bad_untracked_entry_costs_only_itself(tmp_path, monkeypatch):
+    # Rule: a dangling symlink, a nested repo or a FIFO among the untracked files never discards the tracked diff.
+    import os
+    repo = _calc_repo(tmp_path)
+    (repo / "calc.py").write_text("def f(a, b):\n    return a - b\n")
+    os.symlink(tmp_path / "nowhere", repo / "dangling")
+    os.mkfifo(repo / "pipe")
+    nested = repo / "sub"
+    nested.mkdir()
+    _git(nested, "init", "-q")
+    (nested / "x.py").write_text("x = 1\n")
+    prompts = _review_bash_turn(tmp_path, monkeypatch, repo, USER_TS, "sed -i '' 's/a + b/a - b/' calc.py")
+    assert len(prompts) == 1 and "return a - b" in prompts[0]
+
+
 def test_f08_a_file_untracked_before_the_turn_is_not_change_evidence(tmp_path, monkeypatch):
     repo = _calc_repo(tmp_path)
     (repo / "old_notes.txt").write_text("left over from last week")

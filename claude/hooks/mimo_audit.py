@@ -287,21 +287,35 @@ def contentless_turn(answer: str, edited: list) -> str:
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
     """Everything now different from HEAD ('' when clean, not a repo, or git fails): tracked changes plus untracked
     files created since the turn began. The evidence for a turn that changed code through Bash (sed, a script,
-    a heredoc) and so has no Edit-tool paths. A file untracked before the turn is not this turn's change."""
+    a heredoc) and so has no Edit-tool paths. A file untracked before the turn is not this turn's change. Each part
+    stands alone: a dangling symlink, a nested repo or an unreadable file costs only itself, never the tracked diff."""
     import subprocess
     from datetime import datetime
+    parts: list[str] = []
     try:
         out = subprocess.run(["git", "-C", repo_cwd, "diff", "HEAD", "--no-color"], capture_output=True, text=True, timeout=10)
-        parts = [out.stdout.strip()] if out.returncode == 0 and out.stdout.strip() else []
+        if out.returncode == 0 and out.stdout.strip():
+            parts.append(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
         start = datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp() if since else None
         names = subprocess.run(["git", "-C", repo_cwd, "ls-files", "--others", "--exclude-standard"],
                                capture_output=True, text=True, timeout=5).stdout.splitlines()
-        for name in names:
-            file = Path(repo_cwd) / name
-            if start is not None and file.stat().st_mtime >= start:
-                parts.append(f"--- NEW FILE {name} ---\n{file.read_text(errors='replace')[:800]}")
     except (OSError, ValueError, subprocess.SubprocessError):
-        return ""
+        start, names = None, []
+    shown = 0
+    for name in names[:500]:
+        if start is None or shown >= 5:
+            break
+        file = Path(repo_cwd) / name
+        try:
+            if file.is_file() and file.stat().st_mtime >= start:   # regular files only: no FIFO, directory or dangling link
+                with open(file, errors="replace") as handle:
+                    parts.append(f"--- NEW FILE {name} ---\n{handle.read(800)}")
+                shown += 1
+        except OSError:
+            continue
     return "\n\n".join(parts)[:cap]
 
 
