@@ -205,13 +205,31 @@ class NotRunStatusTests(Base):
         self.assertEqual(causes['a.rs'], 'no Cargo.toml')
         self.assertIn('a.ts', causes)
 
-    def test_passed_and_failed_controls(self):
-        self.assertEqual(quality.run_quality_checks([self._file('ok.py', 'x = 1\n')], self.root)['status'], 'passed')
-        r = quality.run_quality_checks([self._file('bad.py', 'def (:\n')], self.root)
+    def test_passed_and_failed_controls_do_not_need_ruff(self):
+        with mock.patch.object(quality, '_tool_exists', return_value=False):
+            self.assertEqual(quality.run_quality_checks([self._file('notes.md')], self.root)['status'], 'passed')
+            r = quality.run_quality_checks([self._file('bad.py', 'def (:\n')], self.root)
         self.assertEqual((r['status'], r['ok']), ('failed', False))
         empty = quality.run_quality_checks([], self.root)
         self.assertEqual(empty['status'], 'passed')
         self.assertTrue(empty['no_checks'])
+
+    def test_real_run_broken_sh_and_unknown_extension_are_not_run(self):
+        sh = self._file('run.sh', 'if then fi (\n')
+        odd = self._file('thing.vue', '<template>\n')
+        r = quality.run_quality_checks([sh, odd, self._file('README.md')], self.root)
+        self.assertEqual(r['status'], 'not_run')
+        self.assertEqual({i['file'] for i in r['not_run']}, {'run.sh', 'thing.vue'})
+        self.assertIn('no checker for .sh files', r['note'])
+
+    def test_failure_and_not_checked_file_in_one_turn_block_names_both(self):
+        import post_tool
+        with mock.patch.object(quality, '_tool_exists', return_value=False):
+            r = quality.run_quality_checks([self._file('bad.py', 'def (:\n'), self._file('run.sh', 'x\n')], self.root)
+        self.assertEqual(r['status'], 'failed')
+        text = post_tool.format_quality_failures(r)
+        self.assertIn('bad.py', text)
+        self.assertIn('run.sh', text)
 
 
 if __name__ == '__main__':

@@ -38,6 +38,13 @@ def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = Fals
     return update_json_locked(PENDING_PATH, update).get(session_id, [])
 
 
+# Files that need no code check. Anything else no checker covered is reported not_run, never passed.
+_CHECKED_SUFFIXES = {".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
+_NO_CHECK_SUFFIXES = {".md", ".txt", ".rst", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".lock",
+                      ".pdf", ".csv", ".json", ".yaml", ".yml", ".toml", ".gitignore", ".mdx", ".log"}
+_NO_CHECK_NAMES = {".gitignore", ".gitattributes", "LICENSE", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"}
+
+
 SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -666,6 +673,8 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
     elif js_files:
         not_run += [{"file": p.name, "cause": "node not on PATH"} for p in js_files]
 
+    not_run += [{"file": p.name, "cause": f"no checker for {p.suffix or p.name} files"} for p in files
+                if p.suffix not in _CHECKED_SUFFIXES | _NO_CHECK_SUFFIXES and p.name not in _NO_CHECK_NAMES]
     ok = all(item["ok"] for item in results)
     status = "failed" if not ok else "not_run" if not_run else "passed"   # ok kept for compatibility; branch on status
     out = {"ok": ok, "status": status, "results": results}

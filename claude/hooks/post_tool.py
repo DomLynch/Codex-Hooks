@@ -67,6 +67,8 @@ def format_quality_failures(result: dict) -> str:
         if item.get("ok"):
             continue
         lines.append(f"\n{item.get('tool')} failed for {item.get('file')}:\n{item.get('output', '').strip()}")
+    if result.get("not_run"):
+        lines.append("\n" + result["note"])
     return "\n".join(lines)[:8000]
 
 

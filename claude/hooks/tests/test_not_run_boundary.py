@@ -59,3 +59,26 @@ def test_stop_gate_not_run_is_deferred_and_user_visible(tmp_path, monkeypatch):
     monkeypatch.setattr(so, "run_quality_checks", lambda *a, **k: {"ok": True, "status": "passed", "results": []})
     assert so.run_aaa_gate(tmp_path, "t") is True
     so._SYSTEM_MESSAGES.clear()
+
+
+def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
+    for name in ("exit_if_audit_child", "remember_repo"):
+        monkeypatch.setattr(so, name, lambda *a, **k: None)
+    monkeypatch.setattr(so, "log", lambda *a, **k: None)
+    pend = []   # Stop 1: nothing pending yet; the cwd gate defers and re-owes the repo, as pending_quality does
+    monkeypatch.setattr(so, "pending_quality", lambda s, cwd=None, **k: pend.append(str(cwd)) if cwd else list(pend))
+    monkeypatch.setattr(so, "is_git_repo", lambda c: True)
+    monkeypatch.setattr(so, "milestone_detected", lambda t: True)
+    monkeypatch.setattr(so, "safe_run", lambda *a, **k: (0, "a.jsx\n", ""))
+    monkeypatch.setattr(so, "run_quality_checks", lambda *a, **k: NOT_RUN)
+    monkeypatch.setattr(so, "run_project_aaa_checks", lambda *a, **k: [])
+    monkeypatch.setattr(so, "audit_with_claude", lambda *a, **k: True)
+    monkeypatch.setattr(so, "wait_for_mimo_pass", lambda *a, **k: True)
+    for _ in range(2):
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
+        so.main()
+        out = json.loads(capsys.readouterr().out)
+        assert "Missing" not in json.dumps(out)
+        assert "a.jsx" in out["systemMessage"]
+    assert pend == [str(tmp_path.resolve())]
