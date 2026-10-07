@@ -107,6 +107,8 @@ class CheckIdentityTests(unittest.TestCase):
             (run("a", "cd $A && pytest tests/test_api.py", FAIL, True), run("b", "cd $B && pytest tests/test_api.py", PASS, False)),
             (run("a", "(cd /tmp/a && pytest tests/test_api.py)", FAIL, True), run("b", "(cd /tmp/b && pytest tests/test_api.py)", PASS, False)),
             (run("a", "(cd /tmp/a && pytest tests/test_api.py)", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
+            (run("a", "pushd /tmp/a && pytest tests/test_api.py", FAIL, True), run("b", "pushd /tmp/b && pytest tests/test_api.py", PASS, False)),
+            (run("a", "cd projA && pytest tests/test_api.py", FAIL, True), run("b", "cd ../projB && pytest tests/test_api.py", PASS, False)),
         ):
             self.assertNotEqual(gate(turn(*runs), "Done."), "", runs[0][0]["message"]["content"][0]["input"]["command"])
 
@@ -128,7 +130,7 @@ class NegativePreconditionTests(unittest.TestCase):
     the same command cannot hide that the later check failed."""
 
     def test_a_negative_precondition_does_not_hide_a_later_failed_check(self) -> None:
-        for cmd in ("test ! -f missing.flag && ruff check .", "false || true; ruff check .", "! test -f x && pytest tests/test_x.py",
+        for cmd in ("test ! -f missing.flag && ruff check .", "test ! -f a || pytest tests/test_x.py", "false || true; ruff check .", "! test -f x && pytest tests/test_x.py",
                     "cd src; test ! -d build && node --test t.mjs"):
             entries = turn(run("x1", cmd, "Exit code 1\nsomething", True))
             self.assertNotEqual(gate(entries, "Done."), "", cmd)

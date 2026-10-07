@@ -269,15 +269,19 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
     return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
 
 
-_NEGATED_RUNNER_RE = re.compile(r"^\s*(?:!\s|test\s+!\s)|\|\|\s*(?:true|:|exit 0)\b")
-_CD_RE = re.compile(r"(?:^|[;&|(]\s*)cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|)]+)")
+_CD_RE = re.compile(r"(?:^|[;&|(]\s*)(?:cd|pushd)\s+(\"[^\"]+\"|'[^']+'|[^\s;&|)]+)")
 
 
 def _runner_is_negated(command: str) -> bool:
-    """Every segment of the command that runs a check is itself negated (`! cmd`, `cmd || true`). A negative
-    precondition elsewhere (`test ! -f x && ruff check .`) does not make the later check's failure expected."""
-    segments = [seg for seg in re.split(r"&&|;|\n", command) if TEST_RUNNER_RE.search(seg)]
-    return bool(segments) and all(_NEGATED_RUNNER_RE.search(seg) for seg in segments)
+    """Every part of the command that runs a check is itself an expected failure: `! check`, or `check || true`
+    (`|| :`, `|| exit 0`). A negative precondition elsewhere (`test ! -f x && check`, `test ! -f x || check`) does not
+    make the check's own failure expected."""
+    parts = re.split(r"(&&|\|\||;|\n)", command)
+    runners = [i for i in range(0, len(parts), 2) if TEST_RUNNER_RE.search(parts[i])]
+    return bool(runners) and all(
+        parts[i].strip().startswith("!")
+        or (i + 2 < len(parts) and parts[i + 1] == "||" and re.match(r"\s*(?:true|:|exit 0)\b", parts[i + 2]))
+        for i in runners)
 
 
 def _apply_cds(command: str, cwd: str, persist: bool = False) -> str:
