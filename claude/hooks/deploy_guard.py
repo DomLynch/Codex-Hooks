@@ -34,7 +34,10 @@ HEAVY_RE = re.compile(
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
 )
-ALLOW_RE = re.compile(r"scripts/deploy\.sh\b")
+# An allowed segment RUNS the deploy script: optional VAR=x / env / sh|bash|zsh prefix, then the path as the command word.
+# Merely naming it (test -f scripts/deploy.sh, cat, echo) exempts nothing, and each ; && || | ( ) segment is judged alone.
+ALLOW_RE = re.compile(r"^\s*(?:(?:env\s+|\w+=\S*\s+|(?:ba|z)?sh\s+(?:-\w+\s+)*))*(?:\S*/)?scripts/deploy\.sh\b")
+SEGMENT_SPLIT_RE = re.compile(r"[;&|()`\n]+")
 # Pixelmator Pro (Hero Look's headless texture step, 2026-09-26: ML super resolution + export via osascript) is heavy. The app is
 # named inside the osascript argument's quotes, which executable_text() strips as data, so this looks at the RAW command: a real
 # osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
@@ -120,8 +123,10 @@ def executable_text(command: str) -> str:
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
     runs = executable_text(command) if lock and command else ""
+    if runs:
+        runs = "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg))
     pixelmator = bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
-    if not runs or ALLOW_RE.search(runs) or not (HEAVY_RE.search(runs) or pixelmator):
+    if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
