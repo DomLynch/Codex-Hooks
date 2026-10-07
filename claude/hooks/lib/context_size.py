@@ -23,7 +23,7 @@ WARN_TOKENS = 500_000   # Dom, 2026-09-27: raised from 400k (300k on 09-25, 200k
 # the lane briefs), so they get headroom (Dom, 2026-09-27: Lead 750k, Strategy 700k, Deploy 600k; before that Lead and Strategy
 # 600k, Deploy 500k from 09-26, when Lead filled fastest and restarted unnoticed at 500k, losing time).
 # "lead" is the Lead lane when it is named from its session title rather than its ~/Developer/frankendom-* folder.
-LANE_WARN_TOKENS = {"lead-catalogue": 750_000, "lead": 750_000, "strategy": 700_000, "deploy": 600_000}
+LANE_WARN_TOKENS = {"lead-catalogue": 750_000, "lead": 750_000, "expansion": 750_000, "strategy": 700_000, "deploy": 600_000}
 URGENT_TOKENS = 800_000  # above every lane threshold, so "put this first" never fires at the first notice
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
@@ -85,12 +85,20 @@ def session_lane(transcript_path: str, cwd: str) -> str:
     lane = lane_name(cwd)
     if lane != "session":
         return lane
-    lane = lane_name(session_title(transcript_path))
+    return title_lane(session_title(transcript_path))
+
+
+def title_lane(title: str) -> str:
+    """The lane key a desktop title names. "Frankendom - Lead Dev (Expansion)" is its own lane (memory under
+    ~/Developer/frankendom-expansion, 2026-10-07), not Lead, although both start with "Lead"."""
+    if "(expansion)" in title.lower():
+        return "expansion"
+    lane = lane_name(title)
     return TITLE_LANES.get(lane, lane)
 
 
 # A title's first word is not always the lane's key: "Multi Chars" keeps docs/state/multichar.md.
-TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "veteran": "veteran-polish",
+TITLE_LANES = {"multi": "multichar", "visuals": "world", "auditer": "code-quality", "auditor": "code-quality", "veteran": "veteran-polish",
                "hero": "herolook"}
 
 
