@@ -134,7 +134,7 @@ def test_f12_prefix_verdicts_are_not_accepted(text):
     "VERDICT: PASS\nVERDICT: ISSUES\n1. a real problem",
     "VERDICT: PASS\nExample of a bad reply: VERDICT: ISSUES",
     "VERDICT: PASS\n- VERDICT: ISSUES", "VERDICT: PASS\n> VERDICT: ISSUES", "VERDICT: PASS\n**VERDICT: ISSUES**",
-    "VERDICT: PASS\nStatus: ISSUES",
+    "VERDICT: PASS\nStatus: ISSUES", "VERDICT: PASS\nISSUE:\n1. real bug", "VERDICT: PASS\nThere is one issue: foo.py is wrong",
     "VERDICT: PASS\nISSUES:\n1. real bug", "VERDICT: PASS\nOverall: ISSUES", "VERDICT: PASS\nFinal verdict is ISSUES.",
     "VERDICT: PASS\nVerdict - ISSUES", "VERDICT: PASS\nVERDICT: _ISSUES_", "VERDICT: PASS\nVERDICT\uff1aISSUES",
     "VERDICT: PASS\n\uff29\uff33\uff33\uff35\uff25\uff33", "VERDICT: PASS. issues below:\n1. bug",

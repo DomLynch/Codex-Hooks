@@ -12,7 +12,7 @@ _NO_ISSUES_RE = re.compile(r"\b(?:no|zero|without|0)\s+(?:\w+\s+)?issues\b", re.
 def _names_issues(text: str) -> bool:
     """The word ISSUES in any case or form (full-width letters, bold, a label) other than 'no issues' prose."""
     plain = re.sub(r"[_*`~]", " ", unicodedata.normalize("NFKC", text))   # bold / italic / code markers are not part of the word
-    return bool(re.search(r"\bissues\b", _NO_ISSUES_RE.sub("", plain), re.IGNORECASE))
+    return bool(re.search(r"\bissues\b|\bissue\s*:", _NO_ISSUES_RE.sub("", plain), re.IGNORECASE))   # 'ISSUE:' too; prose 'a minor issue' stays
 
 
 def normalize_verdict(text: str) -> str:
