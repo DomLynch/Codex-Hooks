@@ -55,38 +55,6 @@ SKIP_DIRS = {
 }
 
 
-def _paths_from_patch(text: str, cwd: Path) -> list[Path]:
-    paths: list[Path] = []
-    for line in text.splitlines():
-        for prefix in ("*** Update File: ", "*** Add File: ", "*** Delete File: "):
-            if line.startswith(prefix):
-                paths.append((cwd / line[len(prefix):].strip()).resolve())
-    return paths
-
-
-def changed_files_in_payload(payload: dict[str, Any]) -> list[Path]:
-    tool_input = payload.get("tool_input") or {}
-    cwd = Path(payload.get("cwd") or os.getcwd())
-    if isinstance(tool_input, dict) and tool_input.get("workdir"):
-        cwd = Path(str(tool_input["workdir"]))
-    files: list[Path] = []
-    if isinstance(tool_input, dict):
-        for key in ("path", "file_path", "filename"):
-            if tool_input.get(key):
-                files.append((cwd / str(tool_input[key])).resolve())
-        command = str(tool_input.get("command") or tool_input.get("cmd") or "")
-        files.extend(_paths_from_patch(command, cwd))
-    elif isinstance(tool_input, str):
-        files.extend(_paths_from_patch(tool_input, cwd))
-    seen = set()
-    out = []
-    for path in files:
-        if path not in seen:
-            seen.add(path)
-            out.append(path)
-    return out
-
-
 def _has_file_upwards(cwd: Path, names: set[str]) -> bool:
     cur = cwd.resolve()
     for path in (cur, *cur.parents):
