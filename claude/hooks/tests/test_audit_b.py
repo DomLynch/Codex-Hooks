@@ -237,7 +237,7 @@ def test_f08_bash_edit_with_terse_answer_is_reviewed_with_the_diff(tmp_path, mon
     _git(repo, "commit", "-qm", "init")
     (repo / "calc.py").write_text("def f(a, b):\n    return a - b\n")   # what the Bash sed did
     path = _jl(tmp_path / "t.jsonl", [
-        _user("change add to subtract in calc.py"),
+        _user("change add to subtract in calc.py", ts="2099-01-01T00:00:00Z"),   # after the init commit, whatever today is
         _tool("Bash", command="sed -i '' 's/a + b/a - b/' calc.py"), _result(""), _say("Updated."),
     ])
     prompts = []
