@@ -51,8 +51,7 @@ What it does (idempotent, safe to re-run):
 Edit `~/.claude/secrets/hook_env`:
 
 ```bash
-CODEX_HOOK_AUTO_PR=0       # 1 = auto commit + push + PR on every passed task
-CODEX_HOOK_CLAUDE_AUDIT=0  # 1 = run 2nd-pass audit via Anthropic API
+CODEX_HOOK_AUTO_PR=0       # 1 = post_tool checkpoint commits (only thing it still governs)
 CODEX_HOOK_AUTONOMY=1
 CODEX_HOOK_AUTONOMY_LEVEL=standard
 ```
@@ -68,9 +67,6 @@ Stop switch:
 ```bash
 touch ~/.codex/state/AUTONOMY_STOP
 ```
-
-For the Anthropic 2nd audit: drop the key at `~/.claude/secrets/anthropic_api_key`
-(chmod 600), set `CODEX_HOOK_CLAUDE_AUDIT=1`.
 
 ## Verify
 

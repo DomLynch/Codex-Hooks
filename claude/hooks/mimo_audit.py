@@ -396,9 +396,8 @@ def main() -> None:
     last_msg = payload.get("last_assistant_message") or ""
     log(f"START session={session_id} turn={turn_id}")
 
-    # The owner's off switch for the per-Stop reviewer (default on). CODEX_HOOK_CLAUDE_AUDIT only gates
-    # stop_orchestrator's second pass, not this hook. A verdict is still written so the orchestrator does not
-    # wait out its timeout; it is not PASS, so no auto-PR runs on an unreviewed turn.
+    # The owner's off switch for the per-Stop reviewer (default on). A verdict is still written so audit_state's
+    # retry and iteration bookkeeping sees this turn; it is not PASS.
     if hook_env("CLAUDE_STOP_REVIEW", "1").strip() == "0":
         save_verdict(session_id, turn_id, "SKIP_DISABLED", "CLAUDE_STOP_REVIEW=0")
         allow_stop("stop review disabled by CLAUDE_STOP_REVIEW=0")

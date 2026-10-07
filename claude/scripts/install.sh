@@ -36,12 +36,10 @@ HOOK_ENV="$SECRETS_DIR/hook_env"
 if [ ! -f "$HOOK_ENV" ]; then
   cat > "$HOOK_ENV" <<'EOF'
 # Claude hook runtime flags
-# CODEX_HOOK_AUTO_PR: 1 = enable auto-commit/push/PR after Stop audit pass
-# CODEX_HOOK_CLAUDE_AUDIT: 1 = enable second-pass Anthropic audit (requires anthropic_api_key)
+# CODEX_HOOK_AUTO_PR: 1 = enable post_tool checkpoint commits (the only thing it still governs)
 # CLAUDE_AUDIT_MODEL / CLAUDE_AUDIT_EFFORT: the per-Stop reviewer (Opus 5.5 low; Opus 5 low won the 2026-09 scorecard)
 # CLAUDE_STOP_REVIEW: 0 = turn the per-Stop reviewer off
 CODEX_HOOK_AUTO_PR=0
-CODEX_HOOK_CLAUDE_AUDIT=0
 CLAUDE_AUDIT_MODEL=claude-opus-5-5
 CLAUDE_AUDIT_EFFORT=low
 EOF

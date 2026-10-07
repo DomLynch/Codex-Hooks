@@ -662,7 +662,7 @@ class EnforcementTests(unittest.TestCase):
             (state/'mimo_last_verdict.json').write_text(json.dumps({
                 'gate-test': {'turn_id': 't1', 'verdict': 'PASS', 'updated_at': time.time()}
             }))
-        env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0', CODEX_HOOK_CLAUDE_AUDIT='0',
+        env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0',
                    CLAUDE_GATE_MAX_LOAD='100000')  # this Mac's load must not defer the gate under test
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
                               'last_assistant_message':'Checked the project.'})
