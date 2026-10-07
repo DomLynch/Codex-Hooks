@@ -4,33 +4,31 @@ from __future__ import annotations
 import re
 
 
+_FIRST_LINE_RE = re.compile(r"(?:VERDICT:\s*)?(PASS|ISSUES)[.:]?", re.IGNORECASE)
+_ANY_STATUS_RE = re.compile(r"(?im)^\s*VERDICT:\s*(PASS|ISSUES)\b")
+
+
 def normalize_verdict(text: str) -> str:
+    """'PASS' / 'PASS.' / 'VERDICT: PASS' on the FIRST line become 'VERDICT: PASS' plus the body. Any other first
+    line (a disclaimer before an example, a PASS-or-ISSUES template) is returned unchanged and so is not a verdict:
+    searching the body for a status line promoted 'I could not review... VERDICT: PASS' to approval."""
     stripped = (text or "").strip()
-    if not stripped:
-        return ""
     first_line, _, rest = stripped.partition("\n")
-    bare = first_line.strip().upper().rstrip(".:")
-    if bare in {"PASS", "ISSUES"}:
-        suffix = f"\n{rest.strip()}" if rest.strip() else ""
-        return f"VERDICT: {bare}{suffix}"
-    match = re.search(r"(?im)^VERDICT:\s*(PASS|ISSUES)\b", stripped)
+    match = _FIRST_LINE_RE.fullmatch(first_line.strip())
     if not match:
         return stripped
-    verdict = match.group(1).upper()
-    remainder = stripped[match.end():].strip()
-    suffix = f"\n{remainder}" if remainder else ""
-    return f"VERDICT: {verdict}{suffix}"
-
-
-_STATUS_LINE_RE = re.compile(r"VERDICT: (PASS|ISSUES)")
+    return f"VERDICT: {match.group(1).upper()}" + (f"\n{rest.strip()}" if rest.strip() else "")
 
 
 def verdict_status(text: str) -> str:
     """The one status enum: 'PASS', 'ISSUES' or '' (anything else). The first line must be exactly
-    'VERDICT: PASS' or 'VERDICT: ISSUES'; a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS."""
-    first_line = (text or "").strip().partition("\n")[0].strip()
-    match = _STATUS_LINE_RE.fullmatch(first_line)
-    return match.group(1) if match else ""
+    'VERDICT: PASS' or 'VERDICT: ISSUES' (a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS) and no
+    later line may name another status."""
+    first_line, _, rest = (text or "").strip().partition("\n")
+    if first_line.strip() not in ("VERDICT: PASS", "VERDICT: ISSUES"):
+        return ""
+    status = first_line.strip().rpartition(" ")[2]
+    return "" if any(m != status for m in _ANY_STATUS_RE.findall(rest)) else status
 
 
 def valid_verdict(text: str) -> bool:

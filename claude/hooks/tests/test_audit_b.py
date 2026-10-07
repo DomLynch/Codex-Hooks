@@ -19,7 +19,7 @@ import mimo_audit  # noqa: E402
 import stop_orchestrator as so  # noqa: E402
 from lib import audit_state, ledger, rehome  # noqa: E402
 from lib.claude_adapter import synthesize_turn_id  # noqa: E402
-from lib.verdicts import normalize_verdict, valid_verdict  # noqa: E402
+from lib.verdicts import normalize_verdict, valid_verdict, verdict_status  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +122,30 @@ def test_f12_prefix_verdicts_are_not_accepted(text):
     assert not valid_verdict(text)
     assert not valid_verdict(normalize_verdict(text))
     assert so.parse_verdict(text)[0] != "PASS"
+
+
+# Rule: a response is a verdict only if its FIRST line is the status, and no later line names another status.
+# Anything else (a disclaimer before an example, a PASS-or-ISSUES template, contradictory lines) is not approval.
+@pytest.mark.parametrize("text", [
+    "I could not review the code: the diff was empty.\nFormat example:\nVERDICT: PASS",
+    "Reviewing now.\nVERDICT: PASS",
+    "VERDICT: PASS or VERDICT: ISSUES",
+    "PASS or ISSUES",
+    "VERDICT: PASS\nVERDICT: ISSUES\n1. a real problem",
+    "VERDICT: ISSUES\n1. a real problem\nVERDICT: PASS",
+    "PASS\nVERDICT: ISSUES\n1. a real problem",
+])
+def test_f12_only_a_clean_first_line_verdict_is_approval(text):
+    assert not valid_verdict(normalize_verdict(text))
+    assert verdict_status(normalize_verdict(text)) == ""
+
+
+@pytest.mark.parametrize("text, status", [
+    ("VERDICT: PASS", "PASS"), ("PASS.", "PASS"), ("PASS\nnotes that mention the word PASS", "PASS"),
+    ("VERDICT: PASS\nVERDICT: PASS", "PASS"), ("VERDICT: ISSUES\n1. a finding", "ISSUES"),
+])
+def test_f12_controls_stay_accepted(text, status):
+    assert verdict_status(normalize_verdict(text)) == status
 
 
 def test_f12_exact_verdicts_still_accepted():
