@@ -39,7 +39,7 @@ def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = Fals
 
 
 # Files that need no code check. Anything else no checker covered is reported not_run, never passed.
-_CHECKED_SUFFIXES = {".json", ".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
+_CHECKED_SUFFIXES = {".json", ".jsonc", ".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
 _NO_CHECK_SUFFIXES = {".md", ".txt", ".rst", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".lock",
                       ".pdf", ".csv", ".yaml", ".yml", ".toml", ".gitignore", ".mdx", ".log"}
 _NO_CHECK_NAMES = {".gitignore", ".gitattributes", "LICENSE", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"}
@@ -614,7 +614,12 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
 
     files = [p for p in files if p.exists() and p.is_file()]
     py_files = [p for p in files if p.suffix == ".py"]
-    for file in (p for p in files if p.suffix == ".json"):
+    not_run: list[dict] = []   # edited files no checker covered, with the cause (never reported as passed)
+    for file in (p for p in files if p.suffix in {".json", ".jsonc"}):
+        if file.suffix == ".jsonc" or file.name.startswith(("tsconfig", "jsconfig")) or file.name.endswith("devcontainer.json") \
+                or file.parent.name == ".vscode":   # JSONC allows comments and trailing commas: json.loads would falsely fail
+            not_run.append({"file": file.name, "cause": "JSONC: no checker"})
+            continue
         try:
             json.loads(file.read_text())
             results.append(_result(file, "json", True))
@@ -625,7 +630,6 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
     rs_files = [p for p in files if p.suffix == ".rs"]
     js_files = [p for p in files if p.suffix in {".js", ".mjs", ".cjs"}]
     jsx_files = [p for p in files if p.suffix == ".jsx"]
-    not_run: list[dict] = []   # edited files no checker covered, with the cause (never reported as passed)
 
     required = (["ruff"] if py_files else []) + (["tsc", "eslint"] if ts_files else [])
     if py_files and has_mypy_config(cwd):

@@ -218,6 +218,17 @@ class NotRunStatusTests(Base):
         self.assertEqual(quality.run_quality_checks([self._file('a.json', '{"a": 1}')], self.root)['status'], 'passed')
         self.assertEqual(quality.run_quality_checks([self._file('b.json', '{"a": ')], self.root)['status'], 'failed')
 
+    def test_commented_tsconfig_and_jsonc_are_not_run_not_failed(self):
+        ts = self._file('tsconfig.json', '{\n  // comment\n  "a": 1,\n}\n')
+        (self.root / '.vscode').mkdir()
+        vs = self.root / '.vscode' / 'settings.json'
+        vs.write_text('{"a": 1,}')
+        r = quality.run_quality_checks([ts, vs, self._file('x.jsonc', '{/*c*/}')], self.root)
+        self.assertEqual(r['status'], 'not_run')
+        self.assertTrue(r['ok'])
+        self.assertEqual({i['cause'] for i in r['not_run']}, {'JSONC: no checker'})
+        self.assertEqual(len(r['not_run']), 3)
+
     def test_real_run_broken_sh_and_unknown_extension_are_not_run(self):
         sh = self._file('run.sh', 'if then fi (\n')
         odd = self._file('thing.vue', '<template>\n')
