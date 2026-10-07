@@ -4,6 +4,7 @@ import subprocess
 import os
 import re
 import signal
+import time
 from pathlib import Path
 
 
@@ -19,13 +20,14 @@ def task_branch(session_id: str, task_n: int) -> str:
     return f"claude/{short_sid(session_id)}/task-{task_n}"
 
 
-KILL_DRAIN_S = 5  # how long to wait for the pipes after killing the group; bounded so this can never wedge
+KILL_DRAIN_S = 1  # how long to wait for the pipes after killing the group; bounded so this can never wedge
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    """Kill the child AND everything it spawned. Falls back to the child alone if the group is already gone."""
+    """Kill the child AND everything it spawned. The child is its own group leader (start_new_session), so the group
+    id is its pid even when the child already exited and only a grandchild is left."""
     try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        os.killpg(proc.pid, signal.SIGKILL)
     except Exception:
         try:
             proc.kill()
@@ -33,11 +35,17 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
             pass
 
 
+def _term_to_exit(signum, frame):
+    raise SystemExit(128 + signum)
+
+
 def safe_run(
     cmd: list[str],
     cwd: str | Path | None = None,
     timeout: int = 30,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
+    raise_on_timeout: bool = False,
 ) -> tuple[int, str, str]:
     # Not subprocess.run(timeout=...): on POSIX that kills only the DIRECT child and then calls process.wait(),
     # so everything the child spawned is orphaned and keeps running. The Stop path runs `npm run test:changed`
@@ -52,6 +60,7 @@ def safe_run(
             cmd,
             cwd=str(cwd) if cwd else None,
             text=True,
+            stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -59,19 +68,51 @@ def safe_run(
         )
     except Exception as exc:
         return 1, "", str(exc)
+    # A SIGTERM to the hook must unwind (and so kill the child group) instead of orphaning the child.
     try:
-        out, err = proc.communicate(timeout=timeout)
+        old_term = signal.signal(signal.SIGTERM, _term_to_exit)
+    except ValueError:   # not the main thread
+        old_term = None
+    deadline, pending = time.monotonic() + timeout, input_text
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            try:
+                out, err = proc.communicate(pending, timeout=max(0.0, min(0.2, remaining)))
+                break
+            except subprocess.TimeoutExpired:
+                pending = None   # the input is already queued; a retry must not pass it again
+                if proc.poll() is not None:   # the child is gone but a descendant still holds the pipes
+                    out, err = _drain(proc)
+                    break
+                if remaining <= 0:
+                    _kill_process_group(proc)
+                    out, err = _drain(proc)
+                    if raise_on_timeout:
+                        raise TimeoutError(f"timed out after {timeout}s") from None
+                    return 1, out, f"timed out after {timeout}s; process group killed"
+        _kill_process_group(proc)   # leftovers of the child's own group do not outlive it
         return proc.returncode, out, err
-    except subprocess.TimeoutExpired:
-        _kill_process_group(proc)
-        try:
-            out, err = proc.communicate(timeout=KILL_DRAIN_S)
-        except Exception:
-            out, err = "", ""
-        return 1, out or "", f"timed out after {timeout}s; process group killed"
+    except TimeoutError:
+        raise
     except Exception as exc:
         _kill_process_group(proc)
         return 1, "", str(exc)
+    except BaseException:
+        _kill_process_group(proc)
+        raise
+    finally:
+        if old_term is not None:
+            signal.signal(signal.SIGTERM, old_term)
+
+
+def _drain(proc: subprocess.Popen) -> tuple[str, str]:
+    _kill_process_group(proc)
+    try:
+        out, err = proc.communicate(timeout=KILL_DRAIN_S)
+    except Exception:
+        return "", ""
+    return out or "", err or ""
 
 
 def is_git_repo(cwd: str | Path) -> bool:

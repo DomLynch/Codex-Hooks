@@ -284,23 +284,55 @@ def contentless_turn(answer: str, edited: list) -> str:
     return f"no edits, no claim, {len(text)} chars"
 
 
-def worktree_diff(repo_cwd: str, cap: int = DIFF_CAP) -> str:
-    """Tracked changes in the working tree vs HEAD ('' when clean, not a repo, or git fails). The evidence for a turn
-    that changed code through Bash (sed, a script) and so has no Edit-tool paths."""
+def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
+    """Everything now different from HEAD ('' when clean, not a repo, or git fails): untracked files and directories
+    that appeared since the turn began (by inode change time, so `cp -p`, `tar x` and `curl -R`, which keep an old
+    mtime, still count), then the tracked diff. The evidence for a turn that changed code through Bash and so has no
+    Edit-tool paths. A path untracked before the turn is not this turn's change. Every changed path counts for the
+    skip decision; only the evidence is capped, and it says so. Each part stands alone: a dangling symlink or an
+    unreadable file costs only itself, never the tracked diff. Known limit: an edit inside a nested repository that
+    existed before the turn is invisible here (git lists only the directory and its change time does not move)."""
     import subprocess
+    from datetime import datetime
+    tracked = ""
     try:
         out = subprocess.run(["git", "-C", repo_cwd, "diff", "HEAD", "--no-color"], capture_output=True, text=True, timeout=10)
+        tracked = out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.stdout.strip()[:cap] if out.returncode == 0 else ""
-
-
-def has_change_evidence(repo_cwd: str, entries: list, since: str) -> bool:
-    """A turn that ran tools and left a diff or commits behind is not a no-work turn, whatever its answer says.
-    Resolved BEFORE the SKIP_CONTENTLESS shortcut: 'Updated.' after a Bash sed edit got zero model calls."""
-    if not any(role == "TOOL CALL" for role, _ in entries):
-        return False
-    return bool(turn_commits(repo_cwd, since) or worktree_diff(repo_cwd))
+        pass
+    try:
+        start = datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp() if since else None
+        names = subprocess.run(["git", "-C", repo_cwd, "ls-files", "--others", "--exclude-standard"],
+                               capture_output=True, text=True, timeout=5).stdout.splitlines()
+    except (OSError, ValueError, subprocess.SubprocessError):
+        start, names = None, []
+    new_paths: list[str] = []
+    for name in names[:20_000]:
+        try:
+            st = (Path(repo_cwd) / name).stat()
+            if start is None or max(st.st_mtime, st.st_ctime) >= start:
+                new_paths.append(name)
+        except OSError:
+            continue   # a dangling link or a path that vanished
+    shown: list[str] = []
+    for name in new_paths[:5]:
+        file = Path(repo_cwd) / name
+        try:
+            if file.is_file():
+                with open(file, errors="replace") as handle:
+                    shown.append(f"--- NEW FILE {name} ---\n{handle.read(800)}")
+            else:   # a nested repository or directory: name it, its content is not ours to read here
+                shown.append(f"--- NEW DIRECTORY {name} (untracked content inside) ---")
+        except OSError:
+            shown.append(f"--- NEW PATH {name} (unreadable) ---")
+    notes = []
+    if len(new_paths) > 5:
+        notes.append(f"...[{len(new_paths) - 5} more new paths not shown]")
+    room = max(cap - sum(len(x) for x in shown), cap // 2)
+    if len(tracked) > room:
+        notes.append(f"...[tracked diff truncated: {len(tracked) - room} more chars]")
+    parts = [*shown, *([tracked[:room]] if tracked else []), *notes]
+    return "\n\n".join(parts)
 
 
 def is_chat_turn(transcript: str) -> bool:
@@ -316,7 +348,7 @@ class AuditBudgetExceeded(RuntimeError):
 
 # One absolute deadline for the whole attempt (every model call, retry, repair and the final output), set in main().
 # 2026-10-07 audit: retry + empty-response + format-repair could add up to 501 s against the 240 s hook budget.
-AUDIT_ATTEMPT_BUDGET_S = 205      # < stop_orchestrator.MIMO_WAIT_TIMEOUT_S (215) < AUDIT_HOOK_TIMEOUT_S (240)
+AUDIT_ATTEMPT_BUDGET_S = 205      # < AUDIT_HOOK_TIMEOUT_S (240)
 AUDIT_FINISH_RESERVE_S = 5        # kept back for cleanup and the final stdout write
 AUDIT_MIN_CALL_S = 5
 _DEADLINE: list[float] = []
@@ -396,9 +428,8 @@ def main() -> None:
     last_msg = payload.get("last_assistant_message") or ""
     log(f"START session={session_id} turn={turn_id}")
 
-    # The owner's off switch for the per-Stop reviewer (default on). CODEX_HOOK_CLAUDE_AUDIT only gates
-    # stop_orchestrator's second pass, not this hook. A verdict is still written so the orchestrator does not
-    # wait out its timeout; it is not PASS, so no auto-PR runs on an unreviewed turn.
+    # The owner's off switch for the per-Stop reviewer (default on). A verdict is still written so audit_state's
+    # retry and iteration bookkeeping sees this turn; it is not PASS.
     if hook_env("CLAUDE_STOP_REVIEW", "1").strip() == "0":
         save_verdict(session_id, turn_id, "SKIP_DISABLED", "CLAUDE_STOP_REVIEW=0")
         allow_stop("stop review disabled by CLAUDE_STOP_REVIEW=0")
@@ -449,6 +480,10 @@ def main() -> None:
     if peer_gate:
         mechanical.append(peer_gate)
     sensitive = sensitive_paths(entries)
+    # One snapshot of the turn's change, used for the skip decision AND the evidence: the turn's commits plus everything
+    # now different from HEAD plus untracked files created since the turn began, Edit-tool turns included.
+    since = latest_turn_started_at(transcript_path)
+    snapshot = worktree_snapshot(repo_cwd, since) if any(role == "TOOL CALL" for role, _ in entries) else ""
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
     # The lesson was saved when the finding blocked; once the lane rejects it, other lanes must not learn it.
@@ -461,8 +496,7 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries)) and not has_change_evidence(
-            repo_cwd, entries, latest_turn_started_at(transcript_path)):
+    elif contentless_turn(last_msg, edited_paths(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
         why = contentless_turn(last_msg, edited_paths(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
@@ -498,16 +532,13 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
-        since = latest_turn_started_at(transcript_path)
         committed = turn_commits_diff(repo_cwd, since)
+        edited = edited_paths(entries)
+        diff = "\n\n".join(x for x in (committed, snapshot) if x)[:DIFF_CAP + 2_000]
+        if not diff and edited:   # nothing differs from HEAD now: the Edit-tool paths against the turn's starting commit
+            diff = turn_diff(repo_cwd, edited, since=since)
         if committed:
-            # What the turn committed, however it was edited, plus Edit-tool edits not yet committed.
-            diff = "\n\n".join(x for x in (committed, turn_diff(repo_cwd, edited_paths(entries))) if x)[:DIFF_CAP + 2_000]
             log(f"TURN_COMMITS: {len(turn_commits(repo_cwd, since))} commit(s), {len(committed)} chars")
-        else:
-            diff = turn_diff(repo_cwd, edited_paths(entries), since=since)
-        if not diff and not edited_paths(entries) and any(role == "TOOL CALL" for role, _ in entries):
-            diff = worktree_diff(repo_cwd)   # code changed through Bash: no Edit-tool paths to scope a diff to
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "
@@ -535,7 +566,7 @@ def main() -> None:
     if verdict_text and not valid_verdict(verdict_text):
         try:
             repaired = repair_verdict_format(verdict_text)
-            if valid_verdict(repaired):
+            if valid_verdict(repaired) and verdict_status(repaired) == "ISSUES":   # a repair may block, never approve
                 log(f"FORMAT_REPAIR_VERDICT: {repaired[:160].replace(chr(10), ' ')}")
                 verdict_text = repaired
             else:

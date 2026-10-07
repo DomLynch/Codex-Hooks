@@ -30,7 +30,7 @@ CHECKPOINT_BRANCH_RETRY_S = 1800
 QUALITY_TIMEOUT_S = 120
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}  # Claude Code edit tools
 # Checkpoints switch the checkout to claude/<session>/main, commit and push: the
-# same side effect class as auto-PR, so the same switch governs both.
+# a side effect, so CODEX_HOOK_AUTO_PR (historic name; auto-PR itself was removed) governs it.
 # Off unless explicitly "1": a missing or unreadable hook_env must not turn on commit+push.
 CHECKPOINTS_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "0") == "1"
 
