@@ -12,7 +12,7 @@ adapted for Claude Code's payload schema and config format.
 | `SessionStart` | `session_start.py` | Loads handoff state, mines backlog, captures session spec |
 | `PostToolUse` | `post_tool.py` | Quality floor + auto-checkpoint commits + mid-task GPT audit |
 | `Stop` | `mimo_audit.py` | GPT-5.6-Terra reviews the turn and blocks on issues |
-| `Stop` | `stop_orchestrator.py` | Optional 2nd audit (Claude), AAA gate, Auto-PR, self-spec chaining |
+| `Stop` | `stop_orchestrator.py` | Repository quality gate, AAA milestone gate, deploy deferral |
 | launchd | `autonomy_daemon.py` | Shared Codex/Claude queue planner via `~/.codex/state/` |
 
 ## Differences vs the Codex install
@@ -41,7 +41,7 @@ What it does (idempotent, safe to re-run):
 1. Copies hook scripts to `~/.claude/hooks/`
 2. Creates `~/.claude/state/`, `~/.claude/logs/`, `~/.claude/secrets/`
 3. Initializes `~/.claude/secrets/hook_env` with safe defaults
-   (Auto-PR off, Claude audit off)
+   (post_tool checkpoints off)
 4. Backs up your current `~/.claude/settings.json` to `*.backup-YYYYMMDD-HHMMSS`
 5. Merges the new hook blocks into settings.json (preserves your other hooks)
 6. Verifies Python compile + JSON validity
@@ -96,5 +96,5 @@ on every Edit/Write, `mimo_audit.log` whenever Claude finishes a turn.
 
 - Logs to `~/.claude/logs/` only — never modifies user code
 - Audit transport failures block retries, then allow after the configured cap.
-- Auto-PR is OFF by default. Side effects (commit/push/PR) only happen when
-  you explicitly flip the flag
+- post_tool checkpoint commits are OFF by default (`CODEX_HOOK_AUTO_PR`, a historic name:
+  auto-PR itself was removed); they only happen when you explicitly flip the flag

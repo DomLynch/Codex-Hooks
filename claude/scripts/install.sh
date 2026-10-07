@@ -44,7 +44,7 @@ CLAUDE_AUDIT_MODEL=claude-opus-5-5
 CLAUDE_AUDIT_EFFORT=low
 EOF
   chmod 600 "$HOOK_ENV"
-  echo "==> Created default hook_env (Auto-PR=0, Claude=0). Edit $HOOK_ENV to enable."
+  echo "==> Created default hook_env (checkpoints off). Edit $HOOK_ENV to enable."
 fi
 
 # 4. Merge hooks into settings.json (preserving existing config)
@@ -109,7 +109,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Restart Claude Code (so the hooks load)"
 echo "  2. Watch logs:    tail -f $LOGS_DIR/*.log"
-echo "  3. Enable Auto-PR / Claude audit by editing $HOOK_ENV"
+echo "  3. Enable post_tool checkpoints by editing $HOOK_ENV"
 echo "  4. Disable any hook: comment its block in $SETTINGS"
 echo ""
 echo "  To uninstall: re-run this script and delete $HOOKS_DIR + restore $BACKUP"

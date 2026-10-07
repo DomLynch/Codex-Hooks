@@ -91,7 +91,7 @@ def milestone_detected(text: str) -> bool:
 
 
 # run_aaa_gate's third outcome: not failed, not passed. Truthy so the Stop is not blocked, but the repo stays
-# owed a gate and no auto-PR runs (audit C, 2026-09-27).
+# owed a gate (audit C, 2026-09-27).
 DEFERRED = "deferred"
 
 
