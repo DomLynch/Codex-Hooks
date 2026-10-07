@@ -285,17 +285,18 @@ def contentless_turn(answer: str, edited: list) -> str:
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
-    """Everything now different from HEAD ('' when clean, not a repo, or git fails): tracked changes plus untracked
-    files created since the turn began. The evidence for a turn that changed code through Bash (sed, a script,
-    a heredoc) and so has no Edit-tool paths. A file untracked before the turn is not this turn's change. Each part
-    stands alone: a dangling symlink, a nested repo or an unreadable file costs only itself, never the tracked diff."""
+    """Everything now different from HEAD ('' when clean, not a repo, or git fails): untracked files and directories
+    that appeared since the turn began (by inode change time, so `cp -p`, `tar x` and `curl -R`, which keep an old
+    mtime, still count), then the tracked diff. The evidence for a turn that changed code through Bash and so has no
+    Edit-tool paths. A path untracked before the turn is not this turn's change. Every changed path counts for the
+    skip decision; only the evidence is capped, and it says so. Each part stands alone: a dangling symlink or an
+    unreadable file costs only itself, never the tracked diff."""
     import subprocess
     from datetime import datetime
-    parts: list[str] = []
+    tracked = ""
     try:
         out = subprocess.run(["git", "-C", repo_cwd, "diff", "HEAD", "--no-color"], capture_output=True, text=True, timeout=10)
-        if out.returncode == 0 and out.stdout.strip():
-            parts.append(out.stdout.strip())
+        tracked = out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         pass
     try:
@@ -304,19 +305,33 @@ def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> st
                                capture_output=True, text=True, timeout=5).stdout.splitlines()
     except (OSError, ValueError, subprocess.SubprocessError):
         start, names = None, []
-    shown = 0
-    for name in names[:500]:
-        if shown >= 5:
-            break
+    new_paths: list[str] = []
+    for name in names[:20_000]:
+        try:
+            st = (Path(repo_cwd) / name).stat()
+            if start is None or max(st.st_mtime, st.st_ctime) >= start:
+                new_paths.append(name)
+        except OSError:
+            continue   # a dangling link or a path that vanished
+    shown: list[str] = []
+    for name in new_paths[:5]:
         file = Path(repo_cwd) / name
         try:
-            if file.is_file() and (start is None or file.stat().st_mtime >= start):   # regular files only: no FIFO, directory or dangling link
+            if file.is_file():
                 with open(file, errors="replace") as handle:
-                    parts.append(f"--- NEW FILE {name} ---\n{handle.read(800)}")
-                shown += 1
+                    shown.append(f"--- NEW FILE {name} ---\n{handle.read(800)}")
+            else:   # a nested repository or directory: name it, its content is not ours to read here
+                shown.append(f"--- NEW DIRECTORY {name} (untracked content inside) ---")
         except OSError:
-            continue
-    return "\n\n".join(parts)[:cap]
+            shown.append(f"--- NEW PATH {name} (unreadable) ---")
+    notes = []
+    if len(new_paths) > 5:
+        notes.append(f"...[{len(new_paths) - 5} more new paths not shown]")
+    room = max(cap - sum(len(x) for x in shown), cap // 2)
+    if len(tracked) > room:
+        notes.append(f"...[tracked diff truncated: {len(tracked) - room} more chars]")
+    parts = [*shown, *([tracked[:room]] if tracked else []), *notes]
+    return "\n\n".join(parts)
 
 
 def is_chat_turn(transcript: str) -> bool:
