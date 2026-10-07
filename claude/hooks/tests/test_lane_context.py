@@ -473,3 +473,19 @@ def test_policy_pointer_not_full_contract_when_the_session_id_sorts_low(tmp_path
     assert u.policy_due("000") is False       # second: the pointer, not the full text again
     u.policy_due("z60")                        # a new session pushes the cap: the front of the sorted file goes
     assert u.policy_due("000") is False       # still the pointer: "000" is recent, not the evicted one
+
+
+def test_expansion_and_auditor_titles_name_their_own_lane(tmp_path):
+    # 2026-10-07: "Lead Dev (Expansion)" was read as plain `lead` (so its restart loaded Lead's memory, the wrong
+    # lane), and the title word "Auditor" was missing from the map (only "Auditer" was there).
+    import session_start as ss
+    from lib import context_size as cs
+    wt = "/Users/d/Desktop/Business/frankendom/.claude/worktrees/elastic-gates-c6edc0"
+    t = tmp_path / "t.jsonl"
+    cases = {"Frankendom - Lead Dev (Expansion)": ("expansion", "expansion"), "Frankendom - Auditor": ("code-quality", "code-quality"),
+             "Frankendom - Lead Dev": ("lead", "lead-catalogue")}
+    for title, (lane, key) in cases.items():
+        t.write_text(json.dumps({"type": "custom-title", "customTitle": title}) + "\n")
+        assert cs.session_lane(str(t), wt) == lane, title
+        assert ss.worktree_lane(Path(wt), str(t)) == key, title
+    assert cs.warn_tokens("expansion") == 750_000   # Lead-class, as the table has shown it

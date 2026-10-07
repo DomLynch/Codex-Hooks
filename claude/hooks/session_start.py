@@ -18,7 +18,7 @@ from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
 from lib.handoff_check import project_slug
-from lib.context_size import TITLE_LANES, lane_name, session_title
+from lib.context_size import session_title, title_lane
 from lib.policies import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
 
 
@@ -306,8 +306,8 @@ def worktree_lane(cwd: Path, transcript_path: str) -> str:
     title ("Frankendom - Lead Developer" -> lead-catalogue); '' for any other session."""
     if "/frankendom/.claude/worktrees/" not in str(cwd).lower():
         return ""
-    first = lane_name(lane_title(transcript_path))
-    return "" if first == "session" else FOLDER_KEYS.get(first, TITLE_LANES.get(first, first))
+    key = title_lane(lane_title(transcript_path))
+    return "" if key == "session" else FOLDER_KEYS.get(key, key)
 
 
 def restart_note(cwd: Path, key: str) -> str:
