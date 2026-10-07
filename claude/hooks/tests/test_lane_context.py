@@ -35,6 +35,18 @@ def test_policy_injected_once_then_pointer(tmp_path, monkeypatch):
     assert "Current-Prompt Discipline" in u.context_for("hello", Path("/tmp"), "s1")
 
 
+def test_auditor_clears_at_600k(tmp_path):
+    """Dom, 2026-10-07 22:4x: the Auditor reads whole diffs and was clearing at 500k mid-review; it gets 600k."""
+    from lib import context_size as cs
+    t = tmp_path / "t.jsonl"
+    for tokens, expect_notice in ((520_000, False), (620_000, True)):
+        t.write_text(json.dumps({"type": "assistant", "message": {"usage": {"cache_read_input_tokens": tokens}}}) + "\n")
+        line, _ = cs.context_notice(str(t), "/x/frankendom-code-quality")
+        assert bool(line) is expect_notice
+        if expect_notice:
+            assert "620k" in line and "600k one" in line
+
+
 def test_coordinating_lanes_warn_later(tmp_path):
     """Dom, 2026-09-27: Lead clears at 750k, Strategy at 700k, Deploy at 600k; every other lane at 500k."""
     from lib import context_size as cs

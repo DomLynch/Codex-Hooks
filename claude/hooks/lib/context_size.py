@@ -22,8 +22,9 @@ WARN_TOKENS = 500_000   # Dom, 2026-09-27: raised from 400k (300k on 09-25, 200k
 # The coordinating lanes refill fastest and lose the most working state on a restart (the PR merge order,
 # the lane briefs), so they get headroom (Dom, 2026-09-27: Lead 750k, Strategy 700k, Deploy 600k; before that Lead and Strategy
 # 600k, Deploy 500k from 09-26, when Lead filled fastest and restarted unnoticed at 500k, losing time).
+# The Auditor (code-quality) clears at 600k (Dom, 2026-10-07): it reads whole diffs and restarted mid-review at 500k.
 # "lead" is the Lead lane when it is named from its session title rather than its ~/Developer/frankendom-* folder.
-LANE_WARN_TOKENS = {"lead-catalogue": 750_000, "lead": 750_000, "expansion": 750_000, "strategy": 700_000, "deploy": 600_000}
+LANE_WARN_TOKENS = {"lead-catalogue": 750_000, "lead": 750_000, "expansion": 750_000, "strategy": 700_000, "deploy": 600_000, "code-quality": 600_000}
 URGENT_TOKENS = 800_000  # above every lane threshold, so "put this first" never fires at the first notice
 TAIL_BYTES = 512 * 1024
 # Also "~/Developer/Frankendom - Stats": the Stats session was opened in that folder, so its hooks get that cwd and
