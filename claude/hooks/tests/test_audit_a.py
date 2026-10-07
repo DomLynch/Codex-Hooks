@@ -176,33 +176,42 @@ class JsQuickCheckTests(Base):
         self.assertEqual([r['tool'] for r in result['results']], ['node --check'])
         self.assertFalse(result.get('no_checks'))
 
-    def test_f17_no_applicable_checks_is_reported_as_such(self):
-        f = self.root / 'page.jsx'
-        f.write_text('const a = <div/>;\n')
-        result = quality.run_quality_checks([f], self.root)
-        self.assertTrue(result['ok'])
-        self.assertTrue(result['no_checks'])
-        self.assertIn('no checks', result['note'].lower())
-        self.assertTrue(quality.run_quality_checks([], self.root)['no_checks'])
 
-    def test_f17_unchecked_files_are_named_even_when_others_ran(self):
-        jsx = self.root / 'page.jsx'
-        jsx.write_text('const a = <div>;\n')
-        good = self.root / 'good.js'
-        good.write_text('const x = 1;\n')
-        result = quality.run_quality_checks([good, jsx], self.root)
-        self.assertTrue(result['ok'])
-        self.assertEqual(result['unchecked'], ['page.jsx'])
-        self.assertIn('page.jsx', result['note'])
-        self.assertNotIn('unchecked', quality.run_quality_checks([good], self.root))
+class NotRunStatusTests(Base):
+    """F17 recheck: passed / failed / not_run, with the file and cause named. No test assumes node is installed."""
 
-    def test_f17_js_without_node_is_unchecked_not_silent(self):
-        good = self.root / 'good.js'
-        good.write_text('const x = 1;\n')
+    def _file(self, name, text='x\n'):
+        f = self.root / name
+        f.write_text(text)
+        return f
+
+    def test_jsx_without_eslint_is_not_run_with_cause(self):
+        r = quality.run_quality_checks([self._file('page.jsx', 'const a = <div>;\n')], self.root)
+        self.assertEqual(r['status'], 'not_run')
+        self.assertTrue(r['ok'])
+        self.assertEqual(r['not_run'], [{'file': 'page.jsx', 'cause': '.jsx has no checker (no eslint)'}])
+        self.assertIn('page.jsx', r['note'])
+
+    def test_js_without_node_is_not_run_even_beside_a_passing_file(self):
+        good, py = self._file('good.js'), self._file('a.py', 'x = 1\n')
         with mock.patch.object(quality.shutil, 'which', return_value=None):
-            result = quality.run_quality_checks([good], self.root)
-        self.assertTrue(result['no_checks'])
-        self.assertEqual(result['unchecked'], ['good.js'])
+            r = quality.run_quality_checks([good, py], self.root)
+        self.assertEqual(r['not_run'], [{'file': 'good.js', 'cause': 'node not on PATH'}])
+        self.assertIn('good.js', r['note'])
+
+    def test_ts_without_tsconfig_and_rs_without_cargo_are_not_run(self):
+        r = quality.run_quality_checks([self._file('a.ts'), self._file('a.rs')], self.root)
+        causes = {i['file']: i['cause'] for i in r['not_run']}
+        self.assertEqual(causes['a.rs'], 'no Cargo.toml')
+        self.assertIn('a.ts', causes)
+
+    def test_passed_and_failed_controls(self):
+        self.assertEqual(quality.run_quality_checks([self._file('ok.py', 'x = 1\n')], self.root)['status'], 'passed')
+        r = quality.run_quality_checks([self._file('bad.py', 'def (:\n')], self.root)
+        self.assertEqual((r['status'], r['ok']), ('failed', False))
+        empty = quality.run_quality_checks([], self.root)
+        self.assertEqual(empty['status'], 'passed')
+        self.assertTrue(empty['no_checks'])
 
 
 if __name__ == '__main__':
