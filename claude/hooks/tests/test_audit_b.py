@@ -134,6 +134,8 @@ def test_f12_prefix_verdicts_are_not_accepted(text):
     "VERDICT: PASS\nVERDICT: ISSUES\n1. a real problem",
     "VERDICT: ISSUES\n1. a real problem\nVERDICT: PASS",
     "PASS\nVERDICT: ISSUES\n1. a real problem",
+    "VERDICT: PASS - or ISSUES",
+    "VERDICT: PASS (ISSUES found below)",
 ])
 def test_f12_only_a_clean_first_line_verdict_is_approval(text):
     assert not valid_verdict(normalize_verdict(text))
@@ -143,6 +145,9 @@ def test_f12_only_a_clean_first_line_verdict_is_approval(text):
 @pytest.mark.parametrize("text, status", [
     ("VERDICT: PASS", "PASS"), ("PASS.", "PASS"), ("PASS\nnotes that mention the word PASS", "PASS"),
     ("VERDICT: PASS\nVERDICT: PASS", "PASS"), ("VERDICT: ISSUES\n1. a finding", "ISSUES"),
+    # a short remark on the verdict line is how real reviewers write it; it is not a second status
+    ("VERDICT: PASS - no issues found", "PASS"), ("VERDICT: PASS (all good)", "PASS"), ("VERDICT: ISSUES (2)\n1. a finding", "ISSUES"),
+    ("VERDICT : PASS", "PASS"), ("PASS: looks fine", "PASS"), ("\ufeffVERDICT: PASS", "PASS"),
 ])
 def test_f12_controls_stay_accepted(text, status):
     assert verdict_status(normalize_verdict(text)) == status

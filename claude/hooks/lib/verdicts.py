@@ -4,18 +4,20 @@ from __future__ import annotations
 import re
 
 
-_FIRST_LINE_RE = re.compile(r"(?:VERDICT:\s*)?(PASS|ISSUES)[.:]?", re.IGNORECASE)
+_FIRST_LINE_RE = re.compile(r"(?:VERDICT\s*:\s*)?(PASS|ISSUES)((?:\s*[.:](?:\s+.*)?|\s+[-\u2013\u2014(].*)?)", re.IGNORECASE)
+_STATUS_WORD_RE = re.compile(r"\b(PASS|ISSUES)\b")   # case-sensitive: 'no issues found' is prose, 'PASS or ISSUES' is a template
 _ANY_STATUS_RE = re.compile(r"(?im)^\s*VERDICT:\s*(PASS|ISSUES)\b")
 
 
 def normalize_verdict(text: str) -> str:
     """'PASS' / 'PASS.' / 'VERDICT: PASS' on the FIRST line become 'VERDICT: PASS' plus the body. Any other first
-    line (a disclaimer before an example, a PASS-or-ISSUES template) is returned unchanged and so is not a verdict:
+    line (a disclaimer before an example, a PASS-or-ISSUES template) is returned unchanged and so is not a verdict;
+    a short remark after the status ('VERDICT: PASS - no issues found', 'PASS (all good)') is dropped:
     searching the body for a status line promoted 'I could not review... VERDICT: PASS' to approval."""
-    stripped = (text or "").strip()
+    stripped = (text or "").lstrip("\ufeff").strip()
     first_line, _, rest = stripped.partition("\n")
     match = _FIRST_LINE_RE.fullmatch(first_line.strip())
-    if not match:
+    if not match or _STATUS_WORD_RE.search(match.group(2)):   # a remark after the status may not name another status
         return stripped
     return f"VERDICT: {match.group(1).upper()}" + (f"\n{rest.strip()}" if rest.strip() else "")
 
