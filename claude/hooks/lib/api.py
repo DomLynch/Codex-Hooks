@@ -133,10 +133,11 @@ def call_claude_cli(
         "--disallowedTools", "Bash Edit Write NotebookEdit",
     ]
     with tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
-        returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, env=env, input_text=instruction)
+        try:
+            returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, env=env, input_text=instruction, raise_on_timeout=True)
+        except TimeoutError as exc:
+            raise TimeoutError(f"Claude audit timed out after {timeout}s") from exc
     if returncode:
-        if stderr.startswith("timed out after"):
-            raise TimeoutError(f"Claude audit timed out after {timeout}s")
         raise RuntimeError(f"Claude audit failed ({returncode}): {(stderr or stdout).strip()[-500:]}")
     elapsed_ms = int((time.monotonic() - started) * 1000)
     log("claude_audit", f"CLAUDE_AUDIT lane={lane} model={CLAUDE_AUDIT_MODEL} effort={CLAUDE_AUDIT_EFFORT} elapsed_ms={elapsed_ms}")
@@ -165,10 +166,11 @@ def call_mimo(
             "--config", f'model_reasoning_effort="{CODEX_AUDIT_EFFORT}"',
             "--output-last-message", str(output_path), "-",
         ]
-        returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, input_text=instruction)
+        try:
+            returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, input_text=instruction, raise_on_timeout=True)
+        except TimeoutError as exc:
+            raise TimeoutError(f"Codex audit timed out after {timeout}s") from exc
         if returncode:
-            if stderr.startswith("timed out after"):
-                raise TimeoutError(f"Codex audit timed out after {timeout}s")
             raise RuntimeError(f"Codex audit failed ({returncode}): {(stderr or stdout).strip()[-500:]}")
         response = output_path.read_text(errors="replace").strip() if output_path.exists() else stdout.strip()
     elapsed_ms = int((time.monotonic() - started) * 1000)
