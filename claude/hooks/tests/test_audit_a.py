@@ -59,6 +59,40 @@ class Base(unittest.TestCase):
         return repo
 
 
+STALE_WORKER = """
+import os, sys, time
+from pathlib import Path
+sys.path.insert(0, {hooks!r})
+from lib import quality
+lock = Path(sys.argv[1]); root = lock.parent; role = sys.argv[2]
+quality.GATE_LOCK_PATH = lock
+def until(name, secs=5):
+    end = time.time() + secs
+    while not (root / name).exists() and time.time() < end:
+        time.sleep(0.01)
+if role == 'W':   # a waiter paused right after it read the old holder's metadata
+    orig, seen = quality._read_lock, []
+    def slow():
+        data = orig()
+        if not seen:
+            seen.append(1)
+            (root / 'w_read').write_text('x')
+            until('go')
+        return data
+    quality._read_lock = slow
+ok = quality.acquire_gate_lock(root)
+print(role, 'OK' if ok else 'NO', flush=True)
+if ok and role == 'A':
+    quality._write_lock(quality._GATE_FD, dict(pid=os.getpid(), cwd='x', at=time.time() - 3600))
+    (root / 'a_ready').write_text('x')
+    until('a_release')
+    quality.release_gate_lock()
+    (root / 'a_done').write_text('x')
+elif ok:
+    time.sleep(2)
+"""
+
+
 class GateLockRaceTests(Base):
     def test_f01_competing_processes_never_both_hold_the_gate_lock(self):
         script = self.root / 'worker.py'
@@ -78,6 +112,73 @@ class GateLockRaceTests(Base):
                 for p in procs:
                     p.wait(timeout=30)
             self.assertEqual(answers.count('OK'), 1, f'round {round_no}: exactly one process may hold the lock, got {answers}')
+
+    def test_f01_delayed_stale_waiter_cannot_unlink_a_fresh_owner(self):
+        """A holds an old-looking lock, waiter W reads it and pauses, A releases, B takes the lock, W resumes:
+        W must not delete B's lock file and become a second owner."""
+        script = self.root / 'stale.py'
+        script.write_text(STALE_WORKER.format(hooks=str(HOOKS)))
+        lock = self.root / 'stale.lock'
+
+        def spawn(role):
+            return subprocess.Popen([sys.executable, str(script), str(lock), role], stdout=subprocess.PIPE, text=True)
+
+        def until(name):
+            end = time.time() + 5
+            while not (self.root / name).exists() and time.time() < end:
+                time.sleep(0.01)
+
+        a = spawn('A')
+        until('a_ready')
+        w = spawn('W')
+        until('w_read')
+        (self.root / 'a_release').write_text('x')
+        until('a_done')
+        b = spawn('B')
+        b_answer = b.stdout.readline().strip()
+        (self.root / 'go').write_text('x')
+        w_answer = w.stdout.readline().strip()
+        for p in (a, b, w):
+            p.wait(timeout=20)
+        self.assertEqual(b_answer, 'B OK')
+        self.assertEqual(w_answer, 'W NO', 'a waiter that read an old holder must not unlink the fresh owner')
+
+    def test_f01_inode_mismatch_after_flock_retries_and_own_group_is_never_killed(self):
+        real_stat, calls = os.stat, []
+
+        def stat_once_replaced(path, *a, **k):
+            result = real_stat(path, *a, **k)
+            if Path(path) == quality.GATE_LOCK_PATH and not calls:
+                calls.append(1)
+                return os.stat_result((result.st_mode, result.st_ino + 1, *tuple(result)[2:]))
+            return result
+
+        with patch.object(quality.os, 'stat', side_effect=stat_once_replaced):
+            self.assertTrue(quality.acquire_gate_lock(self.root))
+        self.assertEqual(calls, [1], 'the first fd looked replaced, so a second open must have been tried')
+        quality.release_gate_lock()
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        quality.GATE_LOCK_PATH.write_text(json.dumps({'pid': dead.pid, 'cwd': 'x', 'at': time.time(), 'pgid': os.getpgrp()}))
+        with patch.object(quality.os, 'killpg') as killpg:
+            self.assertTrue(quality.acquire_gate_lock(self.root))
+        killpg.assert_not_called()
+        quality.release_gate_lock()
+
+    def test_f01_eight_processes_four_hundred_rounds_never_double_own(self):
+        script = self.root / 'rounds.py'
+        script.write_text(
+            'import fcntl, os, sys\nfrom pathlib import Path\nsys.path.insert(0, %r)\nfrom lib import quality\n'
+            'quality.GATE_LOCK_PATH = Path(sys.argv[1])\nmarker = Path(sys.argv[2])\nwins = bad = 0\n'
+            'for _ in range(400):\n    if quality.acquire_gate_lock(Path(sys.argv[1]).parent):\n        wins += 1\n'
+            '        try:\n            fd = os.open(marker, os.O_CREAT | os.O_EXCL)\n            os.close(fd)\n            os.unlink(marker)\n'
+            '        except FileExistsError:\n            bad += 1\n        quality.release_gate_lock()\n'
+            'print(wins, bad)\n' % str(HOOKS))
+        procs = [subprocess.Popen([sys.executable, str(script), str(self.root / 'many.lock'), str(self.root / 'owner')],
+                                  stdout=subprocess.PIPE, text=True) for _ in range(8)]
+        results = [p.communicate(timeout=120)[0].split() for p in procs]
+        self.assertEqual([r[1] for r in results], ['0'] * 8, f'double owners: {results}')
+        self.assertGreater(sum(int(r[0]) for r in results), 0)
 
     def test_f01_holder_diagnostics_and_release_still_work(self):
         self.assertTrue(quality.acquire_gate_lock(self.root))
@@ -99,6 +200,46 @@ class CacheIdentityTests(Base):
         self.assertTrue(quality.run_project_gate(repo)['ok'])
         target.write_text('def broken(:\n')
         self.assertFalse(quality.run_project_gate(repo)['ok'], 'changed contents must not hit a cached pass')
+
+    def test_f02_untracked_symlink_to_a_file_outside_the_tree_invalidates_the_cache(self):
+        outside = self.root / 'outside.txt'
+        outside.write_text('ok\n')
+        check = "import sys; sys.exit(0 if open('link.txt').read() == 'ok\\n' else 1)"
+        repo = self.repo([[sys.executable, '-c', check]])
+        (repo / 'link.txt').symlink_to(outside)
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        outside.write_text('bad\n')
+        self.assertFalse(quality.run_project_gate(repo)['ok'], 'the link target changed outside the tree')
+        (repo / 'dirlink').symlink_to(self.root)
+        self.assertIsNone(quality._tree_key(repo, [['x']]), 'a directory or dangling link is uncacheable')
+
+    def test_f02_special_oversized_and_tracked_outside_symlink_inputs(self):
+        repo = self.repo([[sys.executable, '-c', 'pass']])
+        link = repo / 'zero'
+        link.symlink_to('/dev/zero')
+        started = time.monotonic()
+        self.assertIsNone(quality._tree_key(repo, [['x']]), 'a device link is uncacheable')
+        self.assertLess(time.monotonic() - started, 5, 'hashing /dev/zero must not hang')
+        link.unlink()
+        fifo = repo / 'pipe'
+        os.mkfifo(fifo)
+        with self.assertRaises(OSError):
+            quality._file_digest(fifo)   # opens without blocking and refuses a non-regular file
+        fifo.unlink()
+        big = repo / 'big.bin'
+        big.write_bytes(b'x' * 100)
+        with patch.object(quality, 'DIGEST_CAP', 50):
+            self.assertIsNone(quality._tree_key(repo, [['x']]), 'over the size cap is uncacheable')
+        big.unlink()
+        outside = self.root / 'tracked-target.txt'
+        outside.write_text('ok\n')
+        (repo / 'tlink').symlink_to(outside)
+        subprocess.run(['git', 'add', 'tlink'], cwd=repo, check=True)
+        subprocess.run(['git', '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'link'], cwd=repo, check=True)
+        before = quality._tree_key(repo, [['x']])
+        self.assertIsNotNone(before)
+        outside.write_text('changed\n')
+        self.assertNotEqual(quality._tree_key(repo, [['x']]), before, 'a tracked outside symlink target is an input')
 
     def test_f02_unreadable_untracked_input_is_a_cache_miss(self):
         repo = self.repo([[sys.executable, '-c', 'pass']])
@@ -183,6 +324,85 @@ class JsQuickCheckTests(Base):
         self.assertTrue(result['no_checks'])
         self.assertIn('no checks', result['note'].lower())
         self.assertTrue(quality.run_quality_checks([], self.root)['no_checks'])
+
+
+class AuditTransportCleanupTests(unittest.TestCase):
+    def test_f11_cli_transports_kill_a_descendant_when_they_time_out(self):
+        from lib import api
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / 'fake-cli.sh'
+            fake.write_text('#!/bin/sh\nsleep 30 &\necho $! > "$PIDFILE"\nsleep 30\n')
+            fake.chmod(0o755)
+            for name, transport in (('claude', 'claude'), ('codex', 'codex')):
+                pidfile = Path(tmp) / f'{name}.pid'
+                env = {'CLAUDE_AUDIT_BIN': str(fake), 'CODEX_AUDIT_BIN': str(fake), 'PIDFILE': str(pidfile)}
+                with patch.dict(os.environ, env), patch.object(api, 'AUDIT_TRANSPORT', transport):
+                    with self.assertRaises(TimeoutError):
+                        api.call_mimo('prompt', timeout=0.5)
+                self.assertTrue(pidfile.exists(), f'{name}: the fixture never started its descendant')
+                pid = int(pidfile.read_text())
+                time.sleep(0.2)
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    continue
+                os.kill(pid, signal.SIGKILL)
+                self.fail(f'{name}: the descendant {pid} outlived the timed-out transport')
+
+    def _cli_fixture(self, tmp, body):
+        fake = Path(tmp) / 'fake-cli.sh'
+        fake.write_text('#!/bin/sh\n' + body)
+        fake.chmod(0o755)
+        return fake
+
+    def _alive(self, pidfile):
+        try:
+            os.kill(int(pidfile.read_text()), 0)
+        except OSError:
+            return False
+        return True
+
+    def test_f11_grandchild_outliving_the_direct_child_is_killed_promptly(self):
+        from lib.git import safe_run
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, body in (('quiet', 'sleep 30 >/dev/null 2>&1 &\necho $! > "$PIDFILE"\n'), ('holds_pipe', 'sleep 30 &\necho $! > "$PIDFILE"\n')):
+                pidfile = Path(tmp) / name
+                started = time.monotonic()
+                safe_run([str(self._cli_fixture(tmp, body))], env={**os.environ, 'PIDFILE': str(pidfile)}, timeout=20)
+                self.assertLess(time.monotonic() - started, 3, f'{name}: must not wait for the grandchild')
+                time.sleep(0.2)
+                alive = self._alive(pidfile)
+                if alive:
+                    os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                self.assertFalse(alive, f'{name}: grandchild survived')
+
+    def test_f11_sigterm_and_sigint_to_the_hook_leave_no_descendant_on_either_transport(self):
+        for transport in ('claude', 'codex'):
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                with tempfile.TemporaryDirectory() as tmp:
+                    pidfile, ready = Path(tmp) / 'pid', Path(tmp) / 'ready'
+                    fake = self._cli_fixture(tmp, 'sleep 30 &\necho $! > "$PIDFILE"\nsleep 30\n')
+                    code = ('import sys\nfrom pathlib import Path\nsys.path.insert(0, %r)\nfrom lib import api\n'
+                            'api.AUDIT_TRANSPORT = %r\nPath(sys.argv[1]).write_text("x")\n'
+                            'api.call_mimo("p", timeout=60)\n' % (str(HOOKS), transport))
+                    env = {**os.environ, 'CLAUDE_AUDIT_BIN': str(fake), 'CODEX_AUDIT_BIN': str(fake), 'PIDFILE': str(pidfile)}
+                    hook = subprocess.Popen([sys.executable, '-c', code, str(ready)], env=env)
+                    end = time.time() + 10
+                    while not (pidfile.exists() and pidfile.read_text().strip()) and time.time() < end:
+                        time.sleep(0.05)
+                    hook.send_signal(sig)
+                    hook.wait(timeout=10)
+                    time.sleep(0.3)
+                    alive = self._alive(pidfile)
+                    if alive:
+                        os.kill(int(pidfile.read_text()), signal.SIGKILL)
+                    self.assertFalse(alive, f'{transport}/{sig.name}: descendant survived')
+
+    def test_f11_safe_run_reports_timeout_explicitly(self):
+        from lib.git import safe_run
+        with self.assertRaises(TimeoutError):
+            safe_run(['sleep', '5'], timeout=0.3, raise_on_timeout=True)
+
 
 
 if __name__ == '__main__':

@@ -6,6 +6,7 @@ import configparser
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -214,58 +215,49 @@ def acquire_gate_lock(cwd: Path) -> bool:
     if _GATE_FD is not None:
         return True   # this process already holds it
     GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # One file, never unlinked or replaced: a waiter can only ever hold the inode every other process uses, and a
+    # holder that dies (or hangs past the TTL) is still the only owner until the kernel drops its lock.
     for _ in range(3):
         fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             os.close(fd)
-            data = _read_lock() or {}
-            try:
-                forgotten = time.time() - float(data["at"]) > GATE_LOCK_TTL_S
-            except (KeyError, TypeError, ValueError):
-                forgotten = False
-            if not forgotten:
-                return False
-            GATE_LOCK_PATH.unlink(missing_ok=True)   # far older than any budget: break it, a fresh file is taken next
-            continue
-        try:   # the holder may have unlinked this file on release: only the file at the path counts
-            if os.fstat(fd).st_ino != os.stat(GATE_LOCK_PATH).st_ino:
-                os.close(fd)
-                continue
-        except OSError:
-            os.close(fd)
-            continue
-        holder = gate_lock_holder()
-        if holder and int(holder.get("pid", 0)) != os.getpid():
-            os.close(fd)   # diagnostics name a live pid that does not hold the kernel lock (pid reuse or a legacy run)
             return False
-        stale = _read_lock() or {}
+        try:   # an older hook (or a person) may have unlinked or replaced the file: only the file at the path counts
+            if os.fstat(fd).st_ino == os.stat(GATE_LOCK_PATH).st_ino:
+                break
+        except OSError:
+            pass
+        os.close(fd)
+    else:
+        return False
+    holder = gate_lock_holder()
+    if holder and int(holder.get("pid", 0)) != os.getpid():
+        os.close(fd)   # diagnostics name a live pid that does not hold the kernel lock (pid reuse or a legacy run)
+        return False
+    stale = _read_lock() or {}
+    try:
+        pgid = int(stale.get("pgid") or 0)
+    except (TypeError, ValueError):
+        pgid = 0
+    if pgid and pgid not in (os.getpid(), os.getpgrp()) and _alive(pgid):
+        import signal
         try:
-            pgid = int(stale.get("pgid") or 0)
-        except (TypeError, ValueError):
-            pgid = 0
-        if pgid and pgid != os.getpid() and _alive(pgid):
-            import signal
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except OSError:
-                pass
-        _write_lock(fd, {"pid": os.getpid(), "cwd": str(cwd), "at": time.time()})
-        _GATE_FD = fd
-        return True
-    return False
+            os.killpg(pgid, signal.SIGKILL)
+        except OSError:
+            pass
+    _write_lock(fd, {"pid": os.getpid(), "cwd": str(cwd), "at": time.time()})
+    _GATE_FD = fd
+    return True
 
 
 def release_gate_lock() -> None:
     global _GATE_FD
     if _GATE_FD is None:
         return
-    # Unlink only our own file, and while still holding the flock: a waiter that opened it sees the inode
-    # mismatch and retries on the fresh file, so no two holders can ever share a path.
-    try:
-        if os.fstat(_GATE_FD).st_ino == os.stat(GATE_LOCK_PATH).st_ino:
-            GATE_LOCK_PATH.unlink(missing_ok=True)
+    try:   # the file stays (never replaced); an empty one names no holder
+        os.ftruncate(_GATE_FD, 0)
     except OSError:
         pass
     os.close(_GATE_FD)
@@ -337,15 +329,28 @@ def gate_busy(cwd: Path) -> dict | None:
     return None
 
 
+DIGEST_CAP = 16 << 20
+
+
 def _file_digest(path: Path) -> str:
-    """sha256 of an untracked file's bytes (a symlink: of its target text); OSError when unreadable."""
-    if path.is_symlink():
-        return "link:" + os.readlink(path)
-    digest = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """sha256 of a regular file's bytes, read through a symlink (its target can sit outside the tree). OSError for
+    anything else (FIFO, device, directory, dangling link) or a file over DIGEST_CAP, which makes the tree uncacheable."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)   # never blocks on a FIFO
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > DIGEST_CAP:
+            raise OSError(f"{path} is not a regular file within {DIGEST_CAP} bytes")
+        data = b""
+        while len(data) <= DIGEST_CAP:
+            more = os.read(fd, 1 << 20)
+            if not more:
+                break
+            data += more
+        if len(data) > DIGEST_CAP:
+            raise OSError(f"{path} grew past {DIGEST_CAP} bytes")
+        return hashlib.sha256(data).hexdigest()
+    finally:
+        os.close(fd)
 
 
 def _tree_key(cwd: Path, commands: list) -> str | None:
@@ -366,6 +371,17 @@ def _tree_key(cwd: Path, commands: list) -> str | None:
         if rc != 0:
             return None
         parts.append(out)
+    rc, tracked, _ = safe_run(["git", "ls-files", "-s", "-z"], cwd=cwd)
+    if rc != 0:
+        return None
+    root = cwd.resolve()
+    for line in tracked.split("\0"):   # a tracked symlink to a file outside the tree: its target is an input too
+        meta, _, name = line.partition("\t")
+        if meta.startswith("120000") and not (cwd / name).resolve().is_relative_to(root):
+            try:
+                parts.append(f"{name} {_file_digest(cwd / name)}")
+            except OSError:
+                return None
     entries = status.split("\0")
     i = 0
     while i < len(entries):
