@@ -4,13 +4,13 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
 import tempfile
 import time
 import urllib.request
 from pathlib import Path
 
 from .autonomy import hook_env
+from .git import safe_run
 from .log import log
 
 
@@ -133,19 +133,14 @@ def call_claude_cli(
         "--disallowedTools", "Bash Edit Write NotebookEdit",
     ]
     with tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
-        try:
-            completed = subprocess.run(
-                command, input=instruction, text=True, capture_output=True,
-                cwd=workdir, env=env, timeout=timeout, check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(f"Claude audit timed out after {timeout}s") from exc
-    if completed.returncode:
-        detail = (completed.stderr or completed.stdout).strip()[-500:]
-        raise RuntimeError(f"Claude audit failed ({completed.returncode}): {detail}")
+        returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, env=env, input_text=instruction)
+    if returncode:
+        if stderr.startswith("timed out after"):
+            raise TimeoutError(f"Claude audit timed out after {timeout}s")
+        raise RuntimeError(f"Claude audit failed ({returncode}): {(stderr or stdout).strip()[-500:]}")
     elapsed_ms = int((time.monotonic() - started) * 1000)
     log("claude_audit", f"CLAUDE_AUDIT lane={lane} model={CLAUDE_AUDIT_MODEL} effort={CLAUDE_AUDIT_EFFORT} elapsed_ms={elapsed_ms}")
-    return completed.stdout.strip()
+    return stdout.strip()
 
 
 def call_mimo(
@@ -170,17 +165,12 @@ def call_mimo(
             "--config", f'model_reasoning_effort="{CODEX_AUDIT_EFFORT}"',
             "--output-last-message", str(output_path), "-",
         ]
-        try:
-            completed = subprocess.run(
-                command, input=instruction, text=True, capture_output=True,
-                cwd=workdir, timeout=timeout, check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TimeoutError(f"Codex audit timed out after {timeout}s") from exc
-        if completed.returncode:
-            detail = (completed.stderr or completed.stdout).strip()[-500:]
-            raise RuntimeError(f"Codex audit failed ({completed.returncode}): {detail}")
-        response = output_path.read_text(errors="replace").strip() if output_path.exists() else completed.stdout.strip()
+        returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, input_text=instruction)
+        if returncode:
+            if stderr.startswith("timed out after"):
+                raise TimeoutError(f"Codex audit timed out after {timeout}s")
+            raise RuntimeError(f"Codex audit failed ({returncode}): {(stderr or stdout).strip()[-500:]}")
+        response = output_path.read_text(errors="replace").strip() if output_path.exists() else stdout.strip()
     elapsed_ms = int((time.monotonic() - started) * 1000)
     log("codex_audit", f"CODEX_AUDIT lane={lane} model={CODEX_AUDIT_MODEL} effort={CODEX_AUDIT_EFFORT} elapsed_ms={elapsed_ms}")
     return response

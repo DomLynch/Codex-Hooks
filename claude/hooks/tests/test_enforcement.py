@@ -514,7 +514,7 @@ class EnforcementTests(unittest.TestCase):
             self.assertIsNone(quality.gate_busy(self.root), 'a dead holder does not block')
             self.assertTrue(quality.run_project_gate(self.root)['ok'])
             self.assertTrue(marker.exists())
-            self.assertFalse(lock.exists(), 'the lock is released after the run')
+            self.assertIsNone(quality.gate_lock_holder(), 'the lock is released after the run')
 
     def test_a_dead_holders_orphaned_check_is_killed_before_the_next_gate_starts(self):
         # Lead, 2026-09-27: a Stop killed by Claude Code left its node tree running (8-minute quality-stop-targeted

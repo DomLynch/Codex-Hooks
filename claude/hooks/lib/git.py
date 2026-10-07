@@ -38,6 +38,7 @@ def safe_run(
     cwd: str | Path | None = None,
     timeout: int = 30,
     env: dict[str, str] | None = None,
+    input_text: str | None = None,
 ) -> tuple[int, str, str]:
     # Not subprocess.run(timeout=...): on POSIX that kills only the DIRECT child and then calls process.wait(),
     # so everything the child spawned is orphaned and keeps running. The Stop path runs `npm run test:changed`
@@ -52,6 +53,7 @@ def safe_run(
             cmd,
             cwd=str(cwd) if cwd else None,
             text=True,
+            stdin=subprocess.PIPE if input_text is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -60,7 +62,7 @@ def safe_run(
     except Exception as exc:
         return 1, "", str(exc)
     try:
-        out, err = proc.communicate(timeout=timeout)
+        out, err = proc.communicate(input_text, timeout=timeout)
         return proc.returncode, out, err
     except subprocess.TimeoutExpired:
         _kill_process_group(proc)

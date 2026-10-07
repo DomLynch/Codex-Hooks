@@ -214,58 +214,40 @@ def acquire_gate_lock(cwd: Path) -> bool:
     if _GATE_FD is not None:
         return True   # this process already holds it
     GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(3):
-        fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+    # One file, never unlinked or replaced: a waiter can only ever hold the inode every other process uses, and a
+    # holder that dies (or hangs past the TTL) is still the only owner until the kernel drops its lock.
+    fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    holder = gate_lock_holder()
+    if holder and int(holder.get("pid", 0)) != os.getpid():
+        os.close(fd)   # diagnostics name a live pid that does not hold the kernel lock (pid reuse or a legacy run)
+        return False
+    stale = _read_lock() or {}
+    try:
+        pgid = int(stale.get("pgid") or 0)
+    except (TypeError, ValueError):
+        pgid = 0
+    if pgid and pgid != os.getpid() and _alive(pgid):
+        import signal
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.killpg(pgid, signal.SIGKILL)
         except OSError:
-            os.close(fd)
-            data = _read_lock() or {}
-            try:
-                forgotten = time.time() - float(data["at"]) > GATE_LOCK_TTL_S
-            except (KeyError, TypeError, ValueError):
-                forgotten = False
-            if not forgotten:
-                return False
-            GATE_LOCK_PATH.unlink(missing_ok=True)   # far older than any budget: break it, a fresh file is taken next
-            continue
-        try:   # the holder may have unlinked this file on release: only the file at the path counts
-            if os.fstat(fd).st_ino != os.stat(GATE_LOCK_PATH).st_ino:
-                os.close(fd)
-                continue
-        except OSError:
-            os.close(fd)
-            continue
-        holder = gate_lock_holder()
-        if holder and int(holder.get("pid", 0)) != os.getpid():
-            os.close(fd)   # diagnostics name a live pid that does not hold the kernel lock (pid reuse or a legacy run)
-            return False
-        stale = _read_lock() or {}
-        try:
-            pgid = int(stale.get("pgid") or 0)
-        except (TypeError, ValueError):
-            pgid = 0
-        if pgid and pgid != os.getpid() and _alive(pgid):
-            import signal
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except OSError:
-                pass
-        _write_lock(fd, {"pid": os.getpid(), "cwd": str(cwd), "at": time.time()})
-        _GATE_FD = fd
-        return True
-    return False
+            pass
+    _write_lock(fd, {"pid": os.getpid(), "cwd": str(cwd), "at": time.time()})
+    _GATE_FD = fd
+    return True
 
 
 def release_gate_lock() -> None:
     global _GATE_FD
     if _GATE_FD is None:
         return
-    # Unlink only our own file, and while still holding the flock: a waiter that opened it sees the inode
-    # mismatch and retries on the fresh file, so no two holders can ever share a path.
-    try:
-        if os.fstat(_GATE_FD).st_ino == os.stat(GATE_LOCK_PATH).st_ino:
-            GATE_LOCK_PATH.unlink(missing_ok=True)
+    try:   # the file stays (never replaced); an empty one names no holder
+        os.ftruncate(_GATE_FD, 0)
     except OSError:
         pass
     os.close(_GATE_FD)
@@ -338,9 +320,8 @@ def gate_busy(cwd: Path) -> dict | None:
 
 
 def _file_digest(path: Path) -> str:
-    """sha256 of an untracked file's bytes (a symlink: of its target text); OSError when unreadable."""
-    if path.is_symlink():
-        return "link:" + os.readlink(path)
+    """sha256 of an untracked file's bytes, read through a symlink (its target can sit outside the tree); OSError when
+    unreadable, which makes the tree uncacheable (a dangling or directory link included)."""
     digest = hashlib.sha256()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
