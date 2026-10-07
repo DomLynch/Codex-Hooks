@@ -314,6 +314,8 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
     rc, out, err = safe_run(["git", "diff", "--name-only"], cwd=cwd)
     changed = [cwd / line for line in out.splitlines() if line.strip()] if rc == 0 else []
     quality = run_quality_checks(changed, cwd, timeout=120) if changed else {"ok": True, "results": []}
+    if quality.get("note"):
+        log(COMPONENT, "quality: " + quality["note"])
     if not quality.get("ok"):
         checks.append("Quality checks failed:\n" + "\n".join(
             f"- {item['tool']} {item['file']}: {item['output'][:1000]}"

@@ -57,6 +57,10 @@ def seconds_since(iso: str) -> int:
         return 10**9
 
 
+def note(text: str) -> None:
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": text}}))
+
+
 def format_quality_failures(result: dict) -> str:
     lines = ["[Quality Floor] Tool result introduced failing checks. Fix before continuing."]
     for item in result.get("results", []):
@@ -125,6 +129,8 @@ def main() -> None:
             log(COMPONENT, f"quality files={len(target_files)} ok={result.get('ok')} cwd={root}")
             if not result.get("ok"):
                 block(format_quality_failures(result))
+            if result.get("note"):   # not checked is not ok: say so, but do not block
+                note("[Quality Floor] " + result["note"])
         if is_edit:
             update_checkpoint_state(session_id, edits=1, files=files)
             maybe_checkpoint(session_id, cwd)

@@ -655,8 +655,12 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
             results.append(_result(file, "node --check", rc == 0, out + err))
 
     ok = all(item["ok"] for item in results)
+    unchecked = [p.name for p in files if p.suffix == ".jsx" or (p in js_files and not shutil.which("node"))]
+    if results and unchecked:   # audit F17 recheck: some edited files were not checked even though others were
+        return {"ok": ok, "results": results, "unchecked": unchecked,
+                "note": "not checked (no applicable checker): " + ", ".join(unchecked)}
     if not results:   # audit F17: "passed" and "nothing applicable ran" are different answers
-        return {"ok": ok, "results": results, "no_checks": True,
+        return {"ok": ok, "results": results, "no_checks": True, "unchecked": unchecked,
                 "note": "no checks ran: no applicable checker for the edited files (nothing was verified)"}
     return {"ok": ok, "results": results}
 

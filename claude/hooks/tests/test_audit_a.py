@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -183,6 +184,25 @@ class JsQuickCheckTests(Base):
         self.assertTrue(result['no_checks'])
         self.assertIn('no checks', result['note'].lower())
         self.assertTrue(quality.run_quality_checks([], self.root)['no_checks'])
+
+    def test_f17_unchecked_files_are_named_even_when_others_ran(self):
+        jsx = self.root / 'page.jsx'
+        jsx.write_text('const a = <div>;\n')
+        good = self.root / 'good.js'
+        good.write_text('const x = 1;\n')
+        result = quality.run_quality_checks([good, jsx], self.root)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['unchecked'], ['page.jsx'])
+        self.assertIn('page.jsx', result['note'])
+        self.assertNotIn('unchecked', quality.run_quality_checks([good], self.root))
+
+    def test_f17_js_without_node_is_unchecked_not_silent(self):
+        good = self.root / 'good.js'
+        good.write_text('const x = 1;\n')
+        with mock.patch.object(quality.shutil, 'which', return_value=None):
+            result = quality.run_quality_checks([good], self.root)
+        self.assertTrue(result['no_checks'])
+        self.assertEqual(result['unchecked'], ['good.js'])
 
 
 if __name__ == '__main__':
