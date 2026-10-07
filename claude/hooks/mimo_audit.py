@@ -290,7 +290,8 @@ def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> st
     mtime, still count), then the tracked diff. The evidence for a turn that changed code through Bash and so has no
     Edit-tool paths. A path untracked before the turn is not this turn's change. Every changed path counts for the
     skip decision; only the evidence is capped, and it says so. Each part stands alone: a dangling symlink or an
-    unreadable file costs only itself, never the tracked diff."""
+    unreadable file costs only itself, never the tracked diff. Known limit: an edit inside a nested repository that
+    existed before the turn is invisible here (git lists only the directory and its change time does not move)."""
     import subprocess
     from datetime import datetime
     tracked = ""
