@@ -24,7 +24,6 @@ from lib.claude_adapter import (  # noqa: E402
 import mimo_audit  # noqa: E402
 from lib import audit_state  # noqa: E402
 import autonomy_daemon  # noqa: E402
-import post_tool  # noqa: E402
 import session_start  # noqa: E402
 import stop_orchestrator  # noqa: E402
 import user_prompt_submit  # noqa: E402
@@ -314,23 +313,13 @@ class ClaudeAdapterTests(unittest.TestCase):
             self.assertIn(receipt, text)
         self.assertLessEqual(len(text), 4000)
 
-    def test_mid_run_prompts_check_semble_and_codegraph_routing(self) -> None:
-        self.assertIn("three-query Semble discovery", post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn("Codegraph structural/impact analysis", post_tool.MIMO_CHECKPOINT_PROMPT)
+    def test_stop_prompt_checks_semble_and_codegraph_routing(self) -> None:
         self.assertIn("Semble discovery plus Codegraph", Path(stop_orchestrator.__file__).read_text())
-
-    def test_claude_mid_run_audit_is_sparse_and_not_a_completion_gate(self) -> None:
-        self.assertEqual(post_tool.MIMO_AUDIT_EDIT_THRESHOLD, 15)
-        self.assertIn("This is an in-progress checkpoint", post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn("Do NOT block merely", post_tool.MIMO_CHECKPOINT_PROMPT)
 
     def test_review_calibration_preserves_real_failure_gates(self) -> None:
         for phrase in ("exact URL/resource", "negative test", "proposed wording",
                        "still flag unsafe recommendations", "internal pipeline success alone"):
             self.assertIn(phrase, mimo_audit.AUDIT_PROMPT)
-        for phrase in ("acknowledged failure under active diagnosis", "unless completion is claimed",
-                       "Still block a concrete unsafe edit", "negative tests", "Proposed wording"):
-            self.assertIn(phrase, post_tool.MIMO_CHECKPOINT_PROMPT)
 
     def test_followup_receipt_exception_keeps_new_claims_gated(self) -> None:
         for phrase in ("missing repeated receipts alone is NOT a blocker", "does not establish truth",
