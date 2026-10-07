@@ -86,8 +86,6 @@ def test_f03_deferral_alone_is_one_json(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(so, "pending_quality", lambda *a, **k: [str(deferred)])
     monkeypatch.setattr(so, "run_aaa_gate",
                         lambda cwd, *a, **k: so.defer_gate({"reason": "deploy in flight"}, k.get("session_id", "s")))
-    monkeypatch.setattr(so, "audit_with_claude", lambda *a, **k: True)
-    monkeypatch.setattr(so, "wait_for_mimo_pass", lambda *a, **k: True)
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
     so.main()
     parsed = json.loads(capsys.readouterr().out)
@@ -121,16 +119,12 @@ def test_f05_same_turn_rehome_still_exempt(tmp_path):
 def test_f12_prefix_verdicts_are_not_accepted(text):
     assert not valid_verdict(text)
     assert not valid_verdict(normalize_verdict(text))
-    assert so.parse_verdict(text)[0] != "PASS"
 
 
 def test_f12_exact_verdicts_still_accepted():
     assert valid_verdict(normalize_verdict("VERDICT: PASS"))
     assert valid_verdict(normalize_verdict("PASS."))
     assert valid_verdict(normalize_verdict("VERDICT: ISSUES\n1. real finding"))
-    assert so.parse_verdict("VERDICT: PASS\nfine")[0] == "PASS"
-    assert so.parse_verdict("VERDICT: ISSUES\n1. x")[0] == "ISSUES"
-    assert so.parse_verdict("")[0] == "ERROR"
 
 
 # --- F13 -------------------------------------------------------------------
@@ -151,28 +145,6 @@ def test_f13_plain_allow_stays_silent(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         mimo_audit.allow_stop("audit passed")
     assert capsys.readouterr().out == ""
-
-
-# --- F14 -------------------------------------------------------------------
-def test_f14_secondary_reviewer_cap_stops_blocking(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(so, "CLAUDE_ITERATIONS_PATH", tmp_path / "iters.json")
-    monkeypatch.setattr(so, "log", lambda *a, **k: None)
-    monkeypatch.setattr(so, "CLAUDE_AUDIT_ENABLED", True)
-    monkeypatch.setattr(so, "call_claude", lambda *a, **k: "VERDICT: ISSUES\n1. still wrong")
-    results, notes = [], []
-    for _ in range(5):
-        so._SYSTEM_MESSAGES.clear()
-        so._EMITTED = False   # each iteration stands for a separate hook process
-        try:
-            results.append(so.audit_with_claude("s1", "x" * 500, ""))
-        except SystemExit:
-            results.append("blocked")
-        notes.append(list(so._SYSTEM_MESSAGES))
-    out = capsys.readouterr().out
-    assert results[:2] == ["blocked", "blocked"]
-    assert results[2] not in ("blocked", True), f"cap must stop blocking without approving: {results}"
-    assert notes[2], "terminal state needs a visible note"
-    assert out.count('"decision"') == 4   # blocks 1-2, terminal release, then the counter restarts
 
 
 # --- F10 -------------------------------------------------------------------
@@ -268,23 +240,3 @@ def test_f04_turn_id_ignores_appended_metadata_but_not_a_new_user_turn(tmp_path)
     _jl(p, base + [_user("another thing", "2026-10-07T11:00:00Z", uuid="u2"), _say("ok")])
     assert synthesize_turn_id("s1", str(p), False) != first
 
-
-def test_f04_stale_pass_from_an_earlier_attempt_does_not_approve(tmp_path, monkeypatch):
-    verdicts = tmp_path / "v.json"
-    old = time.time() - 3600
-    verdicts.write_text(json.dumps({"s1": {"turn_id": "T", "verdict": "PASS", "updated_at": old, "started_at": old}}))
-    monkeypatch.setattr(so, "MIMO_VERDICT_PATH", verdicts)
-    monkeypatch.setattr(so, "MIMO_WAIT_TIMEOUT_S", 0.3)
-    real_sleep = time.sleep
-    monkeypatch.setattr(so.time, "sleep", lambda s: real_sleep(0.05))
-    monkeypatch.setattr(so, "log", lambda *a, **k: None)
-    assert so.wait_for_mimo_pass("s1", "T") is False
-
-
-def test_f04_current_attempt_pass_approves(tmp_path, monkeypatch):
-    verdicts = tmp_path / "v.json"
-    monkeypatch.setattr(audit_state, "VERDICT_FILE", verdicts)
-    audit_state.save_verdict("s1", "T", "PASS", "VERDICT: PASS")
-    monkeypatch.setattr(so, "MIMO_VERDICT_PATH", verdicts)
-    monkeypatch.setattr(so, "log", lambda *a, **k: None)
-    assert so.wait_for_mimo_pass("s1", "T") is True

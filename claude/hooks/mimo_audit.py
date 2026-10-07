@@ -316,7 +316,7 @@ class AuditBudgetExceeded(RuntimeError):
 
 # One absolute deadline for the whole attempt (every model call, retry, repair and the final output), set in main().
 # 2026-10-07 audit: retry + empty-response + format-repair could add up to 501 s against the 240 s hook budget.
-AUDIT_ATTEMPT_BUDGET_S = 205      # < stop_orchestrator.MIMO_WAIT_TIMEOUT_S (215) < AUDIT_HOOK_TIMEOUT_S (240)
+AUDIT_ATTEMPT_BUDGET_S = 205      # < AUDIT_HOOK_TIMEOUT_S (240)
 AUDIT_FINISH_RESERVE_S = 5        # kept back for cleanup and the final stdout write
 AUDIT_MIN_CALL_S = 5
 _DEADLINE: list[float] = []

@@ -107,10 +107,9 @@ class EnforcementTests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != 'CODEX_HOOK_AUTO_PR'}
         env['HOME'] = str(self.root)
         out = subprocess.check_output(
-            [sys.executable, '-c', 'import stop_orchestrator, post_tool; '
-             'print(stop_orchestrator.AUTO_PR_ENABLED, post_tool.CHECKPOINTS_ENABLED)'],
+            [sys.executable, '-c', 'import post_tool; print(post_tool.CHECKPOINTS_ENABLED)'],
             cwd=hooks, env=env, text=True)
-        self.assertEqual(out.split(), ['False', 'False'])
+        self.assertEqual(out.split(), ['False'])
 
     def test_commit_stages_only_the_files_the_session_edited(self):
         from lib import git as git_tools
@@ -574,16 +573,13 @@ class EnforcementTests(unittest.TestCase):
         cache = self.root / 'gate-cache.json'
         self.assertEqual(json.loads(cache.read_text() or '{}') if cache.exists() else {}, {})
 
-    def test_a_deferred_gate_stays_pending_and_blocks_auto_pr(self):
-        # Audit C: a deferred gate returned like a pass, the whole pending queue was cleared, and auto-PR could run.
+    def test_a_deferred_gate_stays_pending(self):
+        # Audit C: a deferred gate returned like a pass, the whole pending queue was cleared.
         one, two = self.root.resolve()/'one', self.root.resolve()/'two'
         outcomes = {str(one): True, str(two): stop_orchestrator.DEFERRED}
         with (
             patch.object(quality, 'PENDING_PATH', self.root/'pending.json'),
             patch.object(stop_orchestrator, 'run_aaa_gate', side_effect=lambda cwd, *a, **k: outcomes.get(str(cwd), True)),
-            patch.object(stop_orchestrator, 'audit_with_claude', return_value=True),
-            patch.object(stop_orchestrator, 'wait_for_mimo_pass', return_value=True),
-            patch.object(stop_orchestrator, 'commit_push_pr', return_value=('', '', '', 'skipped')) as auto_pr,
             patch.object(stop_orchestrator, 'is_git_repo', return_value=False),
             patch.object(stop_orchestrator, 'resolve_git_cwd', return_value=self.root),
             patch.object(stop_orchestrator, 'remember_repo'),
@@ -596,12 +592,10 @@ class EnforcementTests(unittest.TestCase):
                 quality.pending_quality('s1', repo)
             stop_orchestrator.main()
             self.assertEqual(quality.pending_quality('s1'), [str(two.resolve())], 'the deferred repo is still owed a gate')
-            auto_pr.assert_not_called()
             outcomes[str(two)] = True
             with patch('sys.stdin', io.StringIO(json.dumps({'session_id': 's1', 'cwd': str(self.root)}))):
                 stop_orchestrator.main()
             self.assertEqual(quality.pending_quality('s1'), [])
-            auto_pr.assert_called_once()
 
     def test_project_timeout_is_bounded_and_overridable(self):
         self.contract([[sys.executable, '-c', 'pass']])
