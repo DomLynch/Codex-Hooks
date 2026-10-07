@@ -131,7 +131,7 @@ def entries_from_lines(slice_entries: list[dict]) -> list[tuple[str, str]]:
                     if not isinstance(item, dict):
                         continue
                     if item.get("type") == "tool_result":
-                        result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content")}, calls)
+                        result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content"), "is_error": item.get("is_error")}, calls)
                         if result:
                             out.append(result)
         elif etype == "assistant":
@@ -151,7 +151,7 @@ def entries_from_lines(slice_entries: list[dict]) -> list[tuple[str, str]]:
         elif etype == "tool_result" and isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "tool_result":
-                    result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content")}, calls)
+                    result = tool_entry({"type": "function_call_output", "call_id": item.get("tool_use_id"), "output": item.get("content"), "is_error": item.get("is_error")}, calls)
                     if result:
                         out.append(result)
 

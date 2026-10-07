@@ -60,13 +60,54 @@ def _tool_output_text(output: object) -> str:
     return "\n".join(parts)
 
 
+class CallText(str):
+    """Shortened call text for display; `.full` is the complete, unshortened `name: args` for decisions."""
+    full: str = ""
+    name: str = ""
+    args: str = ""
+
+
+def _full_command(call: object) -> tuple[str | None, str | None]:
+    """(complete command, cwd) of a recorded call: the `command` of a JSON tool input, else the raw arguments."""
+    args = getattr(call, "args", "")
+    if not args:
+        return None, None
+    try:
+        data = json.loads(args)
+    except (ValueError, TypeError):
+        return args, None
+    if isinstance(data, dict):
+        command = data.get("command") or data.get("cmd")
+        cwd = data.get("cwd") or data.get("workdir")
+        if isinstance(command, list):
+            command = " ".join(str(c) for c in command)
+        return (str(command) if command else args), (str(cwd) if cwd else None)
+    return args, None
+
+
+class ToolOutputBody(str):
+    """TOOL OUTPUT body for display. The attributes are the structured evidence the correctness gates decide on
+    (never re-parsed from the shortened text): the COMPLETE command, the tool-use id, native success/failure."""
+    command: str | None = None
+    cwd: str | None = None
+    text: str = ""
+    tool_use_id: str = ""
+    is_error: bool | None = None
+    exit_status: int | None = None
+
+
+_EXIT_CODE_RE = re.compile(r"^\s*(?:Exit code|exit status|Process exited with code)\s*[:=]?\s*(-?\d+)", re.IGNORECASE)
+
+
 def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
     kind = payload.get("type")
     call_id = str(payload.get("call_id") or "unknown")
     if kind in {"function_call", "custom_tool_call"}:
         name = str(payload.get("name") or "tool")
         args = str(payload.get("arguments") or payload.get("input") or "")
-        calls[call_id] = compact(f"{name}: {args}", 300)
+        calls[call_id] = CallText(compact(f"{name}: {args}", 300))
+        calls[call_id].full = f"{name}: {args}"
+        calls[call_id].name, calls[call_id].args = name, args
         cap = 8000 if name.lower() in {"apply_patch", "edit", "write", "multi_edit", "multiedit", "apply_diff"} else 800
         return "TOOL CALL", f"{name}: [{call_id}] {compact(args, cap)}"
     if kind in {"function_call_output", "custom_tool_call_output"}:
@@ -76,7 +117,16 @@ def tool_entry(payload: dict, calls: dict[str, str]) -> tuple[str, str] | None:
         body = compact(text, 1000)
         failure = _failure_excerpt(text, 350) if len(text) > 1000 else ""
         receipt = _receipt_excerpt(text, body, 300) if len(text) > 1000 else ""
-        return "TOOL OUTPUT", f"[{call_id}] {command}\n{failure}\n{receipt}\n{body}"
+        result = ToolOutputBody(f"[{call_id}] {command}\n{failure}\n{receipt}\n{body}")
+        result.command, result.cwd = _full_command(calls.get(call_id))
+        result.text = text
+        result.tool_use_id = call_id
+        is_error = payload.get("is_error")
+        result.is_error = is_error if isinstance(is_error, bool) else None
+        status = payload.get("exit_status")
+        match = _EXIT_CODE_RE.match(text)
+        result.exit_status = status if isinstance(status, int) else (int(match.group(1)) if match else None)
+        return "TOOL OUTPUT", result
     return None
 
 
@@ -170,10 +220,13 @@ def _check_identity(first_line: str) -> tuple[str, frozenset[str]] | None:
     the coverage-neutral allow-list, or any argument that is not a recognizable path, gets an opaque target: the
     exact command. It is the same check as itself and covers nothing else, because "I could not tell what ran"
     must never mean "everything ran"."""
-    m = TEST_RUNNER_RE.search(first_line)
+    return _identity_from_text(first_line.split(":", 1)[-1] if first_line.startswith("[") else first_line)
+
+
+def _identity_from_text(text: str) -> tuple[str, frozenset[str]] | None:
+    m = TEST_RUNNER_RE.search(text)
     if not m:
         return None
-    text = first_line.split(":", 1)[-1] if first_line.startswith("[") else first_line
     j = _COMMAND_JSON_RE.search(text)
     command = j.group(1).encode().decode("unicode_escape", "ignore") if j else text
     runner = " ".join(m.group(1).lower().split())
@@ -216,6 +269,24 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
     return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
 
 
+_NEGATIVE_CHECK_RE = re.compile(r"(?:^|[;&|(]\s*|\bcd [^;&|]*&&\s*)(?:!\s|test\s+!\s)|\|\|\s*(?:true|:|exit 0)\b")
+
+
+def _native_failure(body: str, command: str | None) -> bool:
+    """The tool itself reported failure (is_error / non-zero exit). A command written to fail (`! cmd`, `|| true`)
+    is not a failed check on that signal alone."""
+    failed = getattr(body, "is_error", None) is True or (getattr(body, "exit_status", None) or 0) != 0
+    return failed and not (command and _NEGATIVE_CHECK_RE.search(command))
+
+
+def _native_failure_text(body: str) -> str:
+    """Output text only EXPLAINS a failure already established by the native status."""
+    lines = [ln.strip() for ln in (getattr(body, "text", "") or "").splitlines() if ln.strip()]
+    status = getattr(body, "exit_status", None)
+    head = f"[tool reported failure, exit {status}]" if status is not None else "[tool reported failure (is_error)]"
+    return _bounded_compact(head + "\n" + "\n".join(lines[-6:]), 300)
+
+
 def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: str) -> str:
     """Deterministic gate for the most common audit finding: a test/check runner failed
     this turn and the final message says nothing about it.
@@ -229,11 +300,15 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
     for role, body in entries:
         if role != "TOOL OUTPUT":
             continue
-        first = body.split("\n", 1)[0]
-        identity = _check_identity(first)
+        # Decide from the COMPLETE command when the evidence record carries it; the first display line is a
+        # shortened presentation and only the fallback for plain-text entries.
+        full = getattr(body, "command", None)
+        identity = _identity_from_text(full) if full else _check_identity(body.split("\n", 1)[0])
         if not identity:
             continue
         excerpt = _failure_excerpt(body, 300)
+        if not excerpt and _native_failure(body, full):
+            excerpt = _native_failure_text(body)
         if excerpt:
             failed[identity] = excerpt
             continue
