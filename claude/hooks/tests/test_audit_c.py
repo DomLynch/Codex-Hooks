@@ -102,6 +102,11 @@ class CheckIdentityTests(unittest.TestCase):
             (run("a", "cd /tmp/a && pytest tests/test_api.py", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False, cwd="/tmp/b")),
             (run("a", "cd /tmp/a && pytest tests/test_api.py", FAIL, True), run("m", "cd /tmp/b", "", False), run("b", "pytest tests/test_api.py", PASS, False)),
             (run("a", "ssh h 'cd /srv/a && pytest tests/test_api.py'", FAIL, True), run("b", "cd /tmp/b && pytest tests/test_api.py", PASS, False)),
+            # two DIFFERENT unknown places are not one place (relative, variable and subshell targets)
+            (run("a", "cd frontend && pytest tests/test_api.py", FAIL, True), run("b", "cd backend && pytest tests/test_api.py", PASS, False)),
+            (run("a", "cd $A && pytest tests/test_api.py", FAIL, True), run("b", "cd $B && pytest tests/test_api.py", PASS, False)),
+            (run("a", "(cd /tmp/a && pytest tests/test_api.py)", FAIL, True), run("b", "(cd /tmp/b && pytest tests/test_api.py)", PASS, False)),
+            (run("a", "(cd /tmp/a && pytest tests/test_api.py)", FAIL, True), run("b", "pytest tests/test_api.py", PASS, False)),
         ):
             self.assertNotEqual(gate(turn(*runs), "Done."), "", runs[0][0]["message"]["content"][0]["input"]["command"])
 

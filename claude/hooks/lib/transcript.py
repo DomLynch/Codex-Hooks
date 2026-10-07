@@ -270,7 +270,7 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
 
 
 _NEGATED_RUNNER_RE = re.compile(r"^\s*(?:!\s|test\s+!\s)|\|\|\s*(?:true|:|exit 0)\b")
-_CD_RE = re.compile(r"(?:^|[;&|]\s*)cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|]+)")
+_CD_RE = re.compile(r"(?:^|[;&|(]\s*)cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|)]+)")
 
 
 def _runner_is_negated(command: str) -> bool:
@@ -280,24 +280,27 @@ def _runner_is_negated(command: str) -> bool:
     return bool(segments) and all(_NEGATED_RUNNER_RE.search(seg) for seg in segments)
 
 
-def _apply_cds(command: str, cwd: str) -> str:
-    """The directory after the top-level `cd`s in `command` (a `cd` inside quotes, such as an ssh string, does not
-    move this shell). A target with a variable or substitution, or a relative target with no known base, leaves the
-    directory unknown ('') rather than guessed."""
+def _apply_cds(command: str, cwd: str, persist: bool = False) -> str:
+    """The directory after the `cd`s in `command` (a `cd` inside quotes, such as an ssh string, does not move this
+    shell; with persist=True a `cd` inside a ( subshell ) does not either). A target that cannot be resolved (a
+    variable, or a relative path with no known base) makes the directory '?'+its text: the same text matches itself
+    and nothing else, so two different unknown places never look like one."""
     import os
 
     for match in _CD_RE.finditer(command):
         before = command[: match.start()]
-        if before.count("'") % 2 or before.count('"') % 2:
+        if before.count("'") % 2 or before.count('"') % 2 or (persist and match.group(0).lstrip().startswith("(")):
             continue
         target = os.path.expanduser(match.group(1).strip("\"'"))
         if any(ch in target for ch in "$`("):
-            cwd = ""
+            cwd = f"?{target}"   # usually an absolute path in a variable: it replaces the directory, it does not extend it
         elif os.path.isabs(target):
             cwd = target
+        elif cwd and not cwd.startswith("?"):
+            cwd = os.path.join(cwd, target)
         else:
-            cwd = os.path.join(cwd, target) if cwd else ""
-    return os.path.normpath(cwd) if cwd else ""
+            cwd = f"?{target}"   # relative to a directory we cannot know: the same text matches itself, nothing else
+    return cwd if cwd.startswith("?") else (os.path.normpath(cwd) if cwd else "")
 
 
 def _check_cwd(command: str, tool_cwd: str | None, shell_cwd: str) -> str:
@@ -340,7 +343,7 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
         # shortened presentation and only the fallback for plain-text entries.
         full = getattr(body, "command", None)
         where = _check_cwd(full or "", getattr(body, "cwd", None), shell_cwd)
-        shell_cwd = _apply_cds(full or "", getattr(body, "cwd", None) or shell_cwd)
+        shell_cwd = _apply_cds(full or "", getattr(body, "cwd", None) or shell_cwd, persist=True)
         identity = _identity_from_text(full) if full else _check_identity(body.split("\n", 1)[0])
         if not identity:
             continue
