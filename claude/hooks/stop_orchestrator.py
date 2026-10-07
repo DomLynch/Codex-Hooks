@@ -39,6 +39,7 @@ from lib.transcript import edited_paths
 from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
 from lib.audit_state import retry_turn_id
+from lib.verdicts import normalize_verdict, verdict_status
 
 
 COMPONENT = "stop_orchestrator"
@@ -86,18 +87,44 @@ AUTO_PR_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "0") == "1"
 CLAUDE_AUDIT_ENABLED = hook_env("CODEX_HOOK_CLAUDE_AUDIT", "1") != "0"
 
 
-def block(reason: str) -> None:
-    sys.stdout.write(json.dumps({"decision": "block", "reason": reason}))
+# The Stop output is ONE JSON value. Helpers record notices here; block() and flush_notices() are the only writers,
+# and _EMITTED stops a second object (a deferral object then a block object was invalid JSON: 'Extra data', so
+# Claude Code dropped the block).
+_CONTEXT_NOTES: list[str] = []     # additionalContext: continues the turn with information
+_SYSTEM_MESSAGES: list[str] = []   # systemMessage: shown to the user
+_EMITTED = False
+
+
+def _emit(obj: dict) -> None:
+    global _EMITTED
+    if _EMITTED:
+        return
+    _EMITTED = True
+    sys.stdout.write(json.dumps(obj))
     sys.stdout.flush()
+
+
+def flush_notices() -> None:
+    out: dict = {}
+    if _CONTEXT_NOTES:
+        out["hookSpecificOutput"] = {"hookEventName": "Stop", "additionalContext": "\n".join(_CONTEXT_NOTES)}
+    if _SYSTEM_MESSAGES:
+        out["systemMessage"] = "\n".join(_SYSTEM_MESSAGES)
+    if out:
+        _emit(out)
+
+
+def block(reason: str) -> None:
+    notes = [*_CONTEXT_NOTES, *_SYSTEM_MESSAGES]
+    _emit({"decision": "block", "reason": reason + ("\n\n" + "\n".join(notes) if notes else "")})
     sys.exit(0)
 
 
 def parse_verdict(text: str) -> tuple[str, str]:
-    stripped = (text or "").strip()
-    if stripped.startswith("VERDICT: PASS"):
-        return "PASS", stripped
-    if stripped.startswith("VERDICT: ISSUES"):
-        return "ISSUES", stripped
+    stripped = normalize_verdict(text)
+    status = verdict_status(stripped)
+    if status:
+        return status, stripped
     if stripped:
         return "ISSUES", "VERDICT: ISSUES\n1. Auditor returned nonstandard review text. Treat it as blocking feedback.\n\n" + stripped[:1800]
     return "ERROR", ""
@@ -115,7 +142,10 @@ def save_claude_iterations(session_id: str, value: int) -> None:
     update_json_locked(CLAUDE_ITERATIONS_PATH, updater)
 
 
-def audit_with_claude(session_id: str, transcript: str, session_spec: str) -> bool:
+UNRESOLVED = "unresolved"   # audit_with_claude's terminal outcome: stop blocking, but never approve side effects
+
+
+def audit_with_claude(session_id: str, transcript: str, session_spec: str) -> bool | str:
     if not CLAUDE_AUDIT_ENABLED:
         log(COMPONENT, "claude audit disabled by CODEX_HOOK_CLAUDE_AUDIT=0")
         return True
@@ -166,11 +196,19 @@ Current task transcript:
     count = claude_iterations(session_id) + 1
     save_claude_iterations(session_id, count)
     if count >= MAX_CLAUDE_ITERATIONS:
-        log(COMPONENT, f"claude max iterations reached ({count}); blocking side effects")
-        block(f"[Claude audit — max iterations {count}/{MAX_CLAUDE_ITERATIONS}]\n\n{normalized}\n\nStopping side effects instead of shipping unapproved code.")
-        return False
+        # Terminal unresolved state: the cap used to change only the message, so attempts 1-5 all blocked.
+        log(COMPONENT, f"claude max iterations reached ({count}); releasing the stop unresolved, side effects skipped")
+        save_claude_iterations(session_id, 0)
+        _SYSTEM_MESSAGES.append(
+            f"[Claude audit] Review limit reached ({count}/{MAX_CLAUDE_ITERATIONS}) without PASS. Outstanding findings are "
+            f"unresolved; this is not completion and no commit/PR was made.\n{normalized[:1200]}")
+        return UNRESOLVED
     block(f"[Claude audit — iteration {count}/{MAX_CLAUDE_ITERATIONS}]\n\n{normalized}\n\nFix these before stopping.")
     return False
+
+
+ATTEMPT_STARTED_AT = time.time()
+ATTEMPT_SLACK_S = 30   # the reviewer starts alongside this hook; allow for launch skew, not for an earlier attempt
 
 
 def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
@@ -180,7 +218,10 @@ def wait_for_mimo_pass(session_id: str, turn_id: str) -> bool:
         state = load_json_locked(MIMO_VERDICT_PATH, {}).get(session_id) or {}
         observed_turn = str(state.get("turn_id") or "")
         observed_verdict = str(state.get("verdict") or "")
-        if state and (not turn_id or state.get("turn_id") == turn_id):
+        # A verdict only counts if it was written by THIS attempt: retry chains reuse the turn id, so an older PASS
+        # (or one an hour old) has the right turn id and must still be ignored.
+        started = float(state.get("started_at") or state.get("updated_at") or 0) if state else 0.0
+        if state and started >= ATTEMPT_STARTED_AT - ATTEMPT_SLACK_S and (not turn_id or state.get("turn_id") == turn_id):
             updated_at = float(state.get("updated_at") or 0)
             age = time.time() - updated_at
             if not turn_id and age > 120:
@@ -227,9 +268,8 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
     if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == key:
         return DEFERRED
     update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: key})
-    sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext":
-        f"[Repository Quality Gate] deferred: {why}; "
-        "the gate runs on a later Stop, and the PR's CI still covers this change."}}))
+    _CONTEXT_NOTES.append(f"[Repository Quality Gate] deferred: {why}; "
+                          "the gate runs on a later Stop, and the PR's CI still covers this change.")
     return DEFERRED
 
 
@@ -536,6 +576,10 @@ STATUS: COMPLETE
 
 
 def main() -> None:
+    global _EMITTED
+    _EMITTED = False   # one process = one hook run; tests call main() repeatedly in-process
+    _CONTEXT_NOTES.clear()
+    _SYSTEM_MESSAGES.clear()
     exit_if_audit_child()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -575,7 +619,10 @@ def main() -> None:
                 deferred.append(str(cwd))
         if pending:
             pending_quality(session_id, done=[p for p in pending if p not in deferred])
-        if not audit_with_claude(session_id, transcript, session_spec):
+        audit = audit_with_claude(session_id, transcript, session_spec)
+        if not audit:
+            return
+        if audit == UNRESOLVED:
             return
         if not wait_for_mimo_pass(session_id, turn_id):
             log(COMPONENT, f"side effects skipped: {AUDITOR_NAME} did not pass current turn")
@@ -605,6 +652,8 @@ def main() -> None:
     except Exception as exc:
         log(COMPONENT, f"gate error: {exc}")
         block(f"[Repository Quality Gate] Unable to verify completion: {exc}")
+    finally:
+        flush_notices()
 
 
 if __name__ == "__main__":

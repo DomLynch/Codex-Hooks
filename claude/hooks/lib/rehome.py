@@ -28,12 +28,20 @@ def _last_tool_use_name(transcript_path: str) -> str:
             lines = fh.read().decode("utf-8", errors="ignore").splitlines()
     except OSError:
         return ""
+    from .claude_adapter import is_turn_start   # lazy: claude_adapter is heavier than this fast-exit path needs
+
     for line in reversed(lines):
-        if '"tool_use"' not in line:
-            continue
         try:
             entry = json.loads(line)
         except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        # The exemption belongs to the CURRENT user turn only: a user prompt after the last tool_use means this
+        # turn made no tool call of its own (an earlier turn's change_directory must not skip this turn's review).
+        if is_turn_start(entry):
+            return ""
+        if '"tool_use"' not in line:
             continue
         content = (entry.get("message") or {}).get("content")
         if not isinstance(content, list):

@@ -319,7 +319,9 @@ class BoundedAuditErrorTests(unittest.TestCase):
             self.assertIn("attempt 2/3", out2["reason"])
             self.assertFalse((Path(tmp) / "esc").exists(), "no escalation before the cap")
             out3 = self._run(mimo_audit, tmp, "E", boom)
-            self.assertEqual(out3, {}, "third failure releases the turn (allow = empty stdout)")
+            # Updated for audit F13: an unresolved release is allow + a visible systemMessage, never a block.
+            self.assertNotIn("decision", out3, "third failure releases the turn (allow, no block)")
+            self.assertIn("unresolved", out3["systemMessage"])
             files = list((Path(tmp) / "esc").glob("E-*.md"))
             self.assertEqual(len(files), 1)
             body = files[0].read_text()

@@ -40,7 +40,7 @@ from lib.audit_state import (  # noqa: E402
     reset_consecutive_blocks, retry_turn_id, save_iterations, save_verdict, write_escalation,
 )
 from lib.audit_prompt import AUDIT_PROMPT, FORMAT_REPAIR_PROMPT  # noqa: E402
-from lib.verdicts import ADVISORY_RE, ELISION_RE, QUOTE_RE, _norm, normalize_verdict, valid_verdict, void_finding  # noqa: E402
+from lib.verdicts import ADVISORY_RE, ELISION_RE, QUOTE_RE, _norm, normalize_verdict, valid_verdict, verdict_status, void_finding  # noqa: E402
 from lib.transcript import DIFF_CAP, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_commits, turn_commits_diff, turn_diff  # noqa: E402
 from lib import ledger  # noqa: E402
 from lib.git import resolve_git_cwd, trunk_branch  # noqa: E402
@@ -122,8 +122,12 @@ def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
         log(f"HANDOFF_CHECK: {'ready' if 'Backup verified' in notice else 'not ready'}")
         print(notice, file=sys.stderr)
     if unresolved:
-        print(f"[{AUDITOR_NAME}] Review limit reached without PASS. "
-              "Outstanding work is unresolved; this is not completion.", file=sys.stderr)
+        message = (f"[{AUDITOR_NAME}] Review limit reached without PASS. "
+                   "Outstanding work is unresolved; this is not completion.")
+        print(message, file=sys.stderr)
+        # Claude Code shows a successful hook's stderr only in the debug log; systemMessage is the visible channel.
+        sys.stdout.write(json.dumps({"systemMessage": message}))
+        sys.stdout.flush()
     sys.exit(0)
 
 
@@ -280,6 +284,25 @@ def contentless_turn(answer: str, edited: list) -> str:
     return f"no edits, no claim, {len(text)} chars"
 
 
+def worktree_diff(repo_cwd: str, cap: int = DIFF_CAP) -> str:
+    """Tracked changes in the working tree vs HEAD ('' when clean, not a repo, or git fails). The evidence for a turn
+    that changed code through Bash (sed, a script) and so has no Edit-tool paths."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", repo_cwd, "diff", "HEAD", "--no-color"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip()[:cap] if out.returncode == 0 else ""
+
+
+def has_change_evidence(repo_cwd: str, entries: list, since: str) -> bool:
+    """A turn that ran tools and left a diff or commits behind is not a no-work turn, whatever its answer says.
+    Resolved BEFORE the SKIP_CONTENTLESS shortcut: 'Updated.' after a Bash sed edit got zero model calls."""
+    if not any(role == "TOOL CALL" for role, _ in entries):
+        return False
+    return bool(turn_commits(repo_cwd, since) or worktree_diff(repo_cwd))
+
+
 def is_chat_turn(transcript: str) -> bool:
     # Review work requests regardless of how the assistant phrases its handoff.
     request, _, answer = transcript.rpartition("ASSISTANT:")
@@ -287,12 +310,34 @@ def is_chat_turn(transcript: str) -> bool:
                 or is_project_work(request) or PENDING_WORK_RE.search(answer))
 
 
+class AuditBudgetExceeded(RuntimeError):
+    """The whole-attempt deadline passed; not retried."""
+
+
+# One absolute deadline for the whole attempt (every model call, retry, repair and the final output), set in main().
+# 2026-10-07 audit: retry + empty-response + format-repair could add up to 501 s against the 240 s hook budget.
+AUDIT_ATTEMPT_BUDGET_S = 205      # < stop_orchestrator.MIMO_WAIT_TIMEOUT_S (215) < AUDIT_HOOK_TIMEOUT_S (240)
+AUDIT_FINISH_RESERVE_S = 5        # kept back for cleanup and the final stdout write
+AUDIT_MIN_CALL_S = 5
+_DEADLINE: list[float] = []
+
+
+def call_timeout() -> float:
+    """Timeout for the next model call: the per-call cap, clipped to what is left of the attempt."""
+    if not _DEADLINE:
+        return AUDIT_TIMEOUT_S
+    left = _DEADLINE[0] - time.monotonic() - AUDIT_FINISH_RESERVE_S
+    if left < AUDIT_MIN_CALL_S:
+        raise AuditBudgetExceeded(f"audit budget of {AUDIT_ATTEMPT_BUDGET_S}s exhausted")
+    return min(AUDIT_TIMEOUT_S, left)
+
+
 def ask_mimo(transcript: str, max_tokens: int = 2500) -> str:
     prompt = AUDIT_PROMPT.format(transcript=transcript)
     content = call_mimo(
         prompt,
         max_tokens=max_tokens,
-        timeout=AUDIT_TIMEOUT_S,
+        timeout=call_timeout(),
         lane="stop",
         system="Output only the required VERDICT format. Do not think aloud.",
     )
@@ -311,7 +356,7 @@ def ask_mimo_with_retry(transcript: str, max_tokens: int = 2500) -> str:
                 log(f"RETRY_NETWORK_EXHAUSTED: attempts={AUDIT_MAX_ATTEMPTS} error={exc}")
                 raise RuntimeError(f"Codex audit transport failed after {AUDIT_MAX_ATTEMPTS} attempts: {exc}") from exc
             log(f"RETRY_NETWORK: attempt {attempt}/{AUDIT_MAX_ATTEMPTS} error={exc}")
-        time.sleep(AUDIT_RETRY_DELAY_S)
+        time.sleep(min(AUDIT_RETRY_DELAY_S, max(0.0, _DEADLINE[0] - time.monotonic())) if _DEADLINE else AUDIT_RETRY_DELAY_S)
     return ""
 
 
@@ -320,7 +365,7 @@ def repair_verdict_format(response: str) -> str:
     return normalize_verdict(call_mimo(
         prompt,
         max_tokens=500,
-        timeout=AUDIT_TIMEOUT_S,
+        timeout=call_timeout(),
         lane="format_repair",
         system="You are a strict formatter. Output only the requested verdict format.",
     ))
@@ -328,6 +373,7 @@ def repair_verdict_format(response: str) -> str:
 
 # --- Main ------------------------------------------------------------------
 def main() -> None:
+    _DEADLINE[:] = [time.monotonic() + AUDIT_ATTEMPT_BUDGET_S]
     exit_if_audit_child()
     raw = sys.stdin.read()
     try:
@@ -415,7 +461,8 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries)):
+    elif contentless_turn(last_msg, edited_paths(entries)) and not has_change_evidence(
+            repo_cwd, entries, latest_turn_started_at(transcript_path)):
         why = contentless_turn(last_msg, edited_paths(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
@@ -459,6 +506,8 @@ def main() -> None:
             log(f"TURN_COMMITS: {len(turn_commits(repo_cwd, since))} commit(s), {len(committed)} chars")
         else:
             diff = turn_diff(repo_cwd, edited_paths(entries), since=since)
+        if not diff and not edited_paths(entries) and any(role == "TOOL CALL" for role, _ in entries):
+            diff = worktree_diff(repo_cwd)   # code changed through Bash: no Edit-tool paths to scope a diff to
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "
@@ -476,7 +525,7 @@ def main() -> None:
 
     log(f"{AUDITOR_NAME} verdict (iter {iterations + 1}): {verdict_text[:240]}")
     verdict_text = normalize_verdict(verdict_text)
-    if sensitive and verdict_text.startswith("VERDICT: PASS"):
+    if sensitive and verdict_status(verdict_text) == "PASS":
         warnings = pass_warnings(verdict_text)
         if warnings:
             # On auth/secrets/payment surfaces a warning is a finding. Upgrade deterministically.
@@ -502,26 +551,26 @@ def main() -> None:
             )
             return
 
-    if verdict_text.startswith("VERDICT: PASS"):
+    if verdict_status(verdict_text) == "PASS":
         save_verdict(session_id, turn_id, "PASS", verdict_text)
         reset_consecutive_blocks(session_id)
         ledger.clear(session_id)
         allow_stop("audit passed")
         return
 
-    if verdict_text.startswith("VERDICT: ISSUES"):
+    if verdict_status(verdict_text) == "ISSUES":
         log_noise_classes(verdict_text)
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
         dropped = unanchored + dropped
-        if dropped and verdict_text.startswith("VERDICT: PASS"):
+        if dropped and verdict_status(verdict_text) == "PASS":
             log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
             save_verdict(session_id, turn_id, "PASS", verdict_text)
             reset_consecutive_blocks(session_id)
             ledger.clear(session_id)
             allow_stop("audit passed (only void findings)")
             return
-    if verdict_text.startswith("VERDICT: ISSUES"):
+    if verdict_status(verdict_text) == "ISSUES":
         verdict_text, escalated = ledger.register_findings(session_id, verdict_text)
         if escalated:
             log(f"LEDGER_ESCALATED: {', '.join(escalated)} re-raised past MAX_REOPENS; dropped from block")
