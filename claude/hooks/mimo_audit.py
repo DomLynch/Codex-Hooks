@@ -566,7 +566,7 @@ def main() -> None:
     if verdict_text and not valid_verdict(verdict_text):
         try:
             repaired = repair_verdict_format(verdict_text)
-            if valid_verdict(repaired):
+            if valid_verdict(repaired) and verdict_status(repaired) == "ISSUES":   # a repair may block, never approve
                 log(f"FORMAT_REPAIR_VERDICT: {repaired[:160].replace(chr(10), ' ')}")
                 verdict_text = repaired
             else:
