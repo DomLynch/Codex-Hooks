@@ -348,7 +348,7 @@ class AuditBudgetExceeded(RuntimeError):
 
 # One absolute deadline for the whole attempt (every model call, retry, repair and the final output), set in main().
 # 2026-10-07 audit: retry + empty-response + format-repair could add up to 501 s against the 240 s hook budget.
-AUDIT_ATTEMPT_BUDGET_S = 205      # < stop_orchestrator.MIMO_WAIT_TIMEOUT_S (215) < AUDIT_HOOK_TIMEOUT_S (240)
+AUDIT_ATTEMPT_BUDGET_S = 205      # < AUDIT_HOOK_TIMEOUT_S (240)
 AUDIT_FINISH_RESERVE_S = 5        # kept back for cleanup and the final stdout write
 AUDIT_MIN_CALL_S = 5
 _DEADLINE: list[float] = []
@@ -428,9 +428,8 @@ def main() -> None:
     last_msg = payload.get("last_assistant_message") or ""
     log(f"START session={session_id} turn={turn_id}")
 
-    # The owner's off switch for the per-Stop reviewer (default on). CODEX_HOOK_CLAUDE_AUDIT only gates
-    # stop_orchestrator's second pass, not this hook. A verdict is still written so the orchestrator does not
-    # wait out its timeout; it is not PASS, so no auto-PR runs on an unreviewed turn.
+    # The owner's off switch for the per-Stop reviewer (default on). A verdict is still written so audit_state's
+    # retry and iteration bookkeeping sees this turn; it is not PASS.
     if hook_env("CLAUDE_STOP_REVIEW", "1").strip() == "0":
         save_verdict(session_id, turn_id, "SKIP_DISABLED", "CLAUDE_STOP_REVIEW=0")
         allow_stop("stop review disabled by CLAUDE_STOP_REVIEW=0")
