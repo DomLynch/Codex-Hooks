@@ -269,14 +269,49 @@ def _rerun_covers(failed: frozenset[str], rerun: frozenset[str]) -> bool:
     return bool(paths) and all(any(t == r or t.startswith((r.rstrip("/") + "/", r + "::")) for r in rerun) for t in paths)
 
 
-_NEGATIVE_CHECK_RE = re.compile(r"(?:^|[;&|(]\s*|\bcd [^;&|]*&&\s*)(?:!\s|test\s+!\s)|\|\|\s*(?:true|:|exit 0)\b")
+_NEGATED_RUNNER_RE = re.compile(r"^\s*(?:!\s|test\s+!\s)|\|\|\s*(?:true|:|exit 0)\b")
+_CD_RE = re.compile(r"(?:^|[;&|]\s*)cd\s+(\"[^\"]+\"|'[^']+'|[^\s;&|]+)")
+
+
+def _runner_is_negated(command: str) -> bool:
+    """Every segment of the command that runs a check is itself negated (`! cmd`, `cmd || true`). A negative
+    precondition elsewhere (`test ! -f x && ruff check .`) does not make the later check's failure expected."""
+    segments = [seg for seg in re.split(r"&&|;|\n", command) if TEST_RUNNER_RE.search(seg)]
+    return bool(segments) and all(_NEGATED_RUNNER_RE.search(seg) for seg in segments)
+
+
+def _apply_cds(command: str, cwd: str) -> str:
+    """The directory after the top-level `cd`s in `command` (a `cd` inside quotes, such as an ssh string, does not
+    move this shell). A target with a variable or substitution, or a relative target with no known base, leaves the
+    directory unknown ('') rather than guessed."""
+    import os
+
+    for match in _CD_RE.finditer(command):
+        before = command[: match.start()]
+        if before.count("'") % 2 or before.count('"') % 2:
+            continue
+        target = os.path.expanduser(match.group(1).strip("\"'"))
+        if any(ch in target for ch in "$`("):
+            cwd = ""
+        elif os.path.isabs(target):
+            cwd = target
+        else:
+            cwd = os.path.join(cwd, target) if cwd else ""
+    return os.path.normpath(cwd) if cwd else ""
+
+
+def _check_cwd(command: str, tool_cwd: str | None, shell_cwd: str) -> str:
+    """Where a check ran: the `cd`s before it, applied to the tool's cwd or else the cwd this turn's earlier commands
+    left the shell in. '' = unknown, and unknown never equals a known directory."""
+    runner = TEST_RUNNER_RE.search(command)
+    return _apply_cds(command[: runner.start()] if runner else command, tool_cwd or shell_cwd)
 
 
 def _native_failure(body: str, command: str | None) -> bool:
-    """The tool itself reported failure (is_error / non-zero exit). A command written to fail (`! cmd`, `|| true`)
+    """The tool itself reported failure (is_error / non-zero exit). A check written to fail (`! cmd`, `cmd || true`)
     is not a failed check on that signal alone."""
     failed = getattr(body, "is_error", None) is True or (getattr(body, "exit_status", None) or 0) != 0
-    return failed and not (command and _NEGATIVE_CHECK_RE.search(command))
+    return failed and not (command and _runner_is_negated(command))
 
 
 def _native_failure_text(body: str) -> str:
@@ -296,13 +331,16 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
     `pytest tests/test_payment.py`, `pytest --help` clears nothing, and `ruff` never clears `pytest`.
     Returns the unresolved failure excerpt(s) to quote back, or "" when nothing to flag.
     """
-    failed: dict[tuple[str, frozenset[str]], str] = {}
+    failed: dict[tuple[str, frozenset[str], str], str] = {}
+    shell_cwd = ""   # the Bash tool's shell keeps its directory between commands
     for role, body in entries:
         if role != "TOOL OUTPUT":
             continue
         # Decide from the COMPLETE command when the evidence record carries it; the first display line is a
         # shortened presentation and only the fallback for plain-text entries.
         full = getattr(body, "command", None)
+        where = _check_cwd(full or "", getattr(body, "cwd", None), shell_cwd)
+        shell_cwd = _apply_cds(full or "", getattr(body, "cwd", None) or shell_cwd)
         identity = _identity_from_text(full) if full else _check_identity(body.split("\n", 1)[0])
         if not identity:
             continue
@@ -310,11 +348,11 @@ def unacknowledged_check_failure(entries: list[tuple[str, str]], final_message: 
         if not excerpt and _native_failure(body, full):
             excerpt = _native_failure_text(body)
         if excerpt:
-            failed[identity] = excerpt
+            failed[(*identity, where)] = excerpt
             continue
         if _RECEIPT_LINE_RE.search(body):
             runner, targets = identity
-            failed = {k: v for k, v in failed.items() if not (k[0] == runner and _rerun_covers(k[1], targets))}
+            failed = {k: v for k, v in failed.items() if not (k[0] == runner and k[2] == where and _rerun_covers(k[1], targets))}
     if not failed or FAILURE_ACK_RE.search(final_message or ""):
         return ""
     return _bounded_compact("\n".join(failed.values()), 600)
