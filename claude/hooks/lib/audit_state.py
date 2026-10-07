@@ -16,6 +16,12 @@ AUDIT_ERROR_PREFIX = "audit_errors:"
 PRESERVED_PREFIXES = (CONSECUTIVE_BLOCK_PREFIX, AUDIT_ERROR_PREFIX, "blocked_turn:")  # never evicted by save_iterations()
 
 
+# Each hook run is a fresh process, so import time is when this Stop attempt started. save_verdict stamps it on the
+# verdict so stop_orchestrator can tell this attempt's verdict from one an earlier attempt left (an hour-old PASS
+# reached commit/push/PR, 2026-10-07 audit).
+ATTEMPT_STARTED_AT = time.time()
+
+
 def iteration_key(session_id: str, turn_id: str) -> str:
     return f"{session_id}:{turn_id or 'unknown-turn'}"
 
@@ -137,6 +143,7 @@ def save_verdict(session_id: str, turn_id: str, verdict: str, preview: str = "")
             "verdict": verdict,
             "preview": preview[:500],
             "updated_at": time.time(),
+            "started_at": ATTEMPT_STARTED_AT,
         }
         if len(data) > 50:   # by recency: the file is saved with sort_keys, so dict order is session-id order, not age
             data = dict(sorted(data.items(), key=lambda kv: float(kv[1].get("updated_at") or 0) if isinstance(kv[1], dict) else 0.0)[-50:])

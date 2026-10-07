@@ -345,10 +345,10 @@ class EnforcementTests(unittest.TestCase):
         with (patch.object(quality, '_check_runs', return_value=[('python-hooks', 'in_progress', '')]),
               patch.object(stop_orchestrator, 'DEFERRAL_NOTICE_PATH', self.root / 'notified.json'),
               patch.object(stop_orchestrator, 'run_project_gate') as run_gate, patch.object(stop_orchestrator, 'log'),
-              patch('sys.stdout', new_callable=io.StringIO) as out):
+              patch('sys.stdout', new_callable=io.StringIO)):
             self.assertEqual(stop_orchestrator.run_aaa_gate(repo, 'transcript', session_id='s1'), stop_orchestrator.DEFERRED)
             run_gate.assert_not_called()
-            self.assertIn('CI is still running', out.getvalue())
+            self.assertIn('CI is still running', '\n'.join(stop_orchestrator._CONTEXT_NOTES))
         (repo / 'a.txt').write_text('dirty\n')
         with patch.object(stop_orchestrator, 'run_project_gate', return_value={'ok': True, 'results': []}) as run_gate, patch.object(stop_orchestrator, 'log'):
             self.assertTrue(stop_orchestrator.run_aaa_gate(repo, 'transcript'))
@@ -356,6 +356,7 @@ class EnforcementTests(unittest.TestCase):
 
     def test_deploy_deferral_notice_is_sent_once_per_session_and_revision(self):
         # Stop additionalContext continues the turn: repeating it on every Stop looped an idle lane (2026-09-23).
+        stop_orchestrator._CONTEXT_NOTES.clear()
         self.contract([['true']])
         lock = {'revision': 'c0b321c7f8', 'age_s': 60}
         with patch.object(stop_orchestrator, 'active_deploy_lock', return_value=lock), \
@@ -363,18 +364,18 @@ class EnforcementTests(unittest.TestCase):
                 patch.object(stop_orchestrator, 'ci_covered_commit', return_value=('', '')), \
                 patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
                 patch.object(stop_orchestrator, 'log'), \
-                patch('sys.stdout', new_callable=io.StringIO) as out:
+                patch('sys.stdout', new_callable=io.StringIO):
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
-            self.assertIn('deferred: deploy c0b321c', out.getvalue())
-            out.truncate(0), out.seek(0)
+            self.assertIn('deferred: deploy c0b321c', '\n'.join(stop_orchestrator._CONTEXT_NOTES))
+            stop_orchestrator._CONTEXT_NOTES.clear()
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
-            self.assertEqual(out.getvalue(), '', 'second Stop under the same deploy must stay silent')
+            self.assertEqual('\n'.join(stop_orchestrator._CONTEXT_NOTES), '', 'second Stop under the same deploy must stay silent')
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s2'))
-            self.assertIn('deferred', out.getvalue(), 'another session still hears it once')
-            out.truncate(0), out.seek(0)
+            self.assertIn('deferred', '\n'.join(stop_orchestrator._CONTEXT_NOTES), 'another session still hears it once')
+            stop_orchestrator._CONTEXT_NOTES.clear()
             lock['revision'] = 'dfed9951aa'
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
-            self.assertIn('deferred: deploy dfed995', out.getvalue(), 'a new deploy is announced again')
+            self.assertIn('deferred: deploy dfed995', '\n'.join(stop_orchestrator._CONTEXT_NOTES), 'a new deploy is announced again')
             run_gate.assert_not_called()
 
     def test_gate_waits_for_load_hold_or_a_run_already_in_this_folder(self):
@@ -458,9 +459,9 @@ class EnforcementTests(unittest.TestCase):
                 patch.object(stop_orchestrator, 'ci_covered_commit', return_value=('', '')), \
                 patch.object(stop_orchestrator, 'run_project_gate') as run_gate, \
                 patch.object(stop_orchestrator, 'log'), \
-                patch('sys.stdout', new_callable=io.StringIO) as out:
+                patch('sys.stdout', new_callable=io.StringIO):
             self.assertTrue(stop_orchestrator.run_aaa_gate(self.root, 't', session_id='s1'))
-            self.assertIn('deferred: the Mac is overloaded (load 386', out.getvalue())
+            self.assertIn('deferred: the Mac is overloaded (load 386', '\n'.join(stop_orchestrator._CONTEXT_NOTES))
             run_gate.assert_not_called()
 
     def test_browser_completion_command_defers_when_load_rises_after_the_gate_started(self):

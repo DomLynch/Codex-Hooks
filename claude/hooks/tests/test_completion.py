@@ -109,7 +109,10 @@ class CompletionTests(unittest.TestCase):
         for limit, expected in (("iterations", "MAX_ALLOW"), ("damper", "DAMPER_ALLOW")):
             with self.subTest(limit=limit):
                 state, out, err, transport = self.invoke("Fix the typo.", "Shall I fix it?", "ISSUES", limit)
-                self.assertEqual((state, out), (expected, ""))
+                # Updated for audit F13: the release is also a visible systemMessage on stdout (stderr is debug-log only).
+                self.assertEqual(state, expected)
+                self.assertIn("without PASS", json.loads(out)["systemMessage"])
+                self.assertNotIn("decision", json.loads(out))
                 self.assertIn("without PASS", err)
                 self.assertIn("not completion", err)
                 self.assertEqual(transport.call_count, int(limit == "damper"))

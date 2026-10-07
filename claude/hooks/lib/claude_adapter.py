@@ -32,18 +32,18 @@ def compact(text: str, limit: int) -> str:
 
 
 def synthesize_turn_id(session_id: str, transcript_path: str, stop_hook_active: bool = False) -> str:
-    """Stable turn id for one Claude turn. Anchored on:
-       - session_id (stable across turns of same session)
-       - transcript file size + mtime (changes between turns, stable within a turn)
-       - stop_hook_active (differentiates retry attempts within the same turn)
-    """
+    """Stable turn id for one Claude turn: the session plus the identity of the user turn being answered (its uuid,
+    timestamp and text), never transcript size or mtime, which change when metadata is appended after the turn.
+    stop_hook_active differentiates retry attempts (retry chains reuse the blocked turn's id, see retry_turn_id)."""
     parts = [session_id or "unknown"]
     try:
-        st = Path(transcript_path).stat() if transcript_path else None
-        if st:
-            parts.append(str(int(st.st_size)))
-            parts.append(str(int(st.st_mtime)))
+        start = next((e for e in reversed(read_claude_transcript_lines(transcript_path)) if is_turn_start(e)), None) if transcript_path else None
     except Exception:
+        start = None
+    if start is not None:
+        text = _content_text((start.get("message") or {}).get("content"))
+        parts += [str(start.get("uuid") or ""), str(start.get("timestamp") or ""), hashlib.sha256(text.encode()).hexdigest()[:16]]
+    else:
         parts.append(str(int(time.time() / 60)))  # 1-minute bucket fallback
     parts.append("retry" if stop_hook_active else "first")
     return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]

@@ -22,10 +22,22 @@ def normalize_verdict(text: str) -> str:
     return f"VERDICT: {verdict}{suffix}"
 
 
+_STATUS_LINE_RE = re.compile(r"VERDICT: (PASS|ISSUES)")
+
+
+def verdict_status(text: str) -> str:
+    """The one status enum: 'PASS', 'ISSUES' or '' (anything else). The first line must be exactly
+    'VERDICT: PASS' or 'VERDICT: ISSUES'; a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS."""
+    first_line = (text or "").strip().partition("\n")[0].strip()
+    match = _STATUS_LINE_RE.fullmatch(first_line)
+    return match.group(1) if match else ""
+
+
 def valid_verdict(text: str) -> bool:
-    if text.startswith("VERDICT: PASS"):
+    status = verdict_status(text)
+    if status == "PASS":
         return True
-    return text.startswith("VERDICT: ISSUES") and bool(re.search(r"(?m)^\s*\d+[.)]\s+\S", text))
+    return status == "ISSUES" and bool(re.search(r"(?m)^\s*\d+[.)]\s+\S", text))
 
 
 ADVISORY_RE = re.compile(r"\b(confirm|ensure|verify|double-check|should be verified|before treating)\b", re.IGNORECASE)

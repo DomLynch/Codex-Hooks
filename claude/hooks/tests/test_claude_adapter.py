@@ -511,7 +511,9 @@ class ClaudeAdapterTests(unittest.TestCase):
                 verdict = json.loads((tmp_path / "verdict.json").read_text())
 
         self.assertEqual(rc, 0)
-        self.assertEqual(out, "")
+        # Updated for audit F13: the damped release is allow + a visible systemMessage (never a block decision).
+        self.assertNotIn("decision", json.loads(out))
+        self.assertIn("unresolved", json.loads(out)["systemMessage"])
         self.assertNotIn("consecutive_blocks:claude-damper", state)
         self.assertEqual(verdict["claude-damper"]["verdict"], "DAMPER_ALLOW")
         # Round 3 of a chain is re-litigation, not review: it must not feed Active Lessons.
@@ -680,6 +682,7 @@ class ClaudeAdapterTests(unittest.TestCase):
     def test_claude_stop_orchestrator_wait_ignores_wall_clock_jump(self) -> None:
         with (
             mock.patch.object(stop_orchestrator, "MIMO_WAIT_TIMEOUT_S", 2),
+            mock.patch.object(stop_orchestrator, "ATTEMPT_STARTED_AT", 100),  # audit F04: verdict must be this attempt's
             mock.patch.object(stop_orchestrator.time, "monotonic", side_effect=[0, 0, 1]),
             mock.patch.object(stop_orchestrator.time, "time", side_effect=[100, 10_000]),
             mock.patch.object(stop_orchestrator, "load_json_locked", side_effect=[{},
