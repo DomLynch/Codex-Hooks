@@ -11,15 +11,13 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child
-from lib.autonomy import hook_env, lesson_lane, record_lesson, remember_repo
+from lib.api import exit_if_audit_child
+from lib.autonomy import hook_env, remember_repo
 from lib.git import changed_files, commit, current_session_branch, ensure_branch, git_root, is_git_repo, push, resolve_git_cwd
-from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.quality import pending_quality, run_quality_checks
 from lib.claude_adapter import changed_files_in_claude_post_tool as changed_files_in_payload
-from lib.state import checkpoint_state, now_iso, update_checkpoint_state
-from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
+from lib.state import checkpoint_state, update_checkpoint_state
 
 
 COMPONENT = "post_tool"
@@ -31,52 +29,10 @@ CHECKPOINT_BRANCH_RETRY_S = 1800
 # budget so post-tool checks fail on real failures, not timeout drift.
 QUALITY_TIMEOUT_S = 120
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}  # Claude Code edit tools
-MIMO_CHECKPOINT_AUDIT_PATH = Path.home() / ".claude" / "state" / "post_tool_mimo_audit.json"
-MIMO_AUDIT_EDIT_THRESHOLD = 15
-MIMO_AUDIT_TIME_THRESHOLD_S = 1800
-MIMO_AUDIT_MIN_TRANSCRIPT_CHARS = 400
-MIMO_AUDIT_MAX_TRANSCRIPT_CHARS = 3000
-MIMO_AUDIT_TIMEOUT_S = 30
 # Checkpoints switch the checkout to claude/<session>/main, commit and push: the
 # same side effect class as auto-PR, so the same switch governs both.
 # Off unless explicitly "1": a missing or unreadable hook_env must not turn on commit+push.
 CHECKPOINTS_ENABLED = hook_env("CODEX_HOOK_AUTO_PR", "0") == "1"
-
-MIMO_CHECKPOINT_PROMPT = """Audit Claude Code's in-progress task checkpoint.
-Your first line must be exactly one of:
-VERDICT: PASS
-VERDICT: ISSUES
-
-Check only the current task slice. Block only for concrete problems:
-- Claude Code is drifting from the user's request or asking for unnecessary confirmation instead of using a reasonable reversible default
-- The latest edits already show a concrete correctness, security, or scope regression
-- Repeated command or test failures are being ignored instead of diagnosed
-- V4/MCP/project guidance is being ignored on non-trivial code work: no three-query Semble discovery, skipped Codegraph structural/impact analysis, or no stated reason
-
-This slice may omit earlier tool calls. Missing Semble/Codegraph receipts alone
-are not evidence of skipped discovery; flag only explicit, current noncompliance.
-Do not repeat an acknowledged past process mistake that cannot be redone.
-
-This is an in-progress checkpoint. Do NOT block merely because implementation,
-tests, commit, or final verification are unfinished; the Stop audit checks completion.
-An acknowledged failure under active diagnosis is not an ignored failure. Do not
-demand final tests/deployment at this checkpoint unless completion is claimed.
-Still block a concrete unsafe edit or an unsupported claim that work is complete.
-Match failures to the exact resource and expected outcome: negative tests are not
-regressions. Proposed wording is not a claim about existing behavior.
-
-If there is no concrete blocker, return:
-VERDICT: PASS
-
-If there are blockers, return:
-VERDICT: ISSUES
-1. <specific fix Claude Code should make now>
-
-Current task slice:
----
-{transcript}
----
-"""
 
 
 def block(reason: str) -> None:
@@ -108,103 +64,6 @@ def format_quality_failures(result: dict) -> str:
             continue
         lines.append(f"\n{item.get('tool')} failed for {item.get('file')}:\n{item.get('output', '').strip()}")
     return "\n".join(lines)[:8000]
-
-
-def parse_mimo_verdict(text: str) -> tuple[str, str]:
-    stripped = (text or "").strip()
-    if stripped.startswith("VERDICT: PASS"):
-        return "PASS", stripped
-    if stripped.startswith("VERDICT: ISSUES"):
-        return "ISSUES", stripped
-    for marker in ("VERDICT: PASS", "VERDICT: ISSUES"):
-        idx = stripped.find(marker)
-        if idx >= 0:
-            normalized = stripped[idx:].strip()
-            return ("PASS" if marker.endswith("PASS") else "ISSUES"), normalized
-    return "UNPARSEABLE", stripped
-
-
-def audit_state(session_id: str) -> dict:
-    data = load_json_locked(MIMO_CHECKPOINT_AUDIT_PATH, {})
-    state = data.get(session_id) if isinstance(data, dict) else {}
-    if not isinstance(state, dict):
-        state = {}
-    return {
-        "edits_since_last_audit": int(state.get("edits_since_last_audit", 0)),
-        "last_audit_at": state.get("last_audit_at", ""),
-        "last_verdict": state.get("last_verdict", ""),
-        "last_preview": state.get("last_preview", ""),
-    }
-
-
-def update_audit_state(session_id: str, edits: int = 0, audited: bool = False, verdict: str = "", preview: str = "") -> dict:
-    now = now_iso()
-
-    def updater(data: dict) -> dict:
-        state = data.get(session_id)
-        if not isinstance(state, dict):
-            state = {"edits_since_last_audit": 0, "last_audit_at": now}
-        if edits:
-            state["edits_since_last_audit"] = max(0, int(state.get("edits_since_last_audit", 0)) + edits)
-            state.setdefault("last_audit_at", now)
-        if audited:
-            state["edits_since_last_audit"] = 0
-            state["last_audit_at"] = now
-            state["last_verdict"] = verdict
-            state["last_preview"] = preview[:500]
-        state["last_updated_at"] = now
-        data[session_id] = state
-        if len(data) > 50:
-            data = dict(list(data.items())[-50:])
-        return data
-
-    return update_json_locked(MIMO_CHECKPOINT_AUDIT_PATH, updater).get(session_id, {})
-
-
-def mimo_checkpoint_due(state: dict) -> bool:
-    edits = int(state.get("edits_since_last_audit", 0))
-    due_by_edits = edits >= MIMO_AUDIT_EDIT_THRESHOLD
-    last_audit_at = state.get("last_audit_at", "")
-    due_by_time = edits > 0 and bool(last_audit_at) and seconds_since(last_audit_at) >= MIMO_AUDIT_TIME_THRESHOLD_S
-    return due_by_edits or due_by_time
-
-
-def maybe_mimo_checkpoint_audit(payload: dict, session_id: str, cwd: Path) -> None:
-    state = audit_state(session_id)
-    if not mimo_checkpoint_due(state):
-        return
-
-    transcript = latest_task_slice(
-        payload.get("transcript_path") or "",
-        payload.get("last_assistant_message") or "",
-        max_chars=MIMO_AUDIT_MAX_TRANSCRIPT_CHARS,
-    )
-    if len(transcript) < MIMO_AUDIT_MIN_TRANSCRIPT_CHARS:
-        update_audit_state(session_id, audited=True, verdict="SKIP_TOO_SHORT", preview=f"{len(transcript)} chars")
-        log(COMPONENT, f"mimo checkpoint skipped: transcript too short ({len(transcript)} chars)")
-        return
-    prompt = MIMO_CHECKPOINT_PROMPT.format(transcript=transcript)
-    try:
-        response = call_mimo(prompt, max_tokens=1000, timeout=MIMO_AUDIT_TIMEOUT_S, lane="checkpoint")
-    except Exception as exc:
-        update_audit_state(session_id, audited=True, verdict="ERROR", preview=str(exc))
-        log(COMPONENT, f"mimo checkpoint fail-open: {exc}")
-        return
-
-    verdict, normalized = parse_mimo_verdict(response)
-    update_audit_state(session_id, audited=True, verdict=verdict, preview=normalized)
-    log(COMPONENT, f"mimo checkpoint verdict={verdict} transcript={len(transcript)}")
-    if verdict == "ISSUES":
-        record_lesson("mimo_checkpoint", normalized.splitlines()[1] if len(normalized.splitlines()) > 1 else normalized, session_id,
-                      lesson_lane(payload.get("transcript_path") or "", str(cwd), session_id))
-        block(
-            f"[{AUDITOR_NAME} checkpoint audit]\n\n"
-            f"A fresh {AUDITOR_NAME} session reviewed this in-progress task checkpoint and found concrete issues. "
-            "Fix these before continuing:\n\n"
-            f"{normalized[:5000]}"
-        )
-    if verdict == "UNPARSEABLE":
-        log(COMPONENT, f"mimo checkpoint unparseable; allowing progress preview={normalized[:180]}")
 
 
 def maybe_checkpoint(session_id: str, cwd: Path) -> None:
@@ -268,8 +127,6 @@ def main() -> None:
                 block(format_quality_failures(result))
         if is_edit:
             update_checkpoint_state(session_id, edits=1, files=files)
-            update_audit_state(session_id, edits=1)
-            maybe_mimo_checkpoint_audit(payload, session_id, cwd)
             maybe_checkpoint(session_id, cwd)
     except Exception as exc:
         log(COMPONENT, f"quality error: {exc}")

@@ -154,10 +154,6 @@ class EnforcementTests(unittest.TestCase):
             self.assertEqual(commit.call_args.args[2], [str(self.root/'a.py'), str(self.root/'b.py')])
             self.assertNotIn('files', post_tool.checkpoint_state('s1'), 'a checkpoint commit starts a fresh file list')
 
-    def test_checkpoint_does_not_infer_skipped_discovery_from_elision(self):
-        self.assertIn('Missing Semble/Codegraph receipts alone', post_tool.MIMO_CHECKPOINT_PROMPT)
-        self.assertIn('flag only explicit, current noncompliance', post_tool.MIMO_CHECKPOINT_PROMPT)
-
     def test_contract_success_and_real_failure(self):
         for code in (0, 1):
             self.contract([[sys.executable, '-c', f'raise SystemExit({code})']])
@@ -735,8 +731,7 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'remember_repo'), patch.object(post_tool, 'log'), \
              patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}), \
              patch.object(post_tool, 'pending_quality') as pending, \
-             patch.object(post_tool, 'update_checkpoint_state'), patch.object(post_tool, 'update_audit_state'), \
-             patch.object(post_tool, 'maybe_mimo_checkpoint_audit'), patch.object(post_tool, 'maybe_checkpoint'):
+             patch.object(post_tool, 'update_checkpoint_state'), patch.object(post_tool, 'maybe_checkpoint'):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
 
