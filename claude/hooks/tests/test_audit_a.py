@@ -214,6 +214,10 @@ class NotRunStatusTests(Base):
         self.assertEqual(empty['status'], 'passed')
         self.assertTrue(empty['no_checks'])
 
+    def test_broken_json_fails_and_valid_json_passes(self):
+        self.assertEqual(quality.run_quality_checks([self._file('a.json', '{"a": 1}')], self.root)['status'], 'passed')
+        self.assertEqual(quality.run_quality_checks([self._file('b.json', '{"a": ')], self.root)['status'], 'failed')
+
     def test_real_run_broken_sh_and_unknown_extension_are_not_run(self):
         sh = self._file('run.sh', 'if then fi (\n')
         odd = self._file('thing.vue', '<template>\n')

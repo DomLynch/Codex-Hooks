@@ -39,9 +39,9 @@ def pending_quality(session_id: str, cwd: Path | None = None, clear: bool = Fals
 
 
 # Files that need no code check. Anything else no checker covered is reported not_run, never passed.
-_CHECKED_SUFFIXES = {".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
+_CHECKED_SUFFIXES = {".json", ".py", ".ts", ".tsx", ".go", ".rs", ".js", ".mjs", ".cjs", ".jsx"}
 _NO_CHECK_SUFFIXES = {".md", ".txt", ".rst", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".lock",
-                      ".pdf", ".csv", ".json", ".yaml", ".yml", ".toml", ".gitignore", ".mdx", ".log"}
+                      ".pdf", ".csv", ".yaml", ".yml", ".toml", ".gitignore", ".mdx", ".log"}
 _NO_CHECK_NAMES = {".gitignore", ".gitattributes", "LICENSE", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb"}
 
 
@@ -614,6 +614,12 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
 
     files = [p for p in files if p.exists() and p.is_file()]
     py_files = [p for p in files if p.suffix == ".py"]
+    for file in (p for p in files if p.suffix == ".json"):
+        try:
+            json.loads(file.read_text())
+            results.append(_result(file, "json", True))
+        except ValueError as exc:
+            results.append(_result(file, "json", False, str(exc)))
     ts_files = [p for p in files if p.suffix in {".ts", ".tsx"}]
     go_files = [p for p in files if p.suffix == ".go"]
     rs_files = [p for p in files if p.suffix == ".rs"]

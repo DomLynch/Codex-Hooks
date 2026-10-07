@@ -304,7 +304,8 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
             return False
         return True
     if not milestone_detected(transcript):
-        return True
+        # a repo owed for not_run stays owed on a plain Stop; only a real gate run may clear it
+        return DEFERRED if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{cwd}") else True
     protocol = ""
     try:
         protocol = AAA_PROTOCOL_PATH.read_text()

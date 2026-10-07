@@ -82,3 +82,32 @@ def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tm
         assert "Missing" not in json.dumps(out)
         assert "a.jsx" in out["systemMessage"]
     assert pend == [str(tmp_path.resolve())]
+
+
+def test_plain_stop_between_two_milestone_stops_does_not_clear_the_owed_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
+    for name in ("exit_if_audit_child", "remember_repo"):
+        monkeypatch.setattr(so, name, lambda *a, **k: None)
+    monkeypatch.setattr(so, "log", lambda *a, **k: None)
+    pend = []
+    def pending(s, cwd=None, done=None, **k):
+        if cwd:
+            pend.append(str(cwd))
+        elif done is not None:
+            pend[:] = [p for p in pend if p not in done]
+        return list(pend)
+    monkeypatch.setattr(so, "pending_quality", pending)
+    monkeypatch.setattr(so, "is_git_repo", lambda c: True)
+    milestone = [True]
+    monkeypatch.setattr(so, "milestone_detected", lambda t: milestone[0])
+    monkeypatch.setattr(so, "safe_run", lambda *a, **k: (0, "a.jsx\n", ""))
+    monkeypatch.setattr(so, "run_quality_checks", lambda *a, **k: NOT_RUN)
+    monkeypatch.setattr(so, "run_project_aaa_checks", lambda *a, **k: [])
+    monkeypatch.setattr(so, "audit_with_claude", lambda *a, **k: True)
+    monkeypatch.setattr(so, "wait_for_mimo_pass", lambda *a, **k: True)
+    for is_milestone in (True, False, True):   # milestone, plain, milestone
+        milestone[0] = is_milestone
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
+        so.main()
+        capsys.readouterr()
+        assert pend == [str(tmp_path.resolve())], f"owed repo cleared (milestone={is_milestone})"
