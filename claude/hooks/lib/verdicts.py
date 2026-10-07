@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 _FIRST_LINE_RE = re.compile(r"(?:VERDICT\s*:\s*)?(PASS|ISSUES)((?:\s*[.:](?:\s+.*)?|\s+[-\u2013\u2014(].*)?)", re.IGNORECASE)
-_STATUS_WORD_RE = re.compile(r"\b(PASS|ISSUES)\b")   # case-sensitive: 'no issues found' is prose, 'PASS or ISSUES' is a template
-_STATUS_CLAIM_RE = re.compile(r"(?i)\b(?:VERDICT|STATUS|RESULT)\s*:\s*\W*(?:PASS|ISSUES)\b")   # in any form: bold, quoted, listed, mid-line
+_NO_ISSUES_RE = re.compile(r"\b(?:no|zero|without|0)\s+(?:\w+\s+)?issues\b", re.IGNORECASE)
+
+
+def _names_issues(text: str) -> bool:
+    """The word ISSUES in any case or form (full-width letters, bold, a label) other than 'no issues' prose."""
+    plain = re.sub(r"[_*`~]", " ", unicodedata.normalize("NFKC", text))   # bold / italic / code markers are not part of the word
+    return bool(re.search(r"\bissues\b", _NO_ISSUES_RE.sub("", plain), re.IGNORECASE))
 
 
 def normalize_verdict(text: str) -> str:
@@ -17,7 +23,7 @@ def normalize_verdict(text: str) -> str:
     stripped = (text or "").lstrip("\ufeff").strip()
     first_line, _, rest = stripped.partition("\n")
     match = _FIRST_LINE_RE.fullmatch(first_line.strip())
-    if not match or _STATUS_WORD_RE.search(match.group(2)):   # a remark after the status may not name another status
+    if not match or _names_issues(match.group(2)):   # a remark after the status may not name another status
         return stripped
     return f"VERDICT: {match.group(1).upper()}" + (f"\n{rest.strip()}" if rest.strip() else "")
 
@@ -25,11 +31,12 @@ def normalize_verdict(text: str) -> str:
 def verdict_status(text: str) -> str:
     """The one status enum: 'PASS', 'ISSUES' or '' (anything else). The first line must be exactly
     'VERDICT: PASS' or 'VERDICT: ISSUES' (a prefix match accepted 'VERDICT: PASSIVE REVIEW ONLY' as PASS). A PASS may
-    not name a status anywhere after line 1 ('Example of a bad reply: VERDICT: ISSUES', '**VERDICT: ISSUES**',
-    'Status: ISSUES'); an ISSUES that also says PASS stays ISSUES, because a blocked stop is the safe side."""
+    not name ISSUES anywhere after line 1, in any form ('Example of a bad reply: VERDICT: ISSUES', '**VERDICT: ISSUES**',
+    'Overall: ISSUES', 'ISSUES:'); numbered or bulleted Warnings after a PASS are the designed 'PASS with Warnings'
+    shape and stay. An ISSUES that also says PASS stays ISSUES, because a blocked stop is the safe side."""
     first_line, _, rest = (text or "").strip().partition("\n")
     status = first_line.strip().rpartition(" ")[2] if first_line.strip() in ("VERDICT: PASS", "VERDICT: ISSUES") else ""
-    return "" if status == "PASS" and _STATUS_CLAIM_RE.search(rest) else status
+    return "" if status == "PASS" and _names_issues(rest) else status
 
 
 def valid_verdict(text: str) -> bool:

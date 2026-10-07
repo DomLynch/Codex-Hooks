@@ -135,6 +135,9 @@ def test_f12_prefix_verdicts_are_not_accepted(text):
     "VERDICT: PASS\nExample of a bad reply: VERDICT: ISSUES",
     "VERDICT: PASS\n- VERDICT: ISSUES", "VERDICT: PASS\n> VERDICT: ISSUES", "VERDICT: PASS\n**VERDICT: ISSUES**",
     "VERDICT: PASS\nStatus: ISSUES",
+    "VERDICT: PASS\nISSUES:\n1. real bug", "VERDICT: PASS\nOverall: ISSUES", "VERDICT: PASS\nFinal verdict is ISSUES.",
+    "VERDICT: PASS\nVerdict - ISSUES", "VERDICT: PASS\nVERDICT: _ISSUES_", "VERDICT: PASS\nVERDICT\uff1aISSUES",
+    "VERDICT: PASS\n\uff29\uff33\uff33\uff35\uff25\uff33", "VERDICT: PASS. issues below:\n1. bug",
     "PASS\nVERDICT: ISSUES\n1. a real problem",
     "VERDICT: PASS - or ISSUES",
     "VERDICT: PASS (ISSUES found below)",
@@ -176,7 +179,10 @@ def test_f12_a_format_repair_can_block_but_never_approve(tmp_path, monkeypatch, 
     # a short remark on the verdict line is how real reviewers write it; it is not a second status
     ("VERDICT: PASS - no issues found", "PASS"), ("VERDICT: PASS (all good)", "PASS"), ("VERDICT: ISSUES (2)\n1. a finding", "ISSUES"),
     ("VERDICT: ISSUES\n1. a real problem\nVERDICT: PASS", "ISSUES"),   # a contradiction on the blocking side stays blocked
-    ("VERDICT : PASS", "PASS"), ("PASS: looks fine", "PASS"), ("\ufeffVERDICT: PASS", "PASS"),
+    ("VERDICT : PASS", "PASS"),
+    # PASS with Warnings is a designed shape (pass_warnings, the sensitive-path upgrade): bullets and numbered lines stay
+    ("VERDICT: PASS\nWarnings:\n- minor: naming\n1. consider a test", "PASS"), ("VERDICT: PASS\nno issues found", "PASS"),
+    ("VERDICT: PASS\nResult: PASS, with no blocking issues", "PASS"), ("PASS: looks fine", "PASS"), ("\ufeffVERDICT: PASS", "PASS"),
 ])
 def test_f12_controls_stay_accepted(text, status):
     assert verdict_status(normalize_verdict(text)) == status
