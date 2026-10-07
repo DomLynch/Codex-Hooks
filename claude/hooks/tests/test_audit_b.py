@@ -230,10 +230,10 @@ def _git(repo, *args, date=None):
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, env=env)
 
 
-def _review_bash_turn(tmp_path, monkeypatch, repo, user_ts, command, answer="Updated."):
+def _review_bash_turn(tmp_path, monkeypatch, repo, user_ts, command, answer="Updated.", before=()):
     """Run mimo_audit.main for a turn whose only tool call is Bash; return the prompts the reviewer received."""
     path = _jl(tmp_path / "t.jsonl", [
-        _user("change the code", ts=user_ts), _tool("Bash", command=command), _result(""), _say(answer),
+        _user("change the code", ts=user_ts), *before, _tool("Bash", command=command), _result(""), _say(answer),
     ])
     prompts = []
     monkeypatch.setattr(mimo_audit, "call_mimo", lambda prompt, **k: prompts.append(prompt) or "VERDICT: PASS")
@@ -290,6 +290,26 @@ def test_f08_dirty_edit_after_an_in_turn_commit_is_in_the_diff(tmp_path, monkeyp
     prompts = _review_bash_turn(tmp_path, monkeypatch, repo, USER_TS, "git commit -am multiply; sed -i '' 's/a \\* b/a - b/' calc.py")
     assert len(prompts) == 1
     assert "return a * b" in prompts[0] and "return a - b" in prompts[0]
+
+
+def test_f08_a_mixed_edit_and_bash_turn_shows_both_changes(tmp_path, monkeypatch):
+    # Rule: the evidence is the whole turn's change, not only the Edit-tool paths; a Bash edit beside an Edit is not dropped.
+    repo = _calc_repo(tmp_path)
+    (repo / "other.py").write_text("x = 1\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "other", date="2000-01-02T00:00:00Z")
+    (repo / "other.py").write_text("x = 2\n")                                # the Edit-tool change
+    (repo / "calc.py").write_text("def f(a, b):\n    return a - b\n")       # the Bash change
+    edit = [_tool("Edit", file_path=str(repo / "other.py"), old_string="x = 1", new_string="x = 2"), _result("ok")]
+    prompts = _review_bash_turn(tmp_path, monkeypatch, repo, USER_TS, "sed -i '' 's/a + b/a - b/' calc.py", before=edit)
+    assert len(prompts) == 1 and "x = 2" in prompts[0] and "return a - b" in prompts[0]
+
+
+def test_f08_unknown_turn_start_still_shows_untracked_files(tmp_path, monkeypatch):
+    repo = _calc_repo(tmp_path)
+    (repo / "helper.py").write_text("def helper():\n    return 'brand new'\n")
+    prompts = _review_bash_turn(tmp_path, monkeypatch, repo, "", "cat > helper.py <<EOF ... EOF")
+    assert len(prompts) == 1 and "brand new" in prompts[0]
 
 
 def test_f08_one_bad_untracked_entry_costs_only_itself(tmp_path, monkeypatch):

@@ -306,25 +306,17 @@ def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> st
         start, names = None, []
     shown = 0
     for name in names[:500]:
-        if start is None or shown >= 5:
+        if shown >= 5:
             break
         file = Path(repo_cwd) / name
         try:
-            if file.is_file() and file.stat().st_mtime >= start:   # regular files only: no FIFO, directory or dangling link
+            if file.is_file() and (start is None or file.stat().st_mtime >= start):   # regular files only: no FIFO, directory or dangling link
                 with open(file, errors="replace") as handle:
                     parts.append(f"--- NEW FILE {name} ---\n{handle.read(800)}")
                 shown += 1
         except OSError:
             continue
     return "\n\n".join(parts)[:cap]
-
-
-def has_change_evidence(repo_cwd: str, entries: list, since: str) -> bool:
-    """A turn that ran tools and left a diff, new files or commits behind is not a no-work turn, whatever its answer
-    says. Resolved BEFORE the SKIP_CONTENTLESS shortcut: 'Updated.' after a Bash sed edit got zero model calls."""
-    if not any(role == "TOOL CALL" for role, _ in entries):
-        return False
-    return bool(turn_commits(repo_cwd, since) or worktree_snapshot(repo_cwd, since))
 
 
 def is_chat_turn(transcript: str) -> bool:
@@ -473,6 +465,10 @@ def main() -> None:
     if peer_gate:
         mechanical.append(peer_gate)
     sensitive = sensitive_paths(entries)
+    # One snapshot of the turn's change, used for the skip decision AND the evidence: the turn's commits plus everything
+    # now different from HEAD plus untracked files created since the turn began, Edit-tool turns included.
+    since = latest_turn_started_at(transcript_path)
+    snapshot = worktree_snapshot(repo_cwd, since) if any(role == "TOOL CALL" for role, _ in entries) else ""
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
     # The lesson was saved when the finding blocked; once the lane rejects it, other lanes must not learn it.
@@ -485,8 +481,7 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries)) and not has_change_evidence(
-            repo_cwd, entries, latest_turn_started_at(transcript_path)):
+    elif contentless_turn(last_msg, edited_paths(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
         why = contentless_turn(last_msg, edited_paths(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
@@ -522,14 +517,11 @@ def main() -> None:
         if sensitive:
             log(f"SENSITIVE_PATHS: {', '.join(sensitive)}")
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
-        since = latest_turn_started_at(transcript_path)
         committed = turn_commits_diff(repo_cwd, since)
         edited = edited_paths(entries)
-        if edited:
-            tree = turn_diff(repo_cwd, edited) if committed else turn_diff(repo_cwd, edited, since=since)
-        else:   # code changed through Bash: no Edit-tool paths to scope a diff to, so take the whole tree
-            tree = worktree_snapshot(repo_cwd, since) if any(role == "TOOL CALL" for role, _ in entries) else ""
-        diff = "\n\n".join(x for x in (committed, tree) if x)[:DIFF_CAP + 2_000]
+        diff = "\n\n".join(x for x in (committed, snapshot) if x)[:DIFF_CAP + 2_000]
+        if not diff and edited:   # nothing differs from HEAD now: the Edit-tool paths against the turn's starting commit
+            diff = turn_diff(repo_cwd, edited, since=since)
         if committed:
             log(f"TURN_COMMITS: {len(turn_commits(repo_cwd, since))} commit(s), {len(committed)} chars")
         if diff:
