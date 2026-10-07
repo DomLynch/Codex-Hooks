@@ -200,10 +200,6 @@ def authorization_signal(text: str) -> str:
     return signal
 
 
-def _authorizes(text: str) -> bool:
-    return authorization_signal(text) == "ok"
-
-
 _PEER_START_RE = re.compile(r"^Another Claude session sent|<cross-session-message\b")
 _COMMAND_ARG_RE = re.compile(r'"command"\s*:\s*"((?:[^"\\]|\\.)*)"')
 # Hard-to-reverse shared-state actions: merge into the base branch, deploy, rewrite a pushed
