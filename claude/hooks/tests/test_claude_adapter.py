@@ -503,11 +503,11 @@ class ClaudeAdapterTests(unittest.TestCase):
         record_lesson.assert_not_called()
 
     def test_call_mimo_uses_chatgpt_codex_cli(self) -> None:
-        completed = mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
+        completed = (0, "VERDICT: PASS\n", "")
         with (
             mock.patch.object(api, "AUDIT_TRANSPORT", "codex"),
             mock.patch.object(api, "codex_binary", return_value="/app/codex"),
-            mock.patch.object(api.subprocess, "run", return_value=completed) as run,
+            mock.patch.object(api, "safe_run", return_value=completed) as run,
             mock.patch.object(api, "log") as audit_log,
         ):
             result = api.call_mimo("audit this", timeout=7, lane="checkpoint", system="verdict only")
@@ -520,7 +520,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("read-only", command)
         self.assertIn("gpt-5.6-terra", command)
         self.assertIn('model_reasoning_effort="high"', command)
-        self.assertEqual(run.call_args.kwargs["input"], "verdict only\n\naudit this")
+        self.assertEqual(run.call_args.kwargs["input_text"], "verdict only\n\naudit this")
         self.assertEqual(run.call_args.kwargs["timeout"], 7)
         self.assertIn("lane=checkpoint", audit_log.call_args.args[1])
 
@@ -654,10 +654,10 @@ class ClaudeAuditTransportTests(unittest.TestCase):
         def fake_run(command, **kwargs):
             captured["command"] = command
             captured["env"] = kwargs["env"]
-            return mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
+            return 0, "VERDICT: PASS\n", ""
 
         with mock.patch.object(api, "claude_binary", return_value="/fake/claude"), \
-             mock.patch.object(api.subprocess, "run", side_effect=fake_run):
+             mock.patch.object(api, "safe_run", side_effect=fake_run):
             self.assertEqual(api.call_claude_cli("audit this"), "VERDICT: PASS")
         self.assertEqual(captured["env"].get(api.AUDIT_CHILD_ENV), "1")
         self.assertIn("--safe-mode", captured["command"])
@@ -673,11 +673,11 @@ class ClaudeAuditTransportTests(unittest.TestCase):
 
         def fake_run(command, **kwargs):
             captured["env"] = kwargs["env"]
-            return mock.Mock(returncode=0, stdout="VERDICT: PASS\n", stderr="")
+            return 0, "VERDICT: PASS\n", ""
 
         with mock.patch.object(api, "claude_binary", return_value="/fake/claude"), \
              mock.patch.object(api, "hook_env", side_effect=lambda k, d="": "tok-123" if k == "CLAUDE_CODE_OAUTH_TOKEN" else d), \
-             mock.patch.object(api.subprocess, "run", side_effect=fake_run):
+             mock.patch.object(api, "safe_run", side_effect=fake_run):
             api.call_claude_cli("audit this")
         self.assertEqual(captured["env"].get("CLAUDE_CODE_OAUTH_TOKEN"), "tok-123")
 
