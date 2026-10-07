@@ -73,8 +73,6 @@ def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tm
     monkeypatch.setattr(so, "safe_run", lambda *a, **k: (0, "a.jsx\n", ""))
     monkeypatch.setattr(so, "run_quality_checks", lambda *a, **k: NOT_RUN)
     monkeypatch.setattr(so, "run_project_aaa_checks", lambda *a, **k: [])
-    monkeypatch.setattr(so, "audit_with_claude", lambda *a, **k: True)
-    monkeypatch.setattr(so, "wait_for_mimo_pass", lambda *a, **k: True)
     for _ in range(2):
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
         so.main()
@@ -103,8 +101,6 @@ def test_plain_stop_between_two_milestone_stops_does_not_clear_the_owed_repo(tmp
     monkeypatch.setattr(so, "safe_run", lambda *a, **k: (0, "a.jsx\n", ""))
     monkeypatch.setattr(so, "run_quality_checks", lambda *a, **k: NOT_RUN)
     monkeypatch.setattr(so, "run_project_aaa_checks", lambda *a, **k: [])
-    monkeypatch.setattr(so, "audit_with_claude", lambda *a, **k: True)
-    monkeypatch.setattr(so, "wait_for_mimo_pass", lambda *a, **k: True)
     for is_milestone in (True, False, True):   # milestone, plain, milestone
         milestone[0] = is_milestone
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
