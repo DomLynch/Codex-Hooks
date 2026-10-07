@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import tomllib
 from datetime import datetime
@@ -214,48 +215,93 @@ def gate_lock_holder() -> dict | None:
     return data if alive else None
 
 
+_GATE_FD: int | None = None   # the open, flock'd lock file while this process runs a gate
+
+
+def _write_lock(fd: int, data: dict) -> None:
+    raw = json.dumps(data).encode()
+    os.pwrite(fd, raw, 0)
+    os.ftruncate(fd, len(raw))
+
+
 def _note_gate_child(pgid: int) -> None:
     """Record the running check's process group in our lock; never fails the gate (best effort)."""
     try:
         data = _read_lock()
-        if data and int(data.get("pid", 0)) == os.getpid():
-            GATE_LOCK_PATH.write_text(json.dumps({**data, "pgid": int(pgid)}))
+        if _GATE_FD is not None and data and int(data.get("pid", 0)) == os.getpid():
+            _write_lock(_GATE_FD, {**data, "pgid": int(pgid)})
     except Exception:
         pass
 
 
 def acquire_gate_lock(cwd: Path) -> bool:
-    """Take the Mac-wide gate lock for this process; False when another live run holds it. A dead holder's check
+    """Take the Mac-wide gate lock for this process; False when another live run holds it.
+
+    The lock is a kernel advisory lock (flock) on the lock file, held on an open fd for the whole gate run, so two
+    processes can never both win (the old check-then-unlink-then-create let both succeed, audit F01) and a dead
+    holder frees it by dying. The JSON in the file is diagnostics only (pid/cwd/at/pgid). A dead holder's check
     process group (an orphan left by a killed hook) is killed first, so no second gate runs on top of it."""
-    for _ in range(2):
+    import fcntl
+    global _GATE_FD
+    if _GATE_FD is not None:
+        return True   # this process already holds it
+    GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(3):
+        fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            data = _read_lock() or {}
+            try:
+                forgotten = time.time() - float(data["at"]) > GATE_LOCK_TTL_S
+            except (KeyError, TypeError, ValueError):
+                forgotten = False
+            if not forgotten:
+                return False
+            GATE_LOCK_PATH.unlink(missing_ok=True)   # far older than any budget: break it, a fresh file is taken next
+            continue
+        try:   # the holder may have unlinked this file on release: only the file at the path counts
+            if os.fstat(fd).st_ino != os.stat(GATE_LOCK_PATH).st_ino:
+                os.close(fd)
+                continue
+        except OSError:
+            os.close(fd)
+            continue
         holder = gate_lock_holder()
         if holder and int(holder.get("pid", 0)) != os.getpid():
+            os.close(fd)   # diagnostics name a live pid that does not hold the kernel lock (pid reuse or a legacy run)
             return False
-        GATE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if holder is None:
-            stale = _read_lock() or {}
-            pgid = int(stale.get("pgid") or 0)
-            if pgid and pgid != os.getpid() and _alive(pgid):
-                import signal
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except OSError:
-                    pass
-            GATE_LOCK_PATH.unlink(missing_ok=True)   # stale or dead
+        stale = _read_lock() or {}
         try:
-            fd = os.open(GATE_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            continue   # a race: re-read the holder once
-        with os.fdopen(fd, "w") as fh:
-            json.dump({"pid": os.getpid(), "cwd": str(cwd), "at": time.time()}, fh)
+            pgid = int(stale.get("pgid") or 0)
+        except (TypeError, ValueError):
+            pgid = 0
+        if pgid and pgid != os.getpid() and _alive(pgid):
+            import signal
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+        _write_lock(fd, {"pid": os.getpid(), "cwd": str(cwd), "at": time.time()})
+        _GATE_FD = fd
         return True
     return False
 
 
 def release_gate_lock() -> None:
-    holder = gate_lock_holder()
-    if holder and int(holder.get("pid", 0)) == os.getpid():
-        GATE_LOCK_PATH.unlink(missing_ok=True)
+    global _GATE_FD
+    if _GATE_FD is None:
+        return
+    # Unlink only our own file, and while still holding the flock: a waiter that opened it sees the inode
+    # mismatch and retries on the fresh file, so no two holders can ever share a path.
+    try:
+        if os.fstat(_GATE_FD).st_ino == os.stat(GATE_LOCK_PATH).st_ino:
+            GATE_LOCK_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+    os.close(_GATE_FD)
+    _GATE_FD = None
 
 
 def unchanged_from_base(cwd: Path) -> str:
@@ -323,24 +369,49 @@ def gate_busy(cwd: Path) -> dict | None:
     return None
 
 
+def _file_digest(path: Path) -> str:
+    """sha256 of an untracked file's bytes (a symlink: of its target text); OSError when unreadable."""
+    if path.is_symlink():
+        return "link:" + os.readlink(path)
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _tree_key(cwd: Path, commands: list) -> str | None:
-    """Identity of what a gate run checks: HEAD, staged/unstaged diffs, untracked files, commands."""
+    """Identity of what a gate run checks: HEAD, staged/unstaged diffs, untracked files and their contents, commands.
+
+    Paths come NUL-delimited (`status -z`), so a name with a space or any other character git would quote is read
+    exactly; an untracked file that cannot be read makes the key None, which is a cache miss (audit F02)."""
     rc, head, _ = safe_run(["git", "rev-parse", "HEAD"], cwd=cwd)
     if rc != 0:
         return None
     parts = [str(cwd), head.strip(), json.dumps(commands)]
-    for args in (["git", "status", "--porcelain", "--untracked-files=all"], ["git", "diff"], ["git", "diff", "--cached"]):
+    rc, status, _ = safe_run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=cwd)
+    if rc != 0:
+        return None
+    parts.append(status)
+    for args in (["git", "diff"], ["git", "diff", "--cached"]):
         rc, out, _ = safe_run(args, cwd=cwd)
         if rc != 0:
             return None
         parts.append(out)
-    for line in parts[3].splitlines():  # untracked content is invisible to diff: pin size + mtime
-        if line.startswith("?? "):
+    entries = status.split("\0")
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        if entry[0] in "RC":
+            i += 1   # a rename/copy is followed by its source path
+        if entry.startswith("?? "):  # untracked content is invisible to diff: hash it
             try:
-                st = (cwd / line[3:]).stat()
-                parts.append(f"{line[3:]} {st.st_size} {st.st_mtime_ns}")
+                parts.append(f"{entry[3:]} {_file_digest(cwd / entry[3:])}")
             except OSError:
-                parts.append(line)
+                return None
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()
 
 
@@ -364,6 +435,45 @@ def _remember_pass(key: str | None, cwd: Path) -> None:
         return data
 
     update_json_locked(GATE_CACHE_PATH, updater)
+
+
+def _kill_group(pgid: int) -> None:
+    import signal
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def _read_back(fh) -> str:
+    fh.seek(0)
+    return fh.read().decode(errors="replace")
+
+
+def _wait_check(proc, started: float, timeout: float, defer_to: Any, command: list[str], results: list):
+    """Wait for the check; its return code, or the deferral result when a deploy started mid-run. Raises the
+    deadline error after killing the check's whole process group. Output is in files, so communicate() only waits."""
+    try:
+        while True:
+            remaining = timeout - (time.monotonic() - started)
+            try:
+                wait = min(remaining, DEFER_POLL_S) if defer_to else remaining
+                proc.communicate(timeout=max(0.0, wait))
+                break
+            except subprocess.TimeoutExpired:
+                lock = defer_to() if defer_to and remaining > 0 else None
+                if remaining > 0 and not lock:
+                    continue
+                _kill_group(proc.pid)
+                proc.communicate()
+                if lock:
+                    return {"ok": True, "deferred": lock, "results": results}
+                raise _deadline(command, time.monotonic() - started, timeout) from None
+    except BaseException:
+        _kill_group(proc.pid)
+        raise
+    _kill_group(proc.pid)   # leftovers of the check's own group do not outlive it
+    return proc.returncode
 
 
 def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError:
@@ -470,31 +580,20 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             if lock:
                 return {"ok": True, "deferred": lock, "results": results}
             # Kill the whole check process group on timeout or a deploy, including npm/node --test children.
-            with subprocess.Popen(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
-                                  stderr=subprocess.PIPE, start_new_session=True) as proc:
-                _note_gate_child(proc.pid)   # its own session: pgid == pid
-                while True:
-                    remaining = timeout - (time.monotonic() - started)
-                    try:
-                        wait = min(remaining, DEFER_POLL_S) if defer_to else remaining
-                        out, err = proc.communicate(timeout=max(0.0, wait))
-                        break
-                    except subprocess.TimeoutExpired:
-                        lock = defer_to() if defer_to and remaining > 0 else None
-                        if remaining > 0 and not lock:
-                            continue
-                        import signal
-                        os.killpg(proc.pid, signal.SIGKILL)
-                        proc.communicate()
-                        if lock:
-                            return {"ok": True, "deferred": lock, "results": results}
-                        raise _deadline(command, time.monotonic() - started, timeout) from None
-                rc = proc.returncode
+            # Output goes to temp files, not pipes: a detached descendant that keeps a pipe's write end open can
+            # never hold the gate past its deadline (audit F11).
+            with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
+                with subprocess.Popen(command, cwd=cwd, stdout=out_f, stderr=err_f, start_new_session=True) as proc:
+                    _note_gate_child(proc.pid)   # its own session: pgid == pid
+                    rc = _wait_check(proc, started, timeout, defer_to, command, results)
+                    if isinstance(rc, dict):
+                        return rc
+                out, err = (_read_back(f) for f in (out_f, err_f))
             results.append(_result(path, " ".join(command), rc == 0, out + err))
             if rc != 0:
                 break
-        if results and all(item["ok"] for item in results):
-            _remember_pass(key, cwd)
+        if results and all(item["ok"] for item in results) and _tree_key(cwd, commands) == key:
+            _remember_pass(key, cwd)   # not when the checked files changed while the checks ran
     except Exception as exc:
         results.append(_result(path, "quality contract", False, str(exc)))
     finally:
@@ -543,6 +642,7 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
     ts_files = [p for p in files if p.suffix in {".ts", ".tsx"}]
     go_files = [p for p in files if p.suffix == ".go"]
     rs_files = [p for p in files if p.suffix == ".rs"]
+    js_files = [p for p in files if p.suffix in {".js", ".mjs", ".cjs"}]
 
     required = (["ruff"] if py_files else []) + (["tsc", "eslint"] if ts_files else [])
     if py_files and has_mypy_config(cwd):
@@ -581,7 +681,15 @@ def run_quality_checks(files: list[Path], cwd: Path, timeout: int = 60) -> dict:
         rc, out, err = run(["cargo", "check"])
         results.append(_result(rs_files[0], "cargo check", rc == 0, out + err))
 
+    if js_files and shutil.which("node"):
+        for file in js_files:
+            rc, out, err = run(["node", "--check", str(file)])
+            results.append(_result(file, "node --check", rc == 0, out + err))
+
     ok = all(item["ok"] for item in results)
+    if not results:   # audit F17: "passed" and "nothing applicable ran" are different answers
+        return {"ok": ok, "results": results, "no_checks": True,
+                "note": "no checks ran: no applicable checker for the edited files (nothing was verified)"}
     return {"ok": ok, "results": results}
 
 
