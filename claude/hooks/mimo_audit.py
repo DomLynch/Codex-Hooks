@@ -284,23 +284,33 @@ def contentless_turn(answer: str, edited: list) -> str:
     return f"no edits, no claim, {len(text)} chars"
 
 
-def worktree_diff(repo_cwd: str, cap: int = DIFF_CAP) -> str:
-    """Tracked changes in the working tree vs HEAD ('' when clean, not a repo, or git fails). The evidence for a turn
-    that changed code through Bash (sed, a script) and so has no Edit-tool paths."""
+def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
+    """Everything now different from HEAD ('' when clean, not a repo, or git fails): tracked changes plus untracked
+    files created since the turn began. The evidence for a turn that changed code through Bash (sed, a script,
+    a heredoc) and so has no Edit-tool paths. A file untracked before the turn is not this turn's change."""
     import subprocess
+    from datetime import datetime
     try:
         out = subprocess.run(["git", "-C", repo_cwd, "diff", "HEAD", "--no-color"], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+        parts = [out.stdout.strip()] if out.returncode == 0 and out.stdout.strip() else []
+        start = datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp() if since else None
+        names = subprocess.run(["git", "-C", repo_cwd, "ls-files", "--others", "--exclude-standard"],
+                               capture_output=True, text=True, timeout=5).stdout.splitlines()
+        for name in names:
+            file = Path(repo_cwd) / name
+            if start is not None and file.stat().st_mtime >= start:
+                parts.append(f"--- NEW FILE {name} ---\n{file.read_text(errors='replace')[:800]}")
+    except (OSError, ValueError, subprocess.SubprocessError):
         return ""
-    return out.stdout.strip()[:cap] if out.returncode == 0 else ""
+    return "\n\n".join(parts)[:cap]
 
 
 def has_change_evidence(repo_cwd: str, entries: list, since: str) -> bool:
-    """A turn that ran tools and left a diff or commits behind is not a no-work turn, whatever its answer says.
-    Resolved BEFORE the SKIP_CONTENTLESS shortcut: 'Updated.' after a Bash sed edit got zero model calls."""
+    """A turn that ran tools and left a diff, new files or commits behind is not a no-work turn, whatever its answer
+    says. Resolved BEFORE the SKIP_CONTENTLESS shortcut: 'Updated.' after a Bash sed edit got zero model calls."""
     if not any(role == "TOOL CALL" for role, _ in entries):
         return False
-    return bool(turn_commits(repo_cwd, since) or worktree_diff(repo_cwd))
+    return bool(turn_commits(repo_cwd, since) or worktree_snapshot(repo_cwd, since))
 
 
 def is_chat_turn(transcript: str) -> bool:
@@ -500,14 +510,14 @@ def main() -> None:
             transcript = f"{sensitive_section(sensitive)}\n\n{transcript}"
         since = latest_turn_started_at(transcript_path)
         committed = turn_commits_diff(repo_cwd, since)
+        edited = edited_paths(entries)
+        if edited:
+            tree = turn_diff(repo_cwd, edited) if committed else turn_diff(repo_cwd, edited, since=since)
+        else:   # code changed through Bash: no Edit-tool paths to scope a diff to, so take the whole tree
+            tree = worktree_snapshot(repo_cwd, since) if any(role == "TOOL CALL" for role, _ in entries) else ""
+        diff = "\n\n".join(x for x in (committed, tree) if x)[:DIFF_CAP + 2_000]
         if committed:
-            # What the turn committed, however it was edited, plus Edit-tool edits not yet committed.
-            diff = "\n\n".join(x for x in (committed, turn_diff(repo_cwd, edited_paths(entries))) if x)[:DIFF_CAP + 2_000]
             log(f"TURN_COMMITS: {len(turn_commits(repo_cwd, since))} commit(s), {len(committed)} chars")
-        else:
-            diff = turn_diff(repo_cwd, edited_paths(entries), since=since)
-        if not diff and not edited_paths(entries) and any(role == "TOOL CALL" for role, _ in entries):
-            diff = worktree_diff(repo_cwd)   # code changed through Bash: no Edit-tool paths to scope a diff to
         if diff:
             log(f"TURN_DIFF: {len(diff)} chars for {len(edited_paths(entries))} edited path(s)")
             transcript = (f"{transcript}\n\nWORKING TREE DIFF (the actual code change this turn — "
