@@ -252,6 +252,29 @@ class FindingLedgerTests(unittest.TestCase):
         model.assert_called_once()
         self.assertIn("[F2] released", model.call_args.args[0], "the reviewer sees F2 as released, not open")
 
+    def test_released_stop_always_gets_one_model_review(self) -> None:
+        """Auditor on #103: a short relay-only reply after a released ID must not hit SKIP_CONTENTLESS unreviewed."""
+        import mimo_audit
+        from lib import ledger
+
+        with tempfile.TemporaryDirectory() as tmp, self._iso(tmp):
+            ledger.register_findings("R", "VERDICT: ISSUES\n1. tests red\n2. no receipt")
+            with (
+                mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "s.json"),
+                mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
+                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "record_lesson"),
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
+                mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),
+            ):
+                payload = {"session_id": "R", "turn_id": "t", "transcript_path": "/nope", "cwd": tmp,
+                           "last_assistant_message": "Noted."}
+                with mock.patch.object(mimo_audit.sys, "stdin", io.StringIO(json.dumps(payload))):
+                    with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                        mimo_audit.main()
+        model.assert_called_once()
+
     def test_main_pass_clears_ledger(self) -> None:
         import mimo_audit
         from lib import ledger

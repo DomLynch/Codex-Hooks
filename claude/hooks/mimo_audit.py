@@ -498,24 +498,25 @@ def main() -> None:
     for text in ledger.rejected_texts(session_id):
         forget_lesson(text)
     pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
+    released = False
     if pre:   # 2026-10-08 (Dom, Optimizer item 5b): a missing "[Fn] fixed:" line is noted once, never a BLOCK
         log(f"LEDGER_UNANSWERED: {', '.join(unanswered)} — noted, not blocked")
         _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nUnanswered review finding(s) {', '.join(unanswered)} released: "
                             "the final message had no [Fn] fixed:/rejected: line.").strip()
         ledger.release(session_id, unanswered)
-        pre = []
+        pre, released = [], True
     if mechanical:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
+    elif not released and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
         why = contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
         reset_consecutive_blocks(session_id)
         allow_stop(f"contentless turn - audit skipped ({why})")
         return
-    elif doc_only_turn(entries, last_msg, DELIVERABLE_RE):
+    elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
         reset_consecutive_blocks(session_id)
