@@ -34,8 +34,7 @@ Check only the current task for:
 - Type errors, broken imports, syntax issues
 - Files claimed to be written but not actually written
 - For non-trivial project/code/repo work: evidence that Claude Code used the V4/MCP
-  routing contract appropriately (knowledge MCP/get_playbook when available,
-  target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
+  routing contract appropriately (target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
   Semble for code discovery (a stated reason when it was skipped), a concise coverage receipt, and concrete verification before stopping)
 
 Also flag subtle issues, not just blatant ones:
