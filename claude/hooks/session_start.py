@@ -24,8 +24,8 @@ from lib.policies import COMPLETION_POLICY, RELEASE_POLICY
 COMPONENT = "session_start"
 
 SESSION_BASELINE = """# V4/MCP Session Baseline
-- Project/code/repo work: use knowledge MCP `get_playbook()` when available; read local `AGENTS.md` and `PROJECT_STATE.md` when present.
-- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
+- Project/code/repo work: read local `AGENTS.md` and `PROJECT_STATE.md` when present.
+- Route tools deliberately: GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
 - Before non-trivial edits, find code with Semble (search by what the code does, then read the file at the returned line) and `rg` for literal text; if you skip Semble, say why.
 - Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.
 - Keep command output lean: targeted commands, capped output, summarized failures, narrow `rg` paths.
