@@ -244,7 +244,6 @@ def test_f10_one_absolute_deadline_for_retries_empty_and_repair(tmp_path, monkey
     monkeypatch.setattr(mimo_audit, "call_mimo", fake_call)
     monkeypatch.setattr(mimo_audit, "exit_if_audit_child", lambda: None)
     monkeypatch.setattr(mimo_audit, "log", lambda *a, **k: None)
-    monkeypatch.setattr(mimo_audit, "report_failure", lambda *a, **k: None)
     monkeypatch.setattr(mimo_audit, "latest_task_slice_claude", lambda *a, **k: "x" * 600 + " TOOL CALL edit implemented")
     monkeypatch.setattr(audit_state, "STATE_FILE", tmp_path / "s.json")
     monkeypatch.setattr(audit_state, "VERDICT_FILE", tmp_path / "v.json")

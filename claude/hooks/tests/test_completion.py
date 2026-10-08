@@ -15,7 +15,6 @@ import mimo_audit  # noqa: E402
 from lib import audit_state  # noqa: E402
 import session_start  # noqa: E402
 from lib import policies  # noqa: E402
-from lib import log as hook_log  # noqa: E402
 
 
 class CompletionTests(unittest.TestCase):
@@ -133,10 +132,8 @@ class CompletionTests(unittest.TestCase):
         self.assertIn(policy, session_start.SESSION_BASELINE)
         self.assertIn(policy, policies.AUTONOMY_POLICY)
         for phrase in ('completion_commands', 'same check/workflow', 'weakened assertions',
-                       'status-only', 'blocker', 'older Sentry'):
+                       'status-only', 'blocker', 'older issues'):
             self.assertIn(phrase, policy)
-        self.assertIn(policies.SENTRY_POLICY, session_start.SESSION_BASELINE)
-        self.assertIn(policies.SENTRY_POLICY, policies.WORK_QUALITY_POLICY)
         policy = policies.RELEASE_POLICY
         self.assertIn(policy, session_start.SESSION_BASELINE)
         self.assertIn(policy, policies.AUTONOMY_POLICY)
@@ -146,16 +143,14 @@ class CompletionTests(unittest.TestCase):
         self.assertIn("release close-out by default", mimo_audit.AUDIT_PROMPT)
         self.assertIn("real ownership/access blocker", mimo_audit.AUDIT_PROMPT)
 
-    def test_audit_outage_reports_metadata_and_still_blocks(self):
+    def test_audit_outage_still_blocks(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
                 mock.patch.object(mimo_audit, "log"), \
-                mock.patch.object(mimo_audit, "report_failure") as report, \
                 mock.patch.object(mimo_audit, "save_iterations"), \
                 mock.patch.object(mimo_audit, "save_verdict") as verdict, \
                 mock.patch.object(mimo_audit, "block_stop") as block:
             mimo_audit.block_audit_error("session", "turn", 0, "private provider details")
-        report.assert_called_once_with("mimo_audit", "audit_unavailable")
         self.assertEqual(verdict.call_args.args[2], "ERROR")
         block.assert_called_once()
 
@@ -167,7 +162,6 @@ class CompletionTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp, \
                     mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
                     mock.patch.object(mimo_audit, "log"), \
-                    mock.patch.object(mimo_audit, "report_failure"), \
                     mock.patch.object(mimo_audit, "save_iterations"), \
                     mock.patch.object(mimo_audit, "save_verdict") as verdict, \
                     mock.patch.object(mimo_audit, "block_stop") as block, \
@@ -180,18 +174,9 @@ class CompletionTests(unittest.TestCase):
         # a timeout is not an account error: it still blocks and retries
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(audit_state, "STATE_FILE", Path(tmp) / "state.json"), \
-                mock.patch.object(mimo_audit, "log"), mock.patch.object(mimo_audit, "report_failure"), \
+                mock.patch.object(mimo_audit, "log"), \
                 mock.patch.object(mimo_audit, "save_iterations"), mock.patch.object(mimo_audit, "save_verdict"), \
                 mock.patch.object(mimo_audit, "block_stop") as block:
             mimo_audit.block_audit_error("session", "turn", 0, "audit API error: Claude audit timed out after 100s")
         block.assert_called_once()
 
-    def test_log_reports_hook_exceptions_not_expected_outcomes(self):
-        with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(hook_log, "LOG_DIR", Path(tmp)), \
-                mock.patch.object(hook_log, "report_failure") as report:
-            for message in ("quality files=1 ok=False", "VERDICT: ISSUES", "ALLOW: chat turn"):
-                hook_log.log("post_tool", message)
-            report.assert_not_called()
-            hook_log.log("post_tool", "quality error: private path and secret")
-            report.assert_called_once_with("post_tool", "hook_exception")

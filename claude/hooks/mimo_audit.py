@@ -33,7 +33,6 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import forget_lesson, hook_env, lesson_lane, record_lesson  # noqa: E402
 from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
-from lib.telemetry import report_failure  # noqa: E402
 from lib.policies import is_project_work  # noqa: E402
 from lib.audit_state import (  # noqa: E402
     increment_audit_errors, increment_consecutive_blocks, load_iterations, remember_blocked_turn, reset_audit_errors,
@@ -153,7 +152,6 @@ def block_audit_error(session_id: str, turn_id: str, iterations: int, message: s
     the counter is per session (per-turn iterations reset every Stop and never bound anything).
     On the cap, write an escalation record and release the turn as unresolved.
     An account error (quota, login) releases at once: retrying cannot fix it."""
-    report_failure("mimo_audit", "audit_unavailable")
     save_iterations(session_id, turn_id, iterations + 1)
     save_verdict(session_id, turn_id, "ERROR", message)
     if ACCOUNT_ERROR_RE.search(message or ""):

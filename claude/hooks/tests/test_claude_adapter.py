@@ -210,9 +210,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("file/module sprawl", mimo_audit.AUDIT_PROMPT)
         self.assertIn("speculative abstractions", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Hardcoded or silo-specific fixes", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("three materially different", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("Semble searches before edits", mimo_audit.AUDIT_PROMPT)
-        self.assertIn("together rather than as alternatives", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("Semble for code discovery", mimo_audit.AUDIT_PROMPT)
         self.assertIn("concise coverage receipt", mimo_audit.AUDIT_PROMPT)
         self.assertIn("two-pass review", mimo_audit.AUDIT_PROMPT)
         self.assertIn("Random debugging", mimo_audit.AUDIT_PROMPT)
@@ -341,10 +339,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("capped output", context)
         self.assertIn("Avoid duplicate parallel exploration", context)
         self.assertIn("compact context packet", context)
-        self.assertIn("three materially different Semble searches", context)
-        self.assertIn("together, not as alternatives", context)
-        self.assertIn("Codegraph MCP for structural context/impact", context)
-        self.assertIn("only then degrade to Semble + `rg`", context)
+        self.assertIn("find code with Semble", context)
         self.assertIn("concise coverage receipt", context)
         self.assertIn("two-pass review", context)
 
@@ -352,9 +347,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertIn("capped output", session_start.SESSION_BASELINE)
         self.assertIn("Avoid duplicate parallel exploration", session_start.SESSION_BASELINE)
         self.assertIn("compact context packet", session_start.SESSION_BASELINE)
-        self.assertIn("three materially different Semble searches", session_start.SESSION_BASELINE)
-        self.assertIn("together, not as alternatives", session_start.SESSION_BASELINE)
-        self.assertIn("only then degrade to Semble + `rg`", session_start.SESSION_BASELINE)
+        self.assertIn("find code with Semble", session_start.SESSION_BASELINE)
         self.assertIn("concise coverage receipt", session_start.SESSION_BASELINE)
 
     def test_mimo_bare_verdicts_are_normalized(self) -> None:

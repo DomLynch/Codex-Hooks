@@ -42,7 +42,7 @@ POINTER = ("# V4/MCP Task Routing Contract\n"
            "The full contract was injected earlier in this session and still applies: autonomy (act on reversible "
            "defaults, ask only on true blockers), release close-out, finding closure, work quality (smallest "
            "surgical change, run .quality-gate.json, receipts not claims), context efficiency (lean output, "
-           "Semble + Codegraph before non-trivial edits, scope to the current task).")
+           "Semble before non-trivial edits, scope to the current task).")
 
 
 def _policy_count(value) -> int:
@@ -110,7 +110,7 @@ def context_for(prompt: str, cwd: Path, session_id: str = "", transcript_path: s
             "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
             "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
             "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
-            "- Mandatory before non-trivial edits: use Semble and Codegraph together, not as alternatives; run three materially different Semble searches, then Codegraph MCP for structural context/impact. If skipping either, state why.",
+            "- Before non-trivial edits, find code with Semble (search by what the code does, then read the file at the returned line) and `rg` for literal text; if you skip Semble, say why.",
             "- Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.",
             "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
