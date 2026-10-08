@@ -226,7 +226,8 @@ class FindingLedgerTests(unittest.TestCase):
             ledger.clear("s")
             self.assertEqual(ledger.prompt_section("s"), "")
 
-    def test_main_blocks_on_unanswered_without_calling_model(self) -> None:
+    def test_main_notes_unanswered_without_blocking(self) -> None:
+        """2026-10-08 (Dom, Optimizer item 5b): a missing [Fn] fixed:/rejected: line is noted once, never a BLOCK."""
         import mimo_audit
         from lib import ledger
 
@@ -237,7 +238,7 @@ class FindingLedgerTests(unittest.TestCase):
                 mock.patch.object(audit_state, "VERDICT_FILE", Path(tmp) / "v.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "record_lesson"),
-                mock.patch.object(mimo_audit, "ask_mimo_with_retry") as model,
+                mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
                 mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),
             ):
@@ -247,11 +248,9 @@ class FindingLedgerTests(unittest.TestCase):
                     buf = io.StringIO()
                     with redirect_stdout(buf), self.assertRaises(SystemExit):
                         mimo_audit.main()
-        out = json.loads(buf.getvalue())
-        self.assertEqual(out["decision"], "block")
-        self.assertIn("[F2] no receipt", out["reason"])
-        self.assertNotIn("[F1]", out["reason"].split("Findings carry IDs")[0], "answered F1 must not re-block")
-        model.assert_not_called()
+        self.assertNotIn('"decision"', buf.getvalue(), "an unanswered ID must not block")
+        model.assert_called_once()
+        self.assertIn("[F2] released", model.call_args.args[0], "the reviewer sees F2 as released, not open")
 
     def test_main_pass_clears_ledger(self) -> None:
         import mimo_audit
@@ -460,3 +459,23 @@ def test_authorized_work_finding_survives_the_advisory_filter(monkeypatch):
     filtered, voided = m.filter_void_findings(anchored)
     assert unanchored == [] and voided == []
     assert filtered == verdict
+
+
+def test_reviewer_gets_two_tries():
+    """2026-10-08 (Dom, Optimizer item 5a): 111 of 294 blocks in 24 h ended at the cap having fixed nothing."""
+    import mimo_audit as m
+    assert m.MAX_ITERATIONS == 2
+
+
+def test_relay_only_turn_is_skipped_unless_it_claims_state():
+    """Optimizer item 5c: SendMessage/read-only turns with no claim words skip the model call; a claim is still reviewed."""
+    import mimo_audit as m
+    relay = [("TOOL CALL", "SendMessage {...}"), ("TOOL RESULT", "ok"), ("TOOL CALL", "Read file")]
+    assert m.relay_only_turn(relay)
+    assert not m.relay_only_turn([])
+    assert not m.relay_only_turn(relay + [("TOOL CALL", "Edit x")])
+    assert not m.relay_only_turn(relay + [("TOOL CALL", "Bash ls")])
+    long_note = "Asked the COO and Lead about the script and told them to hold. " * 15   # over 600 chars, no claim
+    assert m.contentless_turn(long_note, [], relay_only=True)
+    assert not m.contentless_turn(long_note, []), "without the relay flag the 600-char cap still holds"
+    assert not m.contentless_turn("PR #12 merged and the release is live. " * 20, [], relay_only=True), "claims stay reviewed"

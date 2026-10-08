@@ -75,6 +75,15 @@ def apply_decisions(session_id: str, final_message: str) -> list[str]:
 
 
 
+def release(session_id: str, ids: list[str]) -> None:
+    """Close findings the agent never answered. 2026-10-08 (Dom, Optimizer item 5b): noted once, never re-blocking."""
+    state = _state(session_id)
+    for f in state["findings"]:
+        if f["id"] in ids and f.get("status") in ("open", "reopened"):
+            f["status"] = "released"
+    _save(session_id, state)
+
+
 def rejected_texts(session_id: str) -> list[str]:
     return [f["text"] for f in _state(session_id)["findings"] if f.get("status") == "rejected"]
 
