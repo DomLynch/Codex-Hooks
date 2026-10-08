@@ -186,7 +186,10 @@ def main() -> None:
     reason = decide(command, lock, own_pid=os.getpid())
     if not reason:
         if not lock:
-            note_hatch_use(command, str(payload.get("cwd") or ""))
+            try:
+                note_hatch_use(command, str(payload.get("cwd") or ""))
+            except OSError:   # an audit line must never cost a lane its command
+                pass
         return
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason},
