@@ -77,6 +77,20 @@ class DeployGuardTests(unittest.TestCase):
                     "MAC_HEAVY_OK=1 npm test", "echo 'npm test'"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
+    def test_hf_job_submission_is_not_a_local_heavy_run(self):
+        """Lead + COO, 2026-10-08: `hf jobs run ... bash -c 'npm run test:all'` runs on Hugging Face; the Mac only submits it."""
+        for cmd in ("hf jobs run --flavor cpu-xl python:3.12 bash -c 'npm run test:all'",
+                    'hf jobs run img bash -c "npm run test:all"', "hf jobs run img -- npm run build",
+                    "HF_TOKEN=x hf jobs uv run script.py", "cd ~/Developer/frankendom-lead && hf jobs run img npx playwright test"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, lock()), "", cmd)
+        # Only the submission segment is exempt: a real local run next to it, inside it, or merely naming hf is still refused.
+        for cmd in ("npm run test:all", "hf jobs run x; npm run test:all", "hf jobs run x && npm test", "hf jobs run x | npm test",
+                    "echo hf jobs run && npm run test:all", 'hf jobs run img bash -c "$(npm test)"', "hf jobs run img `npm test`",
+                    "hf jobs ps; npx playwright test", "hf auth login && npm run build", "hf jobs-run x && npm test",
+                    "git log hf jobs run -- x; vite build"):
+            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+
     def test_fresh_lock_blocks_heavy_commands_and_names_the_deploy(self):
         self.path.write_text(json.dumps(lock()))
         active = deploy_guard.active_lock()

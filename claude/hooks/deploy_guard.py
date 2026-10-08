@@ -38,6 +38,9 @@ HEAVY_RE = re.compile(
 # Merely naming it (test -f scripts/deploy.sh, cat, echo) exempts nothing, and each ; && || | ( ) segment is judged alone.
 ALLOW_RE = re.compile(r"^\s*(?:(?:env\s+|\w+=\S*\s+|(?:ba|z)?sh\s+(?:-\w+\s+)*))*(?:\S*/)?scripts/deploy\.sh\b")
 SEGMENT_SPLIT_RE = re.compile(r"[;&|()`\n]+")
+# 2026-10-08 (Lead + COO): submitting a Hugging Face job runs nothing on the Mac, even when its payload names `npm run test:all`.
+# Exempt only a segment whose command word is `hf jobs`; a real local run beside it (; && | $( ) `) is its own segment and still refused.
+HF_JOBS_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*hf\s+jobs\s")
 # Pixelmator Pro (Hero Look's headless texture step, 2026-09-26: ML super resolution + export via osascript) is heavy. The app is
 # named inside the osascript argument's quotes, which executable_text() strips as data, so this looks at the RAW command: a real
 # osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
@@ -146,7 +149,7 @@ def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the h
 
 def _runs(command: str) -> str:
     runs = executable_text(command) if command else ""
-    return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg)) if runs else ""
+    return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg) and not HF_JOBS_RE.search(seg)) if runs else ""
 
 
 def note_hatch_use(command: str, cwd: str) -> bool:
