@@ -41,6 +41,13 @@ class DeployGuardTests(unittest.TestCase):
             self.assertIn("capture --prio", reason)
             self.assertIn("MAC_HEAVY_OK=1", reason)
 
+    def test_auditor_probes_on_104(self):
+        """Auditor HOLD on #104: flags are not files, and an exempt word must be the command or script, not a path/branch/arg."""
+        self.assertEqual(deploy_guard.decide("node --test --test-reporter=tap tests/one.test.mjs", None), "")
+        for cmd in ("cd ~/Developer/frankendom-webkit && npm run test:all", "git checkout web/iphone-nav && npm run build",
+                    "npm run test:all -- tests/safari-audio.test.ts", "echo MAC_HEAVY_OK=1; npm run test:all"):
+            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+
     def test_mac_refusal_exemptions(self):
         """Deploy itself, Safari/WebKit and real-iPhone rows, the sparring GPU row, and the explicit escape hatch."""
         for cmd in ("bash scripts/deploy.sh", "npx playwright test --project=webkit", "node scripts/safari-check.mjs",

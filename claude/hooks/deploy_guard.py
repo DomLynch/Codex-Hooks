@@ -30,7 +30,7 @@ HEAVY_RE = re.compile(
     r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
-    r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test\s+[^\s]+\s+[^\s]+"
+    r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test(?:\s+-[^\s]*)*\s+[^-\s][^\s]*\s+[^-\s][^\s]*"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
 )
@@ -123,7 +123,12 @@ def executable_text(command: str) -> str:
 # 2026-10-08 (Dom, Optimizer item 2): heavy runs are refused on the Mac at any time, not only under the deploy lock (Mac load sat at
 # 29-57 on 10 cores from lane test/browser runs). Exempt: the deploy itself (ALLOW_RE / lock holder), Safari/WebKit and real-iPhone rows,
 # the sparring GPU row, and MAC_HEAVY_OK=1 for when the VPS is down.
-MAC_EXEMPT_RE = re.compile(r"webkit|safari|iphone|simctl|sparring|MAC_HEAVY_OK=1", re.IGNORECASE)
+_ROW = r"(?:webkit|safari|iphone|simctl|sparring)"
+# Judged per heavy segment: the exempt word must be the command or script (npm script name, scripts/ file, --project), never a path,
+# branch or test-file argument; MAC_HEAVY_OK=1 only as that segment's own leading env (Auditor on #104).
+MAC_EXEMPT_RE = re.compile(
+    rf"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b|^\s*(?:\w+=\S*\s+)*(?:xcrun\s+simctl\b|npm\s+run\s+[\w:-]*{_ROW}"
+    rf"|node\s+(?:\S*/)?scripts/[\w-]*{_ROW}|npx\s+playwright\s+test\b[^\n]*--project[= ]{_ROW})", re.IGNORECASE)
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
@@ -140,7 +145,8 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
     if not lock:
-        return "" if MAC_EXEMPT_RE.search(command) else VPS_REASON
+        heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
+        return "" if all(MAC_EXEMPT_RE.search(seg) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
