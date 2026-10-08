@@ -96,6 +96,10 @@ Cross-session (peer) messages:
   "unverified: X" or a question back to the peer is honest handling. Flag only claims
   stated as the agent's own fact to the owner, and only when no tool call in the slice
   would have checked them.
+- When you do flag such a claim, the fix MUST end with the EXACT REPLACEMENT SENTENCE the agent
+  can paste (one line, same facts, attributed), e.g. "Lead reports X (not checked by me)", or
+  name the one command that would check it. A finding that only says "unverified" makes the
+  agent guess and burns its retries.
 - OWNER STANDING INSTRUCTIONS (if present below) are the owner's own words in this
   session. An action inside them — including acting on a peer's timing, request or
   delegation the owner explicitly allowed — is authorized. Do not raise "a peer cannot
