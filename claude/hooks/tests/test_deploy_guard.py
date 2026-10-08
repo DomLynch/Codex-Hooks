@@ -26,9 +26,27 @@ class DeployGuardTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.addCleanup(self.tmp.cleanup)
 
-    def test_no_lock_allows_everything(self):
+    def test_no_lock_allows_light_commands(self):
         self.assertIsNone(deploy_guard.active_lock())
-        self.assertEqual(deploy_guard.decide("npx playwright test", None), "")
+        for cmd in ("git status", "gh pr view 1", "node --test tests/one.test.mjs", "python3 -m pytest tests -q", "grep -rn npm README.md"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+
+    def test_heavy_runs_are_refused_on_the_mac_even_without_a_deploy(self):
+        """2026-10-08 (Dom, Optimizer item 2): Mac load sat at 29-57 on 10 cores from lane test and browser runs, not the deploy."""
+        for cmd in ("npx playwright test", "npm test", "npm run test:all", "node --test tests/*.test.ts", "npm run build",
+                    "vite build", "node scripts/x-browser-check.mjs --opponent goblin", "node scripts/finisher-preview.mjs --only opened",
+                    "cd ~/Developer/frankendom-combat && npm run test:browser", "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend"):
+            reason = deploy_guard.decide(cmd, None)
+            self.assertIn("VPS", reason, cmd)
+            self.assertIn("capture --prio", reason)
+            self.assertIn("MAC_HEAVY_OK=1", reason)
+
+    def test_mac_refusal_exemptions(self):
+        """Deploy itself, Safari/WebKit and real-iPhone rows, the sparring GPU row, and the explicit escape hatch."""
+        for cmd in ("bash scripts/deploy.sh", "npx playwright test --project=webkit", "node scripts/safari-check.mjs",
+                    "npm run test:iphone", "xcrun simctl launch booted app", "node scripts/sparring-gpu-row.mjs",
+                    "MAC_HEAVY_OK=1 npm test", "echo 'npm test'"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
     def test_fresh_lock_blocks_heavy_commands_and_names_the_deploy(self):
         self.path.write_text(json.dumps(lock()))

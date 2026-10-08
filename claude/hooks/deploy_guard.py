@@ -120,14 +120,27 @@ def executable_text(command: str) -> str:
     return QUOTED_RE.sub(quoted, stripped)
 
 
+# 2026-10-08 (Dom, Optimizer item 2): heavy runs are refused on the Mac at any time, not only under the deploy lock (Mac load sat at
+# 29-57 on 10 cores from lane test/browser runs). Exempt: the deploy itself (ALLOW_RE / lock holder), Safari/WebKit and real-iPhone rows,
+# the sparring GPU row, and MAC_HEAVY_OK=1 for when the VPS is down.
+MAC_EXEMPT_RE = re.compile(r"webkit|safari|iphone|simctl|sparring|MAC_HEAVY_OK=1", re.IGNORECASE)
+VPS_REASON = (
+    "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
+    "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
+    "Safari/WebKit, real-iPhone and sparring rows are exempt; if the VPS is down, prefix the command with MAC_HEAVY_OK=1."
+)
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
-    runs = executable_text(command) if lock and command else ""
+    runs = executable_text(command) if command else ""
     if runs:
         runs = "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg))
-    pixelmator = bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
+    pixelmator = bool(lock) and bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
+    if not lock:
+        return "" if MAC_EXEMPT_RE.search(command) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
