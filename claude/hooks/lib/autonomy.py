@@ -25,7 +25,7 @@ STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
 MAX_QUEUE = 80
-MAX_ACTIVE_LESSONS = 8  # per lane; ~60 tokens each per turn
+MAX_ACTIVE_LESSONS = 3  # per lane; ~60 tokens each per turn. 2026-10-08 (Dom): 8 -> 3, six stale findings rode every prompt
 # 2026-09-26: 171 lessons a day across ~20 lanes meant each lane saw other lanes' one-off slips for about an hour.
 # A lesson now reaches only the lane that earned it; lane "" (the daemon watchdog) reaches every lane.
 MAX_STORED_LESSONS = 240

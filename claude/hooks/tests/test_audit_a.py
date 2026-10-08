@@ -400,7 +400,7 @@ class AuditTransportCleanupTests(unittest.TestCase):
                 env = {'CLAUDE_AUDIT_BIN': str(fake), 'CODEX_AUDIT_BIN': str(fake), 'PIDFILE': str(pidfile)}
                 with patch.dict(os.environ, env), patch.object(api, 'AUDIT_TRANSPORT', transport):
                     with self.assertRaises(TimeoutError):
-                        api.call_mimo('prompt', timeout=0.5)
+                        api.call_mimo('prompt', timeout=3)   # 2026-10-08: 0.5s lost the race to shell start-up on loaded CI/Mac (3 red runs)
                 self.assertTrue(pidfile.exists(), f'{name}: the fixture never started its descendant')
                 pid = int(pidfile.read_text())
                 time.sleep(0.2)

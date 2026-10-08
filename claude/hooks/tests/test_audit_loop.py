@@ -71,9 +71,9 @@ class BlockChainDamperTests(unittest.TestCase):
 
 
 class ActiveLessonsCapTests(unittest.TestCase):
-    def test_storage_and_read_caps_agree_at_eight(self) -> None:
+    def test_storage_and_read_caps_agree_at_three(self) -> None:
 
-        self.assertEqual(autonomy.MAX_ACTIVE_LESSONS, 8)
+        self.assertEqual(autonomy.MAX_ACTIVE_LESSONS, 3)
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "state.json"),
@@ -82,9 +82,9 @@ class ActiveLessonsCapTests(unittest.TestCase):
                 for i in range(12):
                     autonomy.record_lesson("test", f"lesson number {i}")
                 shown = autonomy.active_lessons("any-lane")
-        self.assertEqual(len(shown), 8, "read cap is eight per lane")
+        self.assertEqual(len(shown), 3, "read cap is three per lane")
         self.assertEqual(shown[0], "lesson number 11", "newest first")
-        self.assertNotIn("lesson number 3", shown, "oldest four evicted")
+        self.assertNotIn("lesson number 3", shown, "older ones evicted")
 
     def test_rejected_finding_is_removed_from_lessons(self) -> None:
 
@@ -131,7 +131,7 @@ class FixtureLessonGuardTests(unittest.TestCase):
             self.assertEqual(autonomy.active_lessons("armour"), ["daemon idle 6h"], "a lesson that names nothing is not saved")
             lead = autonomy.active_lessons("lead-catalogue")
             self.assertEqual(lead[0], "lead slip `9`")
-            self.assertEqual(len(lead), 8, "eight per lane")
+            self.assertEqual(len(lead), 3, "three per lane")
             self.assertIn("strategy", [e["lane"] for e in json.loads((Path(tmp) / "s.json").read_text())["lessons"]],
                           "one busy lane does not evict another lane's lessons")
             # lessons saved before lanes existed were everyone's; they are parked, not shown
