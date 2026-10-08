@@ -79,11 +79,23 @@ class DeployGuardTests(unittest.TestCase):
 
     def test_hf_job_submission_is_not_a_local_heavy_run(self):
         """Lead + COO, 2026-10-08: `hf jobs run ... bash -c 'npm run test:all'` runs on Hugging Face; the Mac only submits it."""
+        self.path.write_text(json.dumps(lock()))
+        active = deploy_guard.active_lock()
         for cmd in ("hf jobs run --flavor cpu-xl python:3.12 bash -c 'npm run test:all'",
                     'hf jobs run img bash -c "npm run test:all"', "hf jobs run img -- npm run build",
                     "HF_TOKEN=x hf jobs uv run script.py", "cd ~/Developer/frankendom-lead && hf jobs run img npx playwright test"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
-            self.assertEqual(deploy_guard.decide(cmd, lock()), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
+        # Auditor HOLD on #105 (a853769): the usual inline payload must pass, a locally expanded substitution must not, env prefix HF_* only.
+        for cmd in ('hf jobs run --flavor cpu-upgrade node:22 bash -c "npm ci; npm run test:all"',
+                    "hf jobs run img sh -c 'npm ci && npm run build'", "cd x && hf jobs run img bash -c \"npm ci; npx playwright test\""):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, active), "", cmd)
+        for cmd in ('hf jobs run x "$(npm run test:all)"', 'hf jobs run x "a $(npx vite build) b"', 'hf jobs run img bash -c "npm ci; $(npm run test:all)"',
+                    'hf jobs run img bash -c "npm ci; `npm test`"', "PATH=./bin hf jobs run x -- npm test", "PATH=./bin:$PATH hf jobs run img -- vite build",
+                    'echo "; hf jobs x" && bash -c "npm run test:all"'):
+            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+            self.assertIn("in flight", deploy_guard.decide(cmd, active), cmd)
         # Only the submission segment is exempt: a real local run next to it, inside it, or merely naming hf is still refused.
         for cmd in ("npm run test:all", "hf jobs run x; npm run test:all", "hf jobs run x && npm test", "hf jobs run x | npm test",
                     "echo hf jobs run && npm run test:all", 'hf jobs run img bash -c "$(npm test)"', "hf jobs run img `npm test`",
