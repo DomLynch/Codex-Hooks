@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -23,20 +22,6 @@ COMPONENT = "post_tool"
 # budget so post-tool checks fail on real failures, not timeout drift.
 QUALITY_TIMEOUT_S = 120
 EDIT_TOOLS = {"apply_patch", "Edit", "Write", "MultiEdit"}
-
-
-def sync_codegraph(root: Path) -> None:
-    root = root.resolve()
-    if git_root(root) != root:
-        return
-    indexed = (root / ".codegraph" / "codegraph.db").exists()
-    try:
-        command = ["codegraph", "sync", "-q"] if indexed else ["codegraph", "init"]
-        result = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10 if indexed else 20)
-        if result.returncode:
-            log(COMPONENT, f"codegraph update failed cwd={root}: {result.stderr[-200:]}")
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log(COMPONENT, f"codegraph update unavailable cwd={root}: {exc}")
 
 
 def block(reason: str) -> None:
@@ -89,7 +74,6 @@ def main() -> None:
         deadline = time.monotonic() + QUALITY_TIMEOUT_S
         for root, target_files in targets.items():
             result = run_quality_checks(target_files, root, timeout=deadline - time.monotonic(), autofix=autofix)
-            sync_codegraph(root)
             log(COMPONENT, f"quality files={len(target_files)} ok={result.get('ok')} cwd={root}")
             if not result.get("ok"):
                 block(format_quality_failures(result))

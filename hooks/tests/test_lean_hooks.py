@@ -96,7 +96,7 @@ def test_many_edits_have_quality_gates_without_model_calls(tmp_path):
          mock.patch.object(post_tool, 'MIMO_CHECKPOINT_AUDIT_PATH', tmp_path / 'old-counter.json', create=True), \
          mock.patch.object(post_tool, 'call_mimo', return_value='VERDICT: PASS', create=True) as model, \
          mock.patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}) as checks, \
-         mock.patch.object(post_tool, 'sync_codegraph'), mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'log'):
+         mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'log'):
         for _ in range(40):
             with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))):
                 post_tool.main()

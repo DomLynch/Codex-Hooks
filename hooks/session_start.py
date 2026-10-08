@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -13,20 +11,19 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import remember_repo
 from lib.log import log
-from lib.git import git_root, is_git_repo
+from lib.git import is_git_repo
 from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
 from lib.transcript import latest_task_slice
-from user_prompt_submit import COMPLETION_POLICY, RELEASE_POLICY, SENTRY_POLICY
+from user_prompt_submit import COMPLETION_POLICY, RELEASE_POLICY
 
 
 COMPONENT = "session_start"
 
 SESSION_BASELINE = """# V4/MCP Session Baseline
-- Project/code/repo work: use knowledge MCP `get_playbook()` when available; read local `AGENTS.md` and `PROJECT_STATE.md` when present.
-- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
-- Mandatory before non-trivial edits: use Semble and Codegraph together, not as alternatives; run three materially different Semble searches, then Codegraph MCP for structural context/impact. If skipping either, state why.
-- If Codegraph is unavailable, retry once; only then degrade to Semble + `rg` and state the fallback in the receipt.
+- Project/code/repo work: read local `AGENTS.md` and `PROJECT_STATE.md` when present.
+- Route tools deliberately: GitHub for PR/CI, Browser for UI/local web, official docs/web for current facts.
+- Before non-trivial edits, find code with Semble (search by what the code does, then read the file at the returned line) and `rg` for literal text; if you skip Semble, say why.
 - Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.
 - Keep command output lean: targeted commands, capped output, summarized failures, narrow `rg` paths.
 - No full diffs/logs/generated files/archives/dependency trees/repeated output unless needed.
@@ -47,7 +44,7 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 - Explicit stop/pause, audit-only, plan-only and status-only requests override persistence. Do not start unrelated backlog tasks; retry exhaustion is unresolved work, not success.
 - Long runs: bounded reversible progress with logs/checkpoints over micro-management.
 """
-SESSION_BASELINE += RELEASE_POLICY + COMPLETION_POLICY + SENTRY_POLICY + "\n"
+SESSION_BASELINE += RELEASE_POLICY + COMPLETION_POLICY + "\n"
 
 BACKLOG_SKIP_PARTS = {
     ".git",
@@ -73,9 +70,6 @@ def additional_context(context: str) -> None:
 
 def format_briefing(handoff: dict, mined: list[dict]) -> str:
     lines = [SESSION_BASELINE.rstrip(), "", "# Session Handoff"]
-    codegraph = codegraph_notice(handoff.get("cwd"))
-    if codegraph:
-        lines.extend(["", codegraph])
     if handoff.get("last_updated_at"):
         lines.append(f"Previous session updated: {handoff['last_updated_at']}")
     last_task = handoff.get("last_task") or {}
@@ -93,25 +87,6 @@ def format_briefing(handoff: dict, mined: list[dict]) -> str:
             )
         lines.append("Use the top item if the user has not provided a more specific task.")
     return "\n".join(lines)
-
-
-def codegraph_notice(cwd: str | None) -> str:
-    if not cwd:
-        return ""
-    path = git_root(Path(cwd).resolve())
-    if path is None:
-        return ""
-    if (path / ".codegraph" / "codegraph.db").exists():
-        return ""
-    if shutil.which("codegraph"):
-        try:
-            result = subprocess.run(["codegraph", "init"], cwd=path, capture_output=True, text=True, timeout=20)
-            if result.returncode == 0 and (path / ".codegraph" / "codegraph.db").exists():
-                log(COMPONENT, f"codegraph initialized cwd={path}")
-                return ""
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            log(COMPONENT, f"codegraph init unavailable cwd={path}: {exc}")
-    return "# Codegraph\n- No local index found for this repo; Codegraph initialization failed or is unavailable. State the fallback."
 
 
 def handoff_for_cwd(handoff: dict, cwd: Path) -> dict:
@@ -179,8 +154,7 @@ def main() -> None:
             additional_context(context)
         else:
             log(COMPONENT, "baseline context injected; no handoff/backlog")
-            codegraph = codegraph_notice(str(cwd))
-            additional_context(SESSION_BASELINE if not codegraph else f"{SESSION_BASELINE.rstrip()}\n\n{codegraph}")
+            additional_context(SESSION_BASELINE)
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 

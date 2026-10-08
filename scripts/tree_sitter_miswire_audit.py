@@ -44,7 +44,7 @@ def run_audit(cmd: list[str], target: Path) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run Tree-sitter Analyzer miswire audit as a Codegraph diagnostic.")
+    parser = argparse.ArgumentParser(description="Run Tree-sitter Analyzer miswire audit as a call-graph diagnostic.")
     parser.add_argument("target", nargs="?", default=".", help="Repo alias or path.")
     parser.add_argument("--dry-run", action="store_true", help="Print command without executing.")
     args = parser.parse_args()

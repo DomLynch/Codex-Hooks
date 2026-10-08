@@ -17,7 +17,7 @@ design, but they should not become default infrastructure without a pilot.
 | `Aider-AI/aider` | 45,687 stars, Apache-2.0, pushed 2026-05-22 | Copy the repo-map and `.aiderignore` pattern. Root `.aiderignore` was added separately in the Business workspace. |
 | AGENTS.md efficiency paper | arXiv 2601.20404 reports 28.64% median runtime and 16.58% output-token reduction | Keep AGENTS discipline as default. Implemented in Codex and Claude hook policy. |
 | `Madhan230205/token-reducer` | 25 stars, MIT, pushed 2026-05-02 | Do not general-rollout. Borrow idea only: compact context packets, BM25/AST/reranking. |
-| CogniLayer / `codex-agent-mem` | 28 / 24 stars; one has unclear license | Do not install. Existing Codex memory + Codegraph covers the proven need with lower risk. |
+| CogniLayer / `codex-agent-mem` | 28 / 24 stars; one has unclear license | Do not install. Existing Codex memory + Semble covers the proven need with lower risk. |
 | `opencode-ai/opencode` / `google-gemini/gemini-cli` | 12,798 / 104,861 stars | Use as cheaper scout / second-opinion lanes, not duplicate Codex explorers. |
 | `EuniAI/ContextBench` | 35 stars, Apache-2.0; arXiv 2602.05892 has useful findings | Use principle, not infra: optimize context precision, not recall volume. |
 
@@ -44,7 +44,7 @@ design, but they should not become default infrastructure without a pilot.
 
 - No RTK global install. Use a measured one-repo pilot first.
 - No low-star token-reducer / CogniLayer / codex-agent-mem install.
-- No replacement of Codegraph with another indexer.
+- No replacement of Semble with another indexer.
 
 ## Pilot Gate For RTK Or Similar
 

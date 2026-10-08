@@ -208,8 +208,7 @@ class CodexReviewIntegrationTests(unittest.TestCase):
             with (mock.patch.object(mimo_audit, "STATE_FILE", root / "state.json"),
                   mock.patch.object(mimo_audit, "VERDICT_FILE", root / "verdict.json"),
                   mock.patch.object(mimo_audit, "ESCALATION_DIR", root / "escalations"),
-                  mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log"),
-                  mock.patch.object(mimo_audit, "report_failure")):
+                  mock.patch.object(mimo_audit, "LOG_FILE", root / "audit.log")):
                 for turn in range(3):
                     with redirect_stdout(io.StringIO()):
                         with self.assertRaises(SystemExit):

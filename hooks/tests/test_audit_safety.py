@@ -53,7 +53,6 @@ class AuditSafetyTests(unittest.TestCase):
                     stack.enter_context(mock.patch.object(module, 'log'))
                     stack.enter_context(mock.patch.object(module, 'pending_quality', return_value=[]))
                 stack.enter_context(mock.patch.object(stop_orchestrator, 'latest_task_slice', return_value='USER:\n' + request))
-                stack.enter_context(mock.patch.object(post_tool, 'sync_codegraph'))
                 for module in (post_tool, stop_orchestrator):
                     with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), redirect_stdout(io.StringIO()):
                         try:
@@ -93,11 +92,6 @@ class AuditSafetyTests(unittest.TestCase):
                 for call in review.call_args_list:
                     self.assertIn(request, call.args[0])
                     self.assertIn('Keep it lean.', call.args[0])
-
-    def test_non_repository_is_never_indexed(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(post_tool.subprocess, 'run') as run:
-            post_tool.sync_codegraph(Path(tmp))
-        run.assert_not_called()
 
     def test_incomplete_fix_is_not_reclassified_as_advice(self):
         finding = ('[quote: "its underlying performance defect still needs repair."] '

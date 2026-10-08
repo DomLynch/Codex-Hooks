@@ -24,9 +24,9 @@ RELEASE_POLICY = """# Release Close-out
 """
 
 COMPLETION_POLICY = """# Finding Closure
-- Keep current implementation failures open until the same check/workflow passes on changed code or evidence proves it expected/unrelated. Record the failure, disposition and confirming receipt. Reporting, delegation or Sentry resolution is not a fix; no unrelated green checks, weakened assertions, deleted checks or raised baselines.
+- Keep current implementation failures open until the same check/workflow passes on changed code or evidence proves it expected/unrelated. Record the failure, disposition and confirming receipt. Reporting or delegation is not a fix; no unrelated green checks, weakened assertions, deleted checks or raised baselines.
 - Put repeatable browser/workflow checks in .quality-gate.json completion_commands as argv lists; no production writes or paid calls in automatic checks.
-- Verify deployed revision and affected behavior, including relevant older Sentry issues. Document historical issue dispositions; zero historical issues is not required.
+- Verify deployed revision and affected behavior, including relevant older issues and logs. Document historical issue dispositions; zero historical issues is not required.
 - Honor stop/pause, audit-only, plan-only and status-only scope. A genuine blocker needs the failed check and owner/next step; avoid endless retries or unrelated repairs.
 """
 
@@ -47,19 +47,16 @@ AUTONOMY_POLICY = "\n".join(
     ]
 )
 
-SENTRY_POLICY = "- For new deployable apps, configure a project-specific Sentry SDK/DSN and verify a remote event before claiming reporting works; MCP access alone does not instrument the app. For production incidents, consult Sentry when configured and accessible, then reproduce locally. Cite the project/environment/release and event receipt; unavailable Sentry is not a clean bill of health. Never upload secrets, prompts or private user content."
-
 WORK_QUALITY_POLICY = "\n".join(
     [
         "# General Work Quality Contract",
         "- Prefer the smallest surgical change and minimal LOC; delete/refactor before adding. Avoid speculative abstractions, broad rewrites, and file/module sprawl.",
         "- Use boring explicit code. When debugging, reproduce or cite the concrete failure, localize, fix minimally, verify gone.",
         "- Respect mode: audit-only means no edits; implementation means changed files and checks.",
-        SENTRY_POLICY,
         "- Before done: two-pass review plus strongest relevant automated/judge check.",
         "- Code changes: run the repository .quality-gate.json commands; never skip missing tools, regenerate baselines to pass, or report a failed check as success.",
         "- Debugging: require a reproducer and regression test. Use ast-grep for structural bug patterns, Hypothesis/randomized tests for state/order bugs, VizTracer/py-spy for slowness/hangs, and bounded mutation tests for suspect assertions.",
-        "- Use Tree-sitter miswire audit when Codegraph edges are disputed and a bounded, secret-free Repomix pack for cross-agent handoffs. Report applicable tool evidence or a concrete reason it cannot run; do not run unrelated diagnostics.",
+        "- Use Tree-sitter miswire audit when call-graph edges are disputed and a bounded, secret-free Repomix pack for cross-agent handoffs. Report applicable tool evidence or a concrete reason it cannot run; do not run unrelated diagnostics.",
     ]
 )
 
@@ -68,8 +65,7 @@ CONTEXT_EFFICIENCY_POLICY = "\n".join(
         "# Context Efficiency Contract",
         "- Keep command output lean: use targeted commands, capped output, summarized failures, and narrow paths.",
         "- No full diffs/logs/dependency trees/generated artifacts/archives/repeated output unless explicitly needed.",
-        "- For non-trivial work, use Semble and Codegraph together, not as alternatives: Semble for discovery, Codegraph for structure/impact, and `rg` for literal text.",
-        "- If Codegraph is unavailable, retry once; only then degrade to Semble + `rg` and state the fallback in the receipt.",
+        "- For non-trivial work, use Semble for discovery and `rg` for literal text; say why if you skip Semble.",
         "- Avoid duplicate parallel exploration; split agents by scout/surgeon/reviewer roles with non-overlapping scope.",
         "- Start substantial project work from a compact context packet: task, known files, do-not-inspect paths, evidence, success checks.",
     ]
@@ -119,10 +115,9 @@ def context_for(prompt: str, cwd: Path) -> str:
             AUTONOMY_POLICY,
             WORK_QUALITY_POLICY,
             CONTEXT_EFFICIENCY_POLICY,
-            "- Project/code/repo work: call knowledge MCP `get_playbook()` when available.",
             "- Target repo known: read local `AGENTS.md`; also `PROJECT_STATE.md` when present.",
-            "- Route tools deliberately: knowledge MCP for doctrine, GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
-            "- Mandatory before non-trivial edits: use Semble and Codegraph together, not as alternatives; run three materially different Semble searches, then Codegraph MCP for structural context/impact. If skipping either, state why.",
+            "- Route tools deliberately: GitHub for PR/CI, Browser for UI/local web, official docs/web for current external facts.",
+            "- Before non-trivial edits, find code with Semble (search by what the code does, then read the file at the returned line) and `rg` for literal text; if you skip Semble, say why.",
             "- Before stopping, give a concise coverage receipt for relevant entry points, state/config, retries/fallbacks/background work, tests, and post-edit impact/index freshness.",
             "- Scale V4 loop to task: success condition, likely files, smallest reversible change, strong verification.",
             "- Before stopping, give evidence: files touched, checks/logs run, remaining risk.",
