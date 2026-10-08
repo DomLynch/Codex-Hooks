@@ -295,7 +295,6 @@ class BoundedAuditErrorTests(unittest.TestCase):
             mock.patch.object(audit_state, "ESCALATION_DIR", Path(tmp) / "esc"),
             mock.patch.object(mimo_audit, "log"),
             mock.patch.object(mimo_audit, "record_lesson"),
-            mock.patch.object(mimo_audit, "report_failure"),
             mock.patch.object(mimo_audit, "ask_mimo_with_retry", side_effect=model),
             mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
             mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[]),

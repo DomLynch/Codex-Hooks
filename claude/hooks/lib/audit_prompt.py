@@ -36,10 +36,7 @@ Check only the current task for:
 - For non-trivial project/code/repo work: evidence that Claude Code used the V4/MCP
   routing contract appropriately (knowledge MCP/get_playbook when available,
   target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
-  Semble and Codegraph together rather than as alternatives: three materially different
-  Semble searches before edits, then Codegraph MCP for structural context/impact,
-  a stated reason when either was
-  skipped, a concise coverage receipt, and concrete verification before stopping)
+  Semble for code discovery (a stated reason when it was skipped), a concise coverage receipt, and concrete verification before stopping)
 
 Also flag subtle issues, not just blatant ones:
 - Error handlers that swallow more cases than the user asked about (bare `except`,
@@ -59,7 +56,7 @@ Completion discipline (implementation requests only):
 - Treat current-task failed checks as open findings, even if unrelated checks
   later pass. Require the same check/workflow to pass on the changed code or
   concrete evidence it was expected/unrelated. A failed test being reported,
-  acknowledged, delegated or marked resolved in Sentry is not closure.
+  acknowledged, delegated or marked resolved in a tracker is not closure.
 - Do not accept weakened/deleted assertions or raised baselines as a fix.
   A corrected test must explain its faulty expectation and retain coverage of
   the original invariant. Relevant repeatable browser/workflow checks belong
@@ -67,7 +64,7 @@ Completion discipline (implementation requests only):
 - CHECK HISTORY is bounded evidence, not an automatic failure verdict. Match
   chronology, command/resource, expected outcome and current scope; a passing
   rerun can close it. Preserve status/audit-only/pause and genuine blocker
-  exceptions below. Do not demand all historical Sentry issues be repaired;
+  exceptions below. Do not demand all historical issues be repaired;
   require an evidence-based disposition only for relevant findings.
 - An honest unfinished summary is still premature stopping when an authorized,
   executable next step remains. Return ISSUES with that specific next action.
