@@ -84,7 +84,7 @@ class ActiveLessonsCapTests(unittest.TestCase):
                 shown = autonomy.active_lessons("any-lane")
         self.assertEqual(len(shown), 3, "read cap is three per lane")
         self.assertEqual(shown[0], "lesson number 11", "newest first")
-        self.assertNotIn("lesson number 3", shown, "older ones evicted")
+        self.assertNotIn("lesson number 8", shown, "older ones evicted (8 is the first one past the cap)")
 
     def test_rejected_finding_is_removed_from_lessons(self) -> None:
 
