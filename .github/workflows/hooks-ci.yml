@@ -8,8 +8,6 @@ on:
 jobs:
   python-hooks:
     runs-on: [self-hosted, codex-hooks-local]
-    env:
-      HOOK_SENTRY_DSN: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -22,9 +20,6 @@ jobs:
           ruff --version
           python3 -m pytest --version >/dev/null 2>&1 || python3 -m pip install --user pytest
           python3 -m pytest --version
-
-      - name: Install isolated telemetry SDK for contract tests
-        run: sh scripts/install-telemetry.sh
 
       - name: Run Codex hook tests
         run: python3 -m pytest hooks/tests -q -p no:cacheprovider

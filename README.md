@@ -64,7 +64,7 @@ touch ~/.codex/state/AUTONOMY_STOP
 
 ## Hook footprint
 
-Seven event handlers have separate jobs: deployment guard, fresh CodeGraph reads,
+Six event handlers have separate jobs: deployment guard,
 post-edit quality checks, session handoff, prompt routing/inbox, final AI review,
 and repository completion gates. Only the final reviewer calls a model; the old
 periodic post-edit AI checkpoint has been removed. Keeping separate handlers
@@ -92,7 +92,6 @@ Optional tools for better Codex/Claude codebase understanding without adding
 more daily agents:
 
 ```bash
-python3 scripts/codegraph_fleet_status.py --sync
 python3 scripts/repomix_handoff.py hooks --budget 60000
 python3 scripts/ast_grep_check.py .
 ```
@@ -120,8 +119,8 @@ into a TypeScript project. Project-local binaries take precedence. Baselines
 freeze existing complexity/duplication, not new regressions. Dead-code and
 mock-density reports need human assessment before deleting anything.
 
-Semble discovery and CodeGraph impact analysis remain mandatory in the existing
-instructions/reviewer, with the documented unavailable/index-free fallback.
+Semble discovery stays expected in the existing instructions/reviewer, with a stated
+reason when it is skipped.
 This is not deterministic proof every tool was used: wrapped tool output is not
 an authenticated invocation record. Profiles, mutation tests and state-machine
 tests apply to the relevant failure, not every edit. Hooks do not prevent direct
@@ -133,7 +132,7 @@ required CI branch checks are the merge boundary.
 SessionStart and UserPromptSubmit inject the same finding-closure policy for
 Codex and Claude; Stop reviews it. Current-task failures require a matching
 passing rerun or an evidence-based expected/unrelated disposition. Reporting,
-delegation, unrelated green tests or closing a Sentry issue do not resolve them.
+delegation, unrelated green tests or closing a tracker issue do not resolve them.
 Status/audit-only questions, explicit pauses and concrete external blockers
 remain exceptions; bounded reviewer exhaustion is unresolved, never PASS.
 
@@ -163,7 +162,6 @@ explicit agent action scoped to the user's task.
 
 Review evidence is compacted separately from the complete current user request.
 Findings are not discarded merely for containing words such as "verify".
-Post-tool CodeGraph updates run only at a verified Git repository/worktree root.
 
 ### Codex repository isolation
 Completion gates are queued only for the actual Git roots of edited files. Loose files keep per-file checks in their own directories; they do not inherit a shared workspace completion gate. Stop drops legacy non-repository assignments, does not infer a target from prose, and uses edited repositories before the launch directory. Genuine repository failures and missing contracts still block.

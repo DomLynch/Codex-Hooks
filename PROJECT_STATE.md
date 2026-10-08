@@ -1,5 +1,8 @@
 # Project state — Codex Hooks
 
+## 2026-10-08: removed CodeGraph, Sentry telemetry and the knowledge MCP from the Codex tree (Dom)
+- Dom ordered it ("remove these for codex please"), mirroring the Claude-side PRs #95 and #97. Deleted `hooks/codegraph_freshness.py`, `hooks/lib/telemetry.py`, `scripts/codegraph_fleet_status.py`, `scripts/install-telemetry.sh`, `requirements-telemetry.txt`, `docs/SENTRY.md` and their tests. Dropped the post-edit/session-start CodeGraph sync and notice, the Sentry reporting calls and policy text, the knowledge MCP `get_playbook()` wording, the codegraph entries in `config/hooks.example.toml`, and the telemetry install step and `HOOK_SENTRY_DSN` setting in CI and `.quality-gate.json`. Code discovery is now "find code with Semble, say why if skipped". Semble stays. Older dated entries below are history and unchanged. Live `~/.codex` is not touched by this change; install separately.
+
 ## Codex rerun evidence — 3 October 2026
 - Reproduced the stale-failure false block: transcript compaction kept the old 17/18 failure but omitted the later verified 18/18 result. Passing test receipts now survive both compaction stages, carry output order, and remain bounded by the existing evidence budget. The reviewer explicitly compares the same check and changed code.
 - No automatic success override: unrelated subsets, later regressions and assistant claims do not close failures. Regression tests and real reviewer replay cover these opposing cases. Model, settings, Claude and game code unchanged; release receipts belong in the Codex handover.

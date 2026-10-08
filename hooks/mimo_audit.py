@@ -33,7 +33,6 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import record_lesson  # noqa: E402
 from lib.api import call_mimo  # noqa: E402
-from lib.telemetry import report_failure  # noqa: E402
 from user_prompt_submit import is_project_work  # noqa: E402
 from lib.json_state import load_json_locked, update_json_locked  # noqa: E402
 from lib.transcript import (  # noqa: E402
@@ -144,12 +143,9 @@ Check only the current task for:
 - Type errors, broken imports, syntax issues
 - Files claimed to be written but not actually written
 - For non-trivial project/code/repo work: evidence that Codex used the V4/MCP
-  routing contract appropriately (knowledge MCP/get_playbook when available,
-  target AGENTS.md/PROJECT_STATE.md when present, relevant toolkit selection,
-  Semble and Codegraph together rather than as alternatives: three materially different
-  Semble searches before edits, then Codegraph MCP for structural context/impact,
-  a stated reason when either was
-  skipped, a concise coverage receipt, and concrete verification before stopping)
+  routing contract appropriately (target AGENTS.md/PROJECT_STATE.md when present,
+  relevant toolkit selection, Semble for code discovery with a stated reason when
+  it was skipped, a concise coverage receipt, and concrete verification before stopping)
 
 Also flag subtle issues, not just blatant ones:
 - Error handlers that swallow more cases than the user asked about (bare `except`,
@@ -166,7 +162,7 @@ Completion discipline (implementation requests only):
 - Treat current-task failed checks as open findings, even if unrelated checks
   later pass. Require the same check/workflow to pass on the changed code or
   concrete evidence it was expected/unrelated. A failed test being reported,
-  acknowledged, delegated or marked resolved in Sentry is not closure.
+  acknowledged, delegated or marked resolved in a tracker is not closure.
 - A later verified passing rerun of the SAME check on the changed code supersedes
   its earlier failure. Compare output numbers across both histories; unrelated
   suites, smaller subsets and assistant claims alone do not close a failure.
@@ -177,7 +173,7 @@ Completion discipline (implementation requests only):
 - CHECK HISTORY is bounded evidence, not an automatic failure verdict. Match
   chronology, command/resource, expected outcome and current scope; a passing
   rerun can close it. Preserve status/audit-only/pause and genuine blocker
-  exceptions below. Do not demand all historical Sentry issues be repaired;
+  exceptions below. Do not demand all historical issues be repaired;
   require an evidence-based disposition only for relevant findings.
 - An honest unfinished summary is still premature stopping when an authorized,
   executable next step remains. Return ISSUES with that specific next action.
@@ -518,7 +514,6 @@ def block_stop(reason: str) -> None:
 
 
 def block_audit_error(session_id: str, turn_id: str, iterations: int, message: str, cwd: str = "") -> None:
-    report_failure("mimo_audit", "audit_unavailable")
     next_iteration = iterations + 1
     save_iterations(session_id, turn_id, next_iteration)
     save_verdict(session_id, turn_id, "ERROR", message)

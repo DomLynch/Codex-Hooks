@@ -2,25 +2,13 @@
 
 Lean additions for better Codex/Claude codebase understanding without adding more daily agents.
 
-## 1. Codegraph
+## 1. Semble
 
-Primary structural index. Use before grep/read loops for symbols, callers, callees, and impact.
-
-```bash
-python3 scripts/codegraph_fleet_status.py --sync
-```
-
-If a repo shows `NO INDEX`, run:
-
-```bash
-codegraph init -i "/path/to/repo"
-```
-
-Session-start hooks now emit a visible warning when a git repo has no `.codegraph/codegraph.db`.
+Primary code search. Find code by what it does before grep/read loops, then read the file at the returned line. If you skip Semble, say why.
 
 ## 2. Serena Pilot
 
-Use Serena only as a pilot when Codegraph misses a real task. Do not install it globally into every repo.
+Use Serena only as a pilot when Semble misses a real task. Do not install it globally into every repo.
 
 Current upstream quick start:
 
@@ -53,7 +41,7 @@ Serena indexed: hooks=43 Python files, v3=422, v4=230
 Pilot protocol:
 
 1. Pick one hard repo: `Research agent bot v4` or `V5 Memo`.
-2. Run three real tasks with Codegraph only.
+2. Run three real tasks with Semble only.
 3. Run the same tasks with Serena enabled.
 4. Keep Serena only if it reduces localization/tool calls or catches missed impact.
 
@@ -61,7 +49,7 @@ Decision gate:
 
 ```text
 keep = better localization on >=2/3 tasks and no extra prompt/runtime noise
-drop = overlaps Codegraph or adds orchestration drag
+drop = overlaps Semble or adds orchestration drag
 ```
 
 ## 3. Repomix Handoff Packs
@@ -114,7 +102,7 @@ Use this before claiming a hook/model change preserves review quality.
 
 ## 6. Tree-sitter Analyzer Miswire Audit
 
-Use this only as a diagnostic challenger when Codegraph edges look suspicious. It is not a replacement for Codegraph.
+Use this only as a diagnostic challenger when call-graph edges look suspicious. It is not a replacement for Semble.
 
 ```bash
 python3 scripts/tree_sitter_miswire_audit.py hooks --dry-run
@@ -130,5 +118,5 @@ No Goose/OpenHands/Gemini/Qwen daily-agent layer. The bottleneck is context qual
 Reviewed but not integrated now:
 
 - SuperClaude / BMAD / large skill packs: useful ideas, too much prompt/process surface for daily hooks.
-- Claude Context: overlaps Codegraph and Serena.
+- Claude Context: overlaps Semble and Serena.
 - More terminal coding agents: adds orchestration noise before improving localization.

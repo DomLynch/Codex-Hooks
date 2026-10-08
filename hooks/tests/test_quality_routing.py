@@ -30,7 +30,7 @@ def test_wrapped_patch_registers_repo_and_readonly_does_not_check(tmp_path):
         assert quality.changed_files_in_payload(payload) == [target]
         with mock.patch.object(quality, 'PENDING_PATH', tmp_path/'pending.json'), \
              mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
-             mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'sync_codegraph'), \
+             mock.patch.object(post_tool, 'remember_repo'), \
              mock.patch.object(post_tool, 'log'), \
              mock.patch.object(post_tool, 'run_quality_checks', return_value={'ok': False, 'results': []}) as checks, \
              redirect_stdout(io.StringIO()) as out:
@@ -59,7 +59,7 @@ def test_edit_fallback_registers_completion_gate(tmp_path):
          mock.patch.object(post_tool, 'is_git_repo', return_value=True), \
          mock.patch.object(post_tool, 'changed_files', return_value=[tmp_path/'new.py']), \
          mock.patch.object(post_tool, 'run_quality_checks', return_value={'ok':True}), \
-         mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'sync_codegraph'), \
+         mock.patch.object(post_tool, 'remember_repo'), \
          mock.patch.object(post_tool, 'log'), mock.patch.object(quality, 'PENDING_PATH', tmp_path/'pending.json'):
         post_tool.main()
         assert quality.pending_quality('fallback') == [str(tmp_path)]
@@ -127,8 +127,7 @@ def test_loose_files_never_queue_workspace_gate_and_mixed_edits_all_get_checked(
     cases = [[loose], [source], [lane_source], [source, loose]]
     cases += [rng.sample([source, loose, lane_source], 3) for _ in range(8)]
     with mock.patch.object(quality, 'PENDING_PATH', tmp_path / 'pending.json'), \
-         mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'log'), \
-         mock.patch.object(post_tool, 'sync_codegraph'):
+         mock.patch.object(post_tool, 'remember_repo'), mock.patch.object(post_tool, 'log'):
         for i, files in enumerate(cases):
             sid = f'case-{i}'
             patch = '*** Begin Patch\n' + ''.join(f'*** Update File: {p}\n+x\n' for p in files) + '*** End Patch'
@@ -157,7 +156,7 @@ def test_stop_rejects_workspace_assignment_but_enforces_actual_repositories(tmp_
     home = tmp_path / 'home'
     state = home / '.codex/state/pending_quality.json'
     state.parent.mkdir(parents=True)
-    env = {**os.environ, 'HOME': str(home), 'HOOK_SENTRY_DSN': ''}
+    env = {**os.environ, 'HOME': str(home)}
     payload = dict(cwd=str(workspace), session_id='isolated', last_assistant_message='Character work checked.')
 
     def run(pending, **overrides):

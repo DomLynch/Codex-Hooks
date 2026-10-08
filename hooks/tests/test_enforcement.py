@@ -314,11 +314,9 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'changed_files', return_value=[self.root/'old.py']), \
              patch.object(post_tool, 'run_quality_checks', return_value={'ok': True}) as check, \
              patch.object(post_tool, 'pending_quality') as pending, \
-             patch.object(post_tool, 'sync_codegraph') as sync, \
              patch.object(post_tool, 'maybe_checkpoint', create=True) as checkpoint:
             post_tool.main()
             pending.assert_not_called()
-            sync.assert_not_called()
             checkpoint.assert_not_called()
             check.assert_not_called()
 
@@ -336,32 +334,10 @@ class EnforcementTests(unittest.TestCase):
              patch.object(post_tool, 'remember_repo'), patch.object(post_tool, 'log'), \
              patch.object(post_tool, 'run_quality_checks', wraps=quality.run_quality_checks) as check, \
              patch.object(post_tool, 'pending_quality') as pending, \
-             patch.object(post_tool, 'sync_codegraph', side_effect=lambda root: \
-                          self.assertNotIn(';', (root/'app.py').read_text())) as sync, \
              patch.object(post_tool, 'maybe_checkpoint', create=True):
             post_tool.main()
             self.assertEqual({call.args[1] for call in pending.call_args_list}, {file.parent for file in files})
-            self.assertEqual({call.args[0] for call in sync.call_args_list}, {file.parent for file in files})
             self.assertTrue(all(call.kwargs['autofix'] for call in check.call_args_list))
-
-    def test_codegraph_initializes_then_syncs_existing_index(self):
-        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
-        with patch.object(post_tool.subprocess, 'run') as run:
-            run.return_value.returncode = 0
-            post_tool.sync_codegraph(self.root)
-            run.assert_called_once_with(['codegraph', 'init'], cwd=self.root,
-                                        capture_output=True, text=True, timeout=20)
-            run.reset_mock()
-            (self.root/'.codegraph').mkdir()
-            (self.root/'.codegraph/codegraph.db').write_text('')
-            post_tool.sync_codegraph(self.root)
-            run.assert_called_once_with(['codegraph', 'sync', '-q'], cwd=self.root,
-                                        capture_output=True, text=True, timeout=10)
-            run.return_value.returncode = 1
-            run.return_value.stderr = 'index unavailable'
-            with patch.object(post_tool, 'log') as log:
-                post_tool.sync_codegraph(self.root)
-                self.assertIn('index unavailable', log.call_args.args[1])
 
 
 if __name__ == '__main__':
