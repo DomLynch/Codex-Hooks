@@ -49,7 +49,7 @@ from lib.claude_adapter import normalize_payload, latest_task_slice_claude, late
 
 
 # --- Tunables --------------------------------------------------------------
-MAX_ITERATIONS = 3
+MAX_ITERATIONS = 2   # 2026-10-08 (Dom, Optimizer item 5a): was 3; 111 of 294 blocks in 24 h ended at the cap, fixing nothing
 MAX_TRANSCRIPT_CHARS = 4_000    # latest task slice fed to the reviewer
 MIN_TRANSCRIPT_CHARS = 400      # below this, skip (probably a chat reply)
 # p95 review is ~52s; 70s timed out 24 of 632 reviews in one day. Two attempts must fit the
@@ -270,12 +270,22 @@ HANDOFF_RE = re.compile(r"\b(I (can|could|will|would)\b|next:|next step|if you l
 CONTENTLESS_MAX_CHARS = 600
 
 
-def contentless_turn(answer: str, edited: list) -> str:
+RELAY_TOOLS = ("SendMessage", "ReadNotifications", "ListAgents", "Read", "Monitor")
+RELAY_MAX_CHARS = 2000
+
+
+def relay_only_turn(entries: list) -> bool:
+    """True when every tool call this turn was a send or a read (2026-10-08, Optimizer item 5c)."""
+    calls = [body for role, body in entries if role == "TOOL CALL"]
+    return bool(calls) and all(body.startswith(RELAY_TOOLS) for body in calls)
+
+
+def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str:
     """Why the model call can be skipped ('' if it cannot). Edits, claims and status assertions all disqualify."""
     if edited:
         return ""
     text = (answer or "").strip()
-    if not text or len(text) > CONTENTLESS_MAX_CHARS:
+    if not text or len(text) > (RELAY_MAX_CHARS if relay_only else CONTENTLESS_MAX_CHARS):
         return ""
     if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""
@@ -488,20 +498,25 @@ def main() -> None:
     for text in ledger.rejected_texts(session_id):
         forget_lesson(text)
     pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
-    if pre:
-        log(f"LEDGER_UNANSWERED: {', '.join(unanswered)} — model call skipped")
+    released = False
+    if pre:   # 2026-10-08 (Dom, Optimizer item 5b): a missing "[Fn] fixed:" line is noted once, never a BLOCK
+        log(f"LEDGER_UNANSWERED: {', '.join(unanswered)} — noted, not blocked")
+        _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nUnanswered review finding(s) {', '.join(unanswered)} released: "
+                            "the final message had no [Fn] fixed:/rejected: line.").strip()
+        ledger.release(session_id, unanswered)
+        pre, released = [], True
     if mechanical:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif contentless_turn(last_msg, edited_paths(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
-        why = contentless_turn(last_msg, edited_paths(entries))
+    elif not released and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
+        why = contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
         reset_consecutive_blocks(session_id)
         allow_stop(f"contentless turn - audit skipped ({why})")
         return
-    elif doc_only_turn(entries, last_msg, DELIVERABLE_RE):
+    elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
         reset_consecutive_blocks(session_id)
