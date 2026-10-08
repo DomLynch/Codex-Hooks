@@ -15,9 +15,8 @@ from lib.api import exit_if_audit_child
 from lib.log import log
 from lib.git import is_git_repo
 from lib.quality import mine_backlog
-from lib.state import load_handoff, now_iso, write_handoff, write_session_spec
-from lib.claude_adapter import latest_task_slice_claude as latest_task_slice
-from lib.handoff_check import project_slug
+from lib.state import load_handoff, now_iso, write_handoff
+from lib.handoff_check import STATE_DOC_ALIASES, project_slug
 from lib.context_size import session_title, title_lane
 from lib.policies import COMPLETION_POLICY, RELEASE_POLICY
 
@@ -119,7 +118,6 @@ def lane_from_identity(cwd: Path) -> str:
     return name.removeprefix("frankendom-") if name.startswith("frankendom-") else name
 
 
-STATE_DOC_ALIASES = {"lead-catalogue": "lead", "presentation": "world", "char": "character"}
 TRUNK = "origin/codex/01a09a76/task-1"
 
 
@@ -359,15 +357,6 @@ def main() -> None:
         payload = json.loads(sys.stdin.read() or "{}")
         session_id = payload.get("session_id") or "unknown"
         cwd = Path(payload.get("cwd") or ".").resolve()
-        prompt = (
-            payload.get("prompt")
-            or payload.get("initial_prompt")
-            or payload.get("last_user_message")
-            or latest_task_slice(payload.get("transcript_path") or "", "")
-        )
-        if prompt:
-            write_session_spec(session_id, prompt)
-            log(COMPONENT, f"session spec captured chars={len(prompt)}")
         remember_repo(cwd)
         # A lane in an app worktree gets its restart brief and the memory receipt of its real folder, not of the
         # random worktree name (Dom pasted this by hand after every /clear until 2026-09-26).

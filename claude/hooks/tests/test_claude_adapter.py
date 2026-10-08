@@ -606,12 +606,10 @@ class ClaudeAdapterTests(unittest.TestCase):
                     "test",
                 )
                 state = json.loads(queue.read_text())
-                popped = autonomy.pop_next_task("claude", Path(tmp))
 
         self.assertEqual(added, 1)
         self.assertEqual(state["tasks"][0]["status"], "held")
         self.assertIn("risky autonomous task", state["tasks"][0]["hold_reason"])
-        self.assertIsNone(popped)
 
 if __name__ == "__main__":
     unittest.main()

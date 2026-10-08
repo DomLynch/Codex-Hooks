@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import shutil
 import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
 from .autonomy import hook_env
@@ -176,29 +174,3 @@ def call_mimo(
     elapsed_ms = int((time.monotonic() - started) * 1000)
     log("codex_audit", f"CODEX_AUDIT lane={lane} model={CODEX_AUDIT_MODEL} effort={CODEX_AUDIT_EFFORT} elapsed_ms={elapsed_ms}")
     return response
-
-
-def call_claude(prompt: str, system: str = "", max_tokens: int = 1500, timeout: int = 45) -> str:
-    key = load_api_key("ANTHROPIC_API_KEY", "anthropic_api_key")
-    if not key:
-        return ""
-    body = {
-        "model": CLAUDE_MODEL,
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    if system:
-        body["system"] = system
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return anthropic_text(data)

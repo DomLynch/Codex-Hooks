@@ -21,7 +21,6 @@ REPOS_PATH = STATE_DIR / "autonomy_repos.json"
 # Claude's own lesson store: the shared ~/.codex copy let Codex's writer strip Claude's lane tags.
 LESSONS_JSONL = Path.home() / ".claude" / "state" / "lessons.jsonl"
 LESSONS_STATE = Path.home() / ".claude" / "state" / "lessons_active.json"
-LESSONS_ACTIVE = Path.home() / ".claude" / "state" / "lessons_active.md"
 STATUS_PATH = STATE_DIR / "autonomy_status.json"
 STOP_PATH = STATE_DIR / "AUTONOMY_STOP"
 LEASE_TTL_S = 2 * 60 * 60
@@ -157,47 +156,6 @@ def enqueue_tasks(tasks: list[dict[str, Any]], source: str) -> int:
     return added
 
 
-def pop_next_task(worker: str, cwd: Path | None = None) -> dict[str, Any] | None:
-    if not enabled():
-        return None
-    now = time.time()
-    wanted = str(cwd.resolve()) if cwd else ""
-    picked: dict[str, Any] | None = None
-
-    def updater(state: dict) -> dict:
-        nonlocal picked
-        tasks = state.setdefault("tasks", [])
-        for task in tasks:
-            if task.get("status") == "leased" and float(task.get("lease_until") or 0) < now:
-                task["status"] = "queued"
-                task.pop("worker", None)
-                task.pop("lease_until", None)
-        for task in tasks:
-            if task.get("status") != "queued":
-                continue
-            safe, reason = is_safe_task(task)
-            if not safe:
-                task["status"] = "held"
-                task["safety"] = "held"
-                task["hold_reason"] = reason
-                continue
-            task_cwd = str(task.get("cwd") or "")
-            if wanted and task_cwd and Path(task_cwd).resolve() != Path(wanted):
-                continue
-            task["status"] = "leased"
-            task["worker"] = worker
-            task["leased_at"] = now
-            task["lease_until"] = now + LEASE_TTL_S
-            task["attempts"] = int(task.get("attempts") or 0) + 1
-            picked = dict(task)
-            break
-        state["updated_at"] = now
-        return state
-
-    update_json_locked(QUEUE_PATH, updater)
-    return picked
-
-
 def remember_repo(cwd: Path) -> None:
     try:
         resolved = str(cwd.resolve())
@@ -261,7 +219,6 @@ def record_lesson(source: str, text: str, session_id: str = "", lane: str = "") 
                 kept.append(item)
         state["lessons"] = kept[:MAX_STORED_LESSONS]
         state["updated_at"] = now
-        _write_active(state["lessons"])
         return state
 
     update_json_locked(LESSONS_STATE, updater)
@@ -281,16 +238,10 @@ def forget_lesson(finding_text: str) -> bool:
         if len(kept) != len(entries):
             removed = True
             state["lessons"] = kept
-            _write_active(kept)
         return state
 
     update_json_locked(LESSONS_STATE, updater)
     return removed
-
-
-def _write_active(entries: list[dict[str, Any]]) -> None:
-    LESSONS_ACTIVE.parent.mkdir(parents=True, exist_ok=True)
-    LESSONS_ACTIVE.write_text("\n".join(f"- {item['lesson']}" for item in entries) + "\n")
 
 
 def lesson_ttl_s() -> int:

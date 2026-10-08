@@ -77,7 +77,6 @@ class ActiveLessonsCapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "state.json"),
-                mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "active.md"),
                 mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "all.jsonl"),
             ):
                 for i in range(12):
@@ -93,7 +92,6 @@ class ActiveLessonsCapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "state.json"),
-                mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "active.md"),
                 mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "all.jsonl"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"),
             ):
@@ -105,7 +103,6 @@ class ActiveLessonsCapTests(unittest.TestCase):
                 for text in mimo_audit.ledger.rejected_texts("s1"):
                     autonomy.forget_lesson(text)
                 self.assertEqual(autonomy.active_lessons(""), ["a lesson that stays"])
-                self.assertNotIn("300k", (Path(tmp) / "active.md").read_text())
 
 
 class FixtureLessonGuardTests(unittest.TestCase):
@@ -113,7 +110,6 @@ class FixtureLessonGuardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
-             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
              mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"):
             autonomy.record_lesson("mimo_stop", "temp file has `markers`", "e2e-conf")
             autonomy.record_lesson("mimo_stop", "real `finding`", "abc123-real")
@@ -125,7 +121,6 @@ class FixtureLessonGuardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
-             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
              mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"):
             autonomy.record_lesson("watchdog", "daemon idle 6h", lane="")
             autonomy.record_lesson("mimo_stop", '[quote: "Options ready around 22:00"] no source', "s1", "strategy")
@@ -150,7 +145,6 @@ class FixtureLessonGuardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(autonomy, "LESSONS_STATE", Path(tmp) / "s.json"), \
-             mock.patch.object(autonomy, "LESSONS_ACTIVE", Path(tmp) / "a.md"), \
              mock.patch.object(autonomy, "LESSONS_JSONL", Path(tmp) / "j.jsonl"), \
              mock.patch.dict(os.environ, {"CODEX_HOOK_LESSON_TTL_DAYS": ""}):
             autonomy.record_lesson("mimo_stop", "fresh `slip`", "s1", "web")
