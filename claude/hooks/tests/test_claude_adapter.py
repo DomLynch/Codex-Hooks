@@ -184,6 +184,12 @@ class ClaudeAdapterTests(unittest.TestCase):
                        "CLOSES that\n  finding"):
             self.assertIn(needle, mimo_audit.AUDIT_PROMPT, needle)
 
+    def test_prompt_gives_the_exact_rewrite_for_unattributed_relays(self):
+        # 2026-10-08 (Dom): 48 lane turns hit the 3-try cap; 19 were a peer's or the lane's own order stated as fact,
+        # where the lane could not tell what to write. The finding must hand over the replacement sentence.
+        self.assertIn("EXACT REPLACEMENT SENTENCE", mimo_audit.AUDIT_PROMPT)
+        self.assertIn("reports X (not checked by me)", mimo_audit.AUDIT_PROMPT)
+
     def test_owner_instructions_skip_questions_and_scheduled_prompts(self):
         from lib.claude_adapter import owner_instructions
         with tempfile.TemporaryDirectory() as tmp:
