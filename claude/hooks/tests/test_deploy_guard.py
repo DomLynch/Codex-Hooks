@@ -51,7 +51,7 @@ class DeployGuardTests(unittest.TestCase):
     def test_escape_hatch_uses_are_logged(self):
         """Optimizer's condition on #104: every MAC_HEAVY_OK=1 use leaves one auditable line (cwd + command)."""
         log = Path(self.tmp.name) / "deploy_guard.log"
-        with mock.patch.object(deploy_guard, "HATCH_LOG", log):
+        with mock.patch.object(deploy_guard, "_hatch_log", return_value=log):
             self.assertFalse(deploy_guard.note_hatch_use("npm test", "/w/a"))
             self.assertFalse(deploy_guard.note_hatch_use("echo MAC_HEAVY_OK=1; npm test", "/w/a"))
             self.assertFalse(log.exists())
@@ -60,6 +60,15 @@ class DeployGuardTests(unittest.TestCase):
         self.assertIn("cwd=/w/combat", line)
         self.assertIn("MAC_HEAVY_OK=1 npm test", line)
         self.assertEqual(len(line.splitlines()), 1)
+        # Auditor LOW on #104: env assignments other than the hatch itself may carry tokens; they are masked in the log
+        log.unlink()
+        with mock.patch.object(deploy_guard, "_hatch_log", return_value=log):
+            deploy_guard.note_hatch_use("GH_TOKEN=abc123 MAC_HEAVY_OK=1 npx playwright test --project=chromium", "/w")
+        masked = log.read_text()
+        self.assertNotIn("abc123", masked)
+        self.assertIn("GH_TOKEN=***", masked)
+        self.assertIn("MAC_HEAVY_OK=1", masked)
+        self.assertIn("--project=chromium", masked)
 
     def test_mac_refusal_exemptions(self):
         """Deploy itself, Safari/WebKit and real-iPhone rows, the sparring GPU row, and the explicit escape hatch."""

@@ -137,7 +137,11 @@ VPS_REASON = (
 
 
 HATCH_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b")
-HATCH_LOG = Path.home() / ".claude" / "logs" / "deploy_guard.log"
+ENV_ASSIGN_RE = re.compile(r"(?<!\S)(\w+)=\S+")
+
+
+def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the hook, and a crash lets the heavy command through
+    return Path.home() / ".claude" / "logs" / "deploy_guard.log"
 
 
 def _runs(command: str) -> str:
@@ -149,9 +153,11 @@ def note_hatch_use(command: str, cwd: str) -> bool:
     """One audit line per MAC_HEAVY_OK=1 use (Optimizer's condition on #104: without it the prefix becomes the habit)."""
     if not any(HEAVY_RE.search(seg) and HATCH_RE.search(seg) for seg in _runs(command).split("\n")):
         return False
-    HATCH_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with open(HATCH_LOG, "a") as f:
-        f.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} MAC_HEAVY_OK cwd={cwd} {command[:300]!r}\n")
+    shown = ENV_ASSIGN_RE.sub(lambda m: m.group(0) if m.group(1) == "MAC_HEAVY_OK" else f"{m.group(1)}=***", command[:300])
+    log = _hatch_log()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a") as f:
+        f.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} MAC_HEAVY_OK cwd={cwd} {shown!r}\n")
     return True
 
 
@@ -188,7 +194,7 @@ def main() -> None:
         if not lock:
             try:
                 note_hatch_use(command, str(payload.get("cwd") or ""))
-            except OSError:   # an audit line must never cost a lane its command
+            except (OSError, RuntimeError):   # an audit line must never cost a lane its command
                 pass
         return
     sys.stdout.write(json.dumps({
