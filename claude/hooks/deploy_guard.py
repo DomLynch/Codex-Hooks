@@ -136,11 +136,28 @@ VPS_REASON = (
 )
 
 
+HATCH_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b")
+HATCH_LOG = Path.home() / ".claude" / "logs" / "deploy_guard.log"
+
+
+def _runs(command: str) -> str:
+    runs = executable_text(command) if command else ""
+    return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg)) if runs else ""
+
+
+def note_hatch_use(command: str, cwd: str) -> bool:
+    """One audit line per MAC_HEAVY_OK=1 use (Optimizer's condition on #104: without it the prefix becomes the habit)."""
+    if not any(HEAVY_RE.search(seg) and HATCH_RE.search(seg) for seg in _runs(command).split("\n")):
+        return False
+    HATCH_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(HATCH_LOG, "a") as f:
+        f.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} MAC_HEAVY_OK cwd={cwd} {command[:300]!r}\n")
+    return True
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
-    runs = executable_text(command) if command else ""
-    if runs:
-        runs = "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg))
+    runs = _runs(command)
     pixelmator = bool(lock) and bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
@@ -165,8 +182,11 @@ def main() -> None:
     if payload.get("tool_name") != "Bash":
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    reason = decide(command, active_lock(), own_pid=os.getpid())
+    lock = active_lock()
+    reason = decide(command, lock, own_pid=os.getpid())
     if not reason:
+        if not lock:
+            note_hatch_use(command, str(payload.get("cwd") or ""))
         return
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason},

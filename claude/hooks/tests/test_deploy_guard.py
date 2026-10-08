@@ -48,6 +48,19 @@ class DeployGuardTests(unittest.TestCase):
                     "npm run test:all -- tests/safari-audio.test.ts", "echo MAC_HEAVY_OK=1; npm run test:all"):
             self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
 
+    def test_escape_hatch_uses_are_logged(self):
+        """Optimizer's condition on #104: every MAC_HEAVY_OK=1 use leaves one auditable line (cwd + command)."""
+        log = Path(self.tmp.name) / "deploy_guard.log"
+        with mock.patch.object(deploy_guard, "HATCH_LOG", log):
+            self.assertFalse(deploy_guard.note_hatch_use("npm test", "/w/a"))
+            self.assertFalse(deploy_guard.note_hatch_use("echo MAC_HEAVY_OK=1; npm test", "/w/a"))
+            self.assertFalse(log.exists())
+            self.assertTrue(deploy_guard.note_hatch_use("MAC_HEAVY_OK=1 npm test", "/w/combat"))
+        line = log.read_text()
+        self.assertIn("cwd=/w/combat", line)
+        self.assertIn("MAC_HEAVY_OK=1 npm test", line)
+        self.assertEqual(len(line.splitlines()), 1)
+
     def test_mac_refusal_exemptions(self):
         """Deploy itself, Safari/WebKit and real-iPhone rows, the sparring GPU row, and the explicit escape hatch."""
         for cmd in ("bash scripts/deploy.sh", "npx playwright test --project=webkit", "node scripts/safari-check.mjs",
