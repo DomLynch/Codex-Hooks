@@ -16,10 +16,6 @@ def current_session_branch(session_id: str) -> str:
     return f"claude/{short_sid(session_id)}/main"
 
 
-def task_branch(session_id: str, task_n: int) -> str:
-    return f"claude/{short_sid(session_id)}/task-{task_n}"
-
-
 KILL_DRAIN_S = 1  # how long to wait for the pipes after killing the group; bounded so this can never wedge
 
 
@@ -247,11 +243,6 @@ def has_staged_changes(cwd: str | Path, paths: list[str]) -> bool:
     return rc == 1
 
 
-def has_worktree_changes(cwd: str | Path) -> bool:
-    rc, out, _ = safe_run(["git", "status", "--porcelain"], cwd=cwd)
-    return rc == 0 and bool(out.strip())
-
-
 def commit(message: str, cwd: str | Path, files: list) -> tuple[bool, str]:
     """Commit only `files` (the ones this session edited), never the rest of a shared checkout."""
     root = git_root(cwd)
@@ -288,11 +279,6 @@ def changed_files(cwd: str | Path) -> list[Path]:
     return [root / line.strip() for line in out.splitlines() if line.strip()]
 
 
-def files_changed_summary(cwd: str | Path) -> str:
-    rc, out, _ = safe_run(["git", "diff", "--stat"], cwd=cwd)
-    return out.strip() if rc == 0 else ""
-
-
 def github_env() -> dict[str, str] | None:
     """Look up GitHub token from ~/.claude first, fall back to ~/.codex (shared)."""
     for base in (Path.home() / ".claude" / "secrets", Path.home() / ".codex" / "secrets"):
@@ -305,34 +291,3 @@ def github_env() -> dict[str, str] | None:
             except Exception:
                 continue
     return None
-
-
-def github_pr_preflight(cwd: str | Path) -> tuple[bool, str]:
-    """Check PR creation prerequisites before local commit/push side effects."""
-    rc, out, err = safe_run(["git", "remote", "get-url", "origin"], cwd=cwd, timeout=10)
-    if rc != 0 or not out.strip():
-        return False, "missing git origin remote"
-    env = github_env()
-    for cmd, label in (
-        (["gh", "--version"], "gh CLI unavailable"),
-        (["gh", "auth", "status"], "gh auth unavailable"),
-        (["gh", "repo", "view", "--json", "nameWithOwner"], "gh repo unavailable"),
-    ):
-        rc, out, err = safe_run(cmd, cwd=cwd, timeout=20, env=env)
-        if rc != 0:
-            detail = (err or out).strip().splitlines()
-            return False, label + (f": {detail[-1]}" if detail else "")
-    return True, "ok"
-
-
-def open_pr(title: str, body: str, base: str = "main", cwd: str | Path | None = None) -> str:
-    env = github_env()
-    rc, out, err = safe_run(
-        ["gh", "pr", "create", "--base", base, "--title", title, "--body", body],
-        cwd=cwd,
-        timeout=120,
-        env=env,
-    )
-    if rc != 0:
-        return ""
-    return out.strip()

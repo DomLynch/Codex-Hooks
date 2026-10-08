@@ -357,7 +357,6 @@ def test_session_start_emits_one_valid_json_object(monkeypatch, capsys):
     monkeypatch.setattr(ss, "load_handoff", lambda: {})
     monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
     monkeypatch.setattr(ss, "remember_repo", lambda p: None)
-    monkeypatch.setattr(ss, "write_session_spec", lambda *a: None)
     monkeypatch.setattr(ss, "log", lambda *a: None)
     monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere", "prompt": "hi"})))
     ss.main()
