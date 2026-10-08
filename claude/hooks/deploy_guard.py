@@ -30,7 +30,7 @@ HEAVY_RE = re.compile(
     r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
-    r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test\s+[^\s]+\s+[^\s]+"
+    r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test(?:\s+-[^\s]*)*\s+[^-\s][^\s]*\s+[^-\s][^\s]*"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
 )
@@ -120,14 +120,56 @@ def executable_text(command: str) -> str:
     return QUOTED_RE.sub(quoted, stripped)
 
 
+# 2026-10-08 (Dom, Optimizer item 2): heavy runs are refused on the Mac at any time, not only under the deploy lock (Mac load sat at
+# 29-57 on 10 cores from lane test/browser runs). Exempt: the deploy itself (ALLOW_RE / lock holder), Safari/WebKit and real-iPhone rows,
+# the sparring GPU row, and MAC_HEAVY_OK=1 for when the VPS is down.
+_ROW = r"(?:webkit|safari|iphone|simctl|sparring)"
+# Judged per heavy segment: the exempt word must be the command or script (npm script name, scripts/ file, --project), never a path,
+# branch or test-file argument; MAC_HEAVY_OK=1 only as that segment's own leading env (Auditor on #104).
+MAC_EXEMPT_RE = re.compile(
+    rf"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b|^\s*(?:\w+=\S*\s+)*(?:xcrun\s+simctl\b|npm\s+run\s+[\w:-]*{_ROW}"
+    rf"|node\s+(?:\S*/)?scripts/[\w-]*{_ROW}|npx\s+playwright\s+test\b[^\n]*--project[= ]{_ROW})", re.IGNORECASE)
+VPS_REASON = (
+    "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
+    "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
+    "Safari/WebKit, real-iPhone and sparring rows are exempt; if the VPS is down, prefix the command with MAC_HEAVY_OK=1."
+)
+
+
+HATCH_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b")
+ENV_ASSIGN_RE = re.compile(r"(?<!\S)(\w+)=\S+")
+
+
+def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the hook, and a crash lets the heavy command through
+    return Path.home() / ".claude" / "logs" / "deploy_guard.log"
+
+
+def _runs(command: str) -> str:
+    runs = executable_text(command) if command else ""
+    return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg)) if runs else ""
+
+
+def note_hatch_use(command: str, cwd: str) -> bool:
+    """One audit line per MAC_HEAVY_OK=1 use (Optimizer's condition on #104: without it the prefix becomes the habit)."""
+    if not any(HEAVY_RE.search(seg) and HATCH_RE.search(seg) for seg in _runs(command).split("\n")):
+        return False
+    shown = ENV_ASSIGN_RE.sub(lambda m: m.group(0) if m.group(1) == "MAC_HEAVY_OK" else f"{m.group(1)}=***", command[:300])
+    log = _hatch_log()
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "a") as f:
+        f.write(f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} MAC_HEAVY_OK cwd={cwd} {shown!r}\n")
+    return True
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
     """Return the deny reason, or '' to allow."""
-    runs = executable_text(command) if lock and command else ""
-    if runs:
-        runs = "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg))
-    pixelmator = bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
+    runs = _runs(command)
+    pixelmator = bool(lock) and bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
+    if not lock:
+        heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
+        return "" if all(MAC_EXEMPT_RE.search(seg) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
@@ -146,8 +188,14 @@ def main() -> None:
     if payload.get("tool_name") != "Bash":
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    reason = decide(command, active_lock(), own_pid=os.getpid())
+    lock = active_lock()
+    reason = decide(command, lock, own_pid=os.getpid())
     if not reason:
+        if not lock:
+            try:
+                note_hatch_use(command, str(payload.get("cwd") or ""))
+            except (OSError, RuntimeError):   # an audit line must never cost a lane its command
+                pass
         return
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason},
