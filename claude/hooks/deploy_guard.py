@@ -135,6 +135,16 @@ _ROW = r"(?:webkit|safari|iphone|simctl|sparring)"
 MAC_EXEMPT_RE = re.compile(
     rf"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b|^\s*(?:\w+=\S*\s+)*(?:xcrun\s+simctl\b|npm\s+run\s+[\w:-]*{_ROW}"
     rf"|node\s+(?:\S*/)?scripts/[\w-]*{_ROW}|npx\s+playwright\s+test\b[^\n]*--project[= ]{_ROW})", re.IGNORECASE)
+# 2026-10-09 (Lead, Dom's rule: WebKit and real-clock rows never run on HF/the VPS): the eight Mac-only release rows
+# (.quality-gate.json release_commands 2, 4, 22, 44, 45, 48, 49, 52) are allowed by EXACT command, never by pattern.
+# Only leading env assignments and trailing redirects are tolerated; any other argument or a different script is refused.
+MAC_ONLY_ROWS = (
+    "node scripts/roster-browser-check.mjs", "node scripts/audio-preview.mjs --label audio-gate --check",
+    "node scripts/arena-audio-check.mjs", "node scripts/sparring-browser-check.mjs",
+    "node scripts/double-tap-browser-check.mjs", "node scripts/browser-replay-check.mjs",
+    "node scripts/browser-replay-check.mjs --engine webkit", "node scripts/next-fight-black-check.mjs",
+)
+MAC_ROW_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:" + "|".join(re.escape(r) for r in MAC_ONLY_ROWS) + r")(?:\s+\d*>&?\S*)*\s*$")
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
@@ -175,7 +185,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
