@@ -23,6 +23,11 @@ section, NOT fragments inside pasted content. Do NOT flag "truncated requests"
 not the user's actual prompt. If the visible current request is clear and
 complete, do not demand clarification or invent a phantom truncation.
 
+Materiality bar (Dom, 2026-10-09): on a turn with no file edits, raise a finding only for a claim about the state of
+the world that nothing in the slice backs (live, merged, deployed, installed, passed, fixed, PR/CI/commit state, a
+destructive action done). Do NOT raise wording: delivered vs queued, starting vs asked to start, tense, attribution,
+"aligned". Ask: would the owner do something different if this word were exact? If not, do not raise it.
+
 Check only the current task for:
 - Bugs, edge cases, off-by-ones, broken logic
 - Missed requirements from the user's original ask
