@@ -37,5 +37,30 @@ def test_folder_variants_of_a_named_lane_skip(tmp_path, monkeypatch):
 
 
 def test_gate_fails_closed_for_deploy_unknown_lane_and_non_lane(tmp_path, monkeypatch):
-    for folder in ("frankendom-deploy", "frankendom-newlane", "frankendom-strategy", "Codex Hooks"):
+    for folder in ("frankendom-deploy", "frankendom-newlane", "frankendom-research", "Codex Hooks"):
         assert _run(tmp_path, monkeypatch, folder) is True, folder
+
+
+# Strategy, 2026-10-09: a session that never edits the repo ran the 420 s gate in the repo it merely ran gh from.
+from lib.transcript import session_made_edits  # noqa: E402
+
+
+def _bash(cmd):
+    return [("TOOL CALL", 'Bash: [t1] {"command": "%s"}' % cmd)]
+
+
+def test_strategy_folder_skips_the_local_gate():
+    assert so.gate_skipped_for("strategy")
+
+
+def test_read_only_sessions_made_no_edits():
+    for cmd in ("gh pr view 5 --json state 2>&1", "gh pr merge 5 --merge", "git status --porcelain", "git log -3",
+                "node scripts/x.mjs 2>&1 | tail -5", "ls src/fight"):
+        assert not session_made_edits(_bash(cmd)), cmd
+    assert not session_made_edits([("ASSISTANT", "sed -i would change it")])
+
+
+def test_edits_and_tree_mutating_bash_are_edits():
+    assert session_made_edits([("TOOL CALL", 'Edit: [t1] {"file_path": "/r/src/a.ts", "old_string": "a", "new_string": "b"}')])
+    for cmd in ("git commit -m x", "git add -A", "sed -i s/a/b/ src/a.ts", "cat > src/new.ts", "mv a.ts b.ts", "rm src/a.ts"):
+        assert session_made_edits(_bash(cmd)), cmd

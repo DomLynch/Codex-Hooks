@@ -62,6 +62,7 @@ def test_stop_gate_not_run_is_deferred_and_user_visible(tmp_path, monkeypatch):
 
 
 def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(so, "session_made_edits", lambda entries: True)   # these test the owed/not_run state, not edit detection
     monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
     for name in ("exit_if_audit_child", "remember_repo"):
         monkeypatch.setattr(so, name, lambda *a, **k: None)
@@ -83,6 +84,7 @@ def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tm
 
 
 def test_plain_stop_between_two_milestone_stops_does_not_clear_the_owed_repo(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(so, "session_made_edits", lambda entries: True)   # these test the owed/not_run state, not edit detection
     monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
     for name in ("exit_if_audit_child", "remember_repo"):
         monkeypatch.setattr(so, name, lambda *a, **k: None)
