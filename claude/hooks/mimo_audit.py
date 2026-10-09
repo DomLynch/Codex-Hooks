@@ -38,6 +38,7 @@ from lib.audit_state import (  # noqa: E402
     increment_audit_errors, increment_consecutive_blocks, load_iterations, remember_blocked_turn, reset_audit_errors,
     reset_consecutive_blocks, retry_turn_id, save_iterations, save_verdict, write_escalation,
 )
+from lib.banned_words import banned_engine_words  # noqa: E402
 from lib.audit_prompt import AUDIT_PROMPT, FORMAT_REPAIR_PROMPT  # noqa: E402
 from lib.verdicts import ADVISORY_RE, ELISION_RE, QUOTE_RE, _norm, normalize_verdict, valid_verdict, verdict_status, void_finding  # noqa: E402
 from lib.transcript import DIFF_CAP, deterministic_findings, doc_only_turn, edited_paths, pass_warnings, sensitive_paths, sensitive_section, turn_commits, turn_commits_diff, turn_diff  # noqa: E402
@@ -519,6 +520,12 @@ def main() -> None:
     # markers, unsupported live-response claims, and a peer-started merge/deploy with no owner
     # approval in this session (Dom, 2026-09-23: keep blocking; the lane answers [Fn] rejected).
     entries = latest_task_entries_claude(transcript_path)
+    try:   # log only (Dom via Strategy, 2026-10-09): banned words in a lane message on engine-slice work
+        banned = banned_engine_words(entries)
+        if banned:
+            log(f"BANNED_WORDING (engine slice, log only): {', '.join(sorted(set(w.lower() for w in banned)))}")
+    except Exception as exc:
+        log(f"BANNED_WORDING_ERROR: {exc}")
     # The session cwd is often a non-git parent workspace; resolve to the repo the edits live in,
     # otherwise turn_diff silently no-ops (found: 12 edit turns, 0 diffs fed).
     repo_cwd = str(resolve_git_cwd(payload.get("cwd") or ".", [Path(p) for p in edited_paths(entries)], transcript))
