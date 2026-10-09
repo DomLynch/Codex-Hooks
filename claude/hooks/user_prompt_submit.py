@@ -38,11 +38,8 @@ COMPONENT = "user_prompt_submit"
 # per turn and are always sent in full.
 POLICY_STATE = Path.home() / ".claude" / "state" / "prompt_policy.json"
 REFRESH_EVERY = 15
-POINTER = ("# V4/MCP Task Routing Contract\n"
-           "The full contract was injected earlier in this session and still applies: autonomy (act on reversible "
-           "defaults, ask only on true blockers), release close-out, finding closure, work quality (smallest "
-           "surgical change, run .quality-gate.json, receipts not claims), context efficiency (lean output, "
-           "Semble before non-trivial edits, scope to the current task).")
+POINTER = ("# V4/MCP contract\nThe full contract was injected earlier in this session and still applies "
+           "(autonomy, release close-out, receipts, lean output).")
 
 
 def _policy_count(value) -> int:
