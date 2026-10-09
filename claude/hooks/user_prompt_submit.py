@@ -49,19 +49,20 @@ def _policy_count(value) -> int:
     return int(value.get("n", 0)) if isinstance(value, dict) else int(value or 0)
 
 
-def policy_due(session_id: str) -> bool:
+def policy_due(session_id: str, kind: str = "") -> bool:
     """True when the full contract should be re-sent (first project prompt, or every REFRESH_EVERY)."""
     if not session_id:
         return True
+    key = session_id + kind   # chat prompts count separately so a chat-first session still gets the project contract
     try:
         def updater(data: dict) -> dict:
-            n = _policy_count(data.get(session_id)) + 1
-            data[session_id] = {"n": n, "t": time.time()}
-            if len(data) > 60:   # by recency: saved with sort_keys, so dict order is id order and low ids were dropped
-                data = dict(sorted(data.items(), key=lambda kv: kv[1].get("t", 0) if isinstance(kv[1], dict) else 0)[-60:])
+            n = _policy_count(data.get(key)) + 1
+            data[key] = {"n": n, "t": time.time()}
+            if len(data) > 120:   # by recency: saved with sort_keys, so dict order is id order and low ids were dropped
+                data = dict(sorted(data.items(), key=lambda kv: kv[1].get("t", 0) if isinstance(kv[1], dict) else 0)[-120:])
             return data
         after = update_json_locked(POLICY_STATE, updater)
-        return (_policy_count(after.get(session_id)) - 1) % REFRESH_EVERY == 0
+        return (_policy_count(after.get(key)) - 1) % REFRESH_EVERY == 0
     except Exception:
         return True
 
@@ -88,13 +89,14 @@ def context_for(prompt: str, cwd: Path, session_id: str = "", transcript_path: s
     if lessons:
         lessons_context = "\n\n# Active Lessons\n" + "\n".join(f"- {lesson}" for lesson in lessons)
     if not is_project_work(prompt):
-        return (
+        discipline = (
             "# Current-Prompt Discipline\n"
             "- Treat this as the current task only; do not trawl old history unless needed.\n"
             "- For simple chat, answer directly and keep it concise.\n"
-            "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.\n\n"
-            f"{AUTONOMY_POLICY}{lessons_context}"
-        )
+            "- If the prompt turns into project/code work, switch to the V4/MCP routing contract.")
+        # 2026-10-09: the full autonomy policy went out on every chat prompt; same once-per-REFRESH_EVERY rule as below.
+        policy = f"\n\n{AUTONOMY_POLICY}" if policy_due(session_id, ":chat") else ""
+        return f"{discipline}{policy}{lessons_context}"
 
     if not policy_due(session_id):
         return "\n".join([POINTER, f"- Current cwd from hook: `{cwd}`.", lessons_context.strip()])
