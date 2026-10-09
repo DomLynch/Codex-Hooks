@@ -14,6 +14,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.api import exit_if_audit_child
 from lib.autonomy import remember_repo
+from lib.context_size import session_lane
 from lib.git import (
     is_git_repo,
     resolve_git_cwd,
@@ -112,8 +113,18 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
     return DEFERRED
 
 
+# 2026-10-09 (Dom, via Strategy): the repository suite runs on the Mac only for the Deploy lane. The other Frankendom
+# lanes rely on the PR's CI, which runs the same rows (load hit 20-80 on 10 cores with 9 lanes gating at once).
+# A session that names no lane (the hooks lane, the COO) keeps the gate.
+GATE_LANES = {"deploy"}
+
+
 def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool | str:
     if (cwd / ".quality-gate.json").exists():
+        lane = session_lane(transcript, str(cwd))
+        if lane != "session" and lane not in GATE_LANES:
+            log(COMPONENT, f"repository quality gate skipped: lane {lane} relies on PR CI (local gate is Deploy-only)")
+            return True
         sha, ci = ci_covered_commit(cwd)
         if ci == "passed":
             # Nothing local to verify: clean tree at a commit GitHub Actions already passed.
