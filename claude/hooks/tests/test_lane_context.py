@@ -499,3 +499,32 @@ def test_expansion_and_auditor_titles_name_their_own_lane(tmp_path):
         assert cs.session_lane(str(t), wt) == lane, title
         assert ss.worktree_lane(Path(wt), str(t)) == key, title
     assert cs.warn_tokens("expansion") == 750_000   # Lead-class, as the table has shown it
+
+
+def test_chat_prompts_get_full_autonomy_once_then_short(tmp_path, monkeypatch):
+    """2026-10-09 noise check: non-project prompts re-sent the full autonomy policy (~900 tokens) every time.
+    Full on a session's first chat prompt and every REFRESH_EVERY after; a 3-line discipline note in between.
+    The chat counter is separate, so a chat-first session still gets the full project contract later."""
+    import user_prompt_submit as u
+    from pathlib import Path
+    monkeypatch.setattr(u, "POLICY_STATE", tmp_path / "policy.json")
+    monkeypatch.setattr(u, "active_lessons", lambda lane: ["a lesson"])
+    first = u.context_for("hello", Path("/tmp"), "s1")
+    assert "Autonomous Execution Contract" in first
+    later = u.context_for("hello", Path("/tmp"), "s1")
+    assert "Autonomous Execution Contract" not in later
+    assert "Current-Prompt Discipline" in later and "a lesson" in later and len(later) < len(first)
+    assert "Apply before acting." in u.context_for("fix src/a.ts", Path("/tmp"), "s1")
+
+
+def test_log_rotates_past_cap_and_keeps_three(tmp_path, monkeypatch):
+    """24 MB stop_orchestrator.log, 12 MB mimo_audit.log, never rotated (2026-10-09). Rotate at LOG_MAX_BYTES, keep 3."""
+    from lib import log as lg
+    monkeypatch.setattr(lg, "LOG_DIR", tmp_path)
+    monkeypatch.setattr(lg, "LOG_MAX_BYTES", 200)
+    for i in range(40):
+        lg.log("c", f"line {i} " + "x" * 30)
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert names == ["c.log", "c.log.1", "c.log.2", "c.log.3"]
+    assert all(p.stat().st_size < 400 for p in tmp_path.iterdir())
+    assert "line 39" in (tmp_path / "c.log").read_text()
