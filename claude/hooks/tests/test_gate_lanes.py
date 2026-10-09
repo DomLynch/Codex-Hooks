@@ -31,6 +31,11 @@ def test_non_deploy_frankendom_lanes_skip_the_local_gate(tmp_path, monkeypatch):
         assert _run(tmp_path, monkeypatch, f"frankendom-{lane}") is False, lane
 
 
-def test_deploy_lane_and_non_lane_sessions_keep_the_gate(tmp_path, monkeypatch):
-    assert _run(tmp_path, monkeypatch, "frankendom-deploy") is True
-    assert _run(tmp_path, monkeypatch, "Codex Hooks") is True
+def test_folder_variants_of_a_named_lane_skip(tmp_path, monkeypatch):
+    for folder in ("frankendom-combat-cu", "frankendom-char-fix", "frankendom-lead-catalogue", "frankendom-web-evidence"):
+        assert _run(tmp_path, monkeypatch, folder) is False, folder
+
+
+def test_gate_fails_closed_for_deploy_unknown_lane_and_non_lane(tmp_path, monkeypatch):
+    for folder in ("frankendom-deploy", "frankendom-newlane", "frankendom-strategy", "Codex Hooks"):
+        assert _run(tmp_path, monkeypatch, folder) is True, folder

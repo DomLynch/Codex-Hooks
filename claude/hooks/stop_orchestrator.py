@@ -113,16 +113,21 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
     return DEFERRED
 
 
-# 2026-10-09 (Dom, via Strategy): the repository suite runs on the Mac only for the Deploy lane. The other Frankendom
-# lanes rely on the PR's CI, which runs the same rows (load hit 20-80 on 10 cores with 9 lanes gating at once).
-# A session that names no lane (the hooks lane, the COO) keeps the gate.
-GATE_LANES = {"deploy"}
+# 2026-10-09 (Dom, via Strategy and Lead): the repository suite runs on the Mac only in the Deploy lane; the other
+# Frankendom lanes rely on the PR's CI (load hit 20-80 on 10 cores with 9 lanes gating at once). FAILS CLOSED: only
+# a lane named here (or "<name>-something", the folder variants like combat-cu or char-fix) skips; Deploy, an unknown
+# lane and a session with no lane (hooks lane, COO) all still run the gate.
+SKIP_GATE_LANES = ("lead", "code-quality", "characters", "char", "combat", "duels", "backend", "web", "world", "pit")
+
+
+def gate_skipped_for(lane: str) -> bool:
+    return any(lane == k or lane.startswith(k + "-") for k in SKIP_GATE_LANES)
 
 
 def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool | str:
     if (cwd / ".quality-gate.json").exists():
         lane = session_lane(transcript, str(cwd))
-        if lane != "session" and lane not in GATE_LANES:
+        if gate_skipped_for(lane):
             log(COMPONENT, f"repository quality gate skipped: lane {lane} relies on PR CI (local gate is Deploy-only)")
             return True
         sha, ci = ci_covered_commit(cwd)
