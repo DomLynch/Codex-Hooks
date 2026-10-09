@@ -664,8 +664,14 @@ class EnforcementTests(unittest.TestCase):
             }))
         env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0',
                    CLAUDE_GATE_MAX_LOAD='100000')  # this Mac's load must not defer the gate under test
+        # 2026-10-09 (Strategy): the gate is owed by a session that edited something; a read-only session owes none.
+        transcript = self.root / 'edits.jsonl'
+        transcript.write_text("\n".join(json.dumps(x) for x in (
+            {"type": "user", "timestamp": "2026-10-09T10:00:00Z", "message": {"role": "user", "content": "fix it"}},
+            {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": str(self.root / "a.py")}}]}})))
         payload = json.dumps({'session_id':'gate-test', 'turn_id':'t1', 'cwd':str(self.root),
-                              'last_assistant_message':'Checked the project.'})
+                              'transcript_path': str(transcript), 'last_assistant_message':'Checked the project.'})
         for code in (1, 0):
             (self.root / '.quality-gate.json').write_text(json.dumps({
                 'commands': [[sys.executable, '-c', 'pass']],
@@ -679,6 +685,15 @@ class EnforcementTests(unittest.TestCase):
                 self.assertIn('Repository Quality Gate', result.stdout)
             else:
                 self.assertEqual(result.stdout, '')
+        # the same failing contract, but a session that made no edits: no gate owed
+        (self.root / '.quality-gate.json').write_text(json.dumps({
+            'commands': [[sys.executable, '-c', 'pass']], 'completion_commands': [[sys.executable, '-c', 'raise SystemExit(1)']]}))
+        readonly = json.dumps({'session_id': 'gate-test', 'turn_id': 't1', 'cwd': str(self.root),
+                               'last_assistant_message': 'Checked the project.'})
+        result = subprocess.run([sys.executable, stop_orchestrator.__file__], input=readonly,
+                                capture_output=True, text=True, env=env, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('Repository Quality Gate', result.stdout)
 
     def test_gate_runs_without_milestone_or_dirty_tree(self):
         self.contract([[sys.executable, '-c', 'print("checked")']])

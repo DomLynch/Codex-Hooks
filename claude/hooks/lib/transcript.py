@@ -451,6 +451,19 @@ _MUTATING_BASH_RE = re.compile(
 )
 
 
+# A session "owes" the repository gate only if it changed something: an Edit/Write path, or a Bash call that commits,
+# stages, rewrites or writes a file. Reading (gh, git status/log, tests piped through tail) never does.
+_OWN_EDIT_BASH_RE = re.compile(
+    r"(\bsed\s+-i|\btee\b|(?<![\d&<>])>>?\s*[\w./~$-]+\.\w+|\b(mv|cp|rm)\s|"
+    r"\bgit\s+(commit|add|apply|checkout|reset|rebase|merge|stash|cherry-pick)\b)")
+
+
+def session_made_edits(entries: list[tuple[str, str]]) -> bool:
+    if edited_paths(entries):
+        return True
+    return any(role == "TOOL CALL" and body.startswith("Bash:") and _OWN_EDIT_BASH_RE.search(body) for role, body in entries)
+
+
 def doc_only_turn(entries: list[tuple[str, str]], final_message: str, deliverable_re: re.Pattern) -> bool:
     """True when the turn only edited documentation and made no shipping claim.
 

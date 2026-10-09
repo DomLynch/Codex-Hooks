@@ -25,7 +25,7 @@ from lib.log import log
 from lib.rehome import is_rehome_turn
 from lib.quality import (ci_covered_commit, deploy_hold, gate_busy, pending_quality, run_project_gate, run_quality_checks,
                          unchanged_from_base)
-from lib.transcript import edited_paths
+from lib.transcript import edited_paths, session_made_edits
 from deploy_guard import active_lock as active_deploy_lock
 from lib.claude_adapter import normalize_payload, latest_task_entries_claude, latest_task_slice_claude
 from lib.audit_state import retry_turn_id
@@ -117,7 +117,7 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
 # Frankendom lanes rely on the PR's CI (load hit 20-80 on 10 cores with 9 lanes gating at once). FAILS CLOSED: only
 # a lane named here (or "<name>-something", the folder variants like combat-cu or char-fix) skips; Deploy, an unknown
 # lane and a session with no lane (hooks lane, COO) all still run the gate.
-SKIP_GATE_LANES = ("lead", "code-quality", "characters", "char", "combat", "duels", "backend", "web", "world", "pit")
+SKIP_GATE_LANES = ("strategy", "lead", "code-quality", "characters", "char", "combat", "duels", "backend", "web", "world", "pit")
 
 
 def gate_skipped_for(lane: str) -> bool:
@@ -276,7 +276,8 @@ def main() -> None:
         turn_id = retry_turn_id(session_id, payload, payload.get("turn_id") or "")
         cwd = Path(payload.get("cwd") or ".").resolve()
         transcript = latest_task_slice_claude(payload.get("transcript_path") or "", payload.get("last_assistant_message") or "")
-        edited = [Path(p) for p in edited_paths(latest_task_entries_claude(payload.get("transcript_path") or ""))]
+        entries = latest_task_entries_claude(payload.get("transcript_path") or "")
+        edited = [Path(p) for p in edited_paths(entries)]
         cwd = resolve_git_cwd(cwd, edited, transcript=transcript)
         remember_repo(cwd)
 
@@ -296,7 +297,8 @@ def main() -> None:
                 deferred.append(project)
             elif owed:
                 update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, f"not_run:{session_id}:{target}": False})
-        if str(cwd) not in pending and is_git_repo(cwd):
+        # 2026-10-09 (Strategy): a session that made no edits owes no gate for the repo it only ran commands in.
+        if str(cwd) not in pending and is_git_repo(cwd) and session_made_edits(entries):
             outcome = run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
             if not outcome:
                 return
