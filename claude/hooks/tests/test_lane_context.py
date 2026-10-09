@@ -528,3 +528,13 @@ def test_log_rotates_past_cap_and_keeps_three(tmp_path, monkeypatch):
     assert names == ["c.log", "c.log.1", "c.log.2", "c.log.3"]
     assert all(p.stat().st_size < 400 for p in tmp_path.iterdir())
     assert "line 39" in (tmp_path / "c.log").read_text()
+
+
+def test_pointer_prompt_is_under_300_bytes(tmp_path, monkeypatch):
+    """Strategy, 2026-10-09: the in-between prompt was 422 bytes; the pointer is one short line plus cwd."""
+    import user_prompt_submit as u
+    from pathlib import Path
+    monkeypatch.setattr(u, "POLICY_STATE", tmp_path / "policy.json")
+    monkeypatch.setattr(u, "active_lessons", lambda lane: [])
+    u.context_for("fix src/a.ts", Path("/tmp/x"), "s1")
+    assert len(u.context_for("fix src/a.ts", Path("/tmp/x"), "s1").encode()) < 300
