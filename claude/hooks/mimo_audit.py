@@ -206,6 +206,45 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
     return "VERDICT: ISSUES\n" + "\n".join(out), dropped
 
 
+# Dom, 2026-10-09 (via Strategy): "over-zealous and not material... code catches and quality bugs important but not just
+# text words." On a turn with no diff, a finding blocks only when the quoted claim is about the state of the world:
+# live/merged/deployed/installed/passed/fixed, PRs, CI, commits, destructive actions. Wording (delivered vs queued,
+# starting vs asked to start, "aligned", tense, attribution) is logged and never blocks. A finding with no quote is kept.
+MATERIAL_CLAIM_RE = re.compile(
+    r"\b(live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
+    r"reverted|killed|mergeable|PRs?|CI|checks?|commits?|open|gh|saved|written|wrote|created|updated|ran|"
+    r"fail\w*|error\w*|assert\w*|exception|traceback|timed?\s*out)\b|#\d+|\b[0-9a-f]{7,40}\b"
+    r"|[=;{}]|=>|\(\)", re.IGNORECASE)   # failure output and code punctuation are never wording
+
+
+# QUOTE_RE stops at an apostrophe ("I've told Lead"), which would leave such a finding unquoted and so kept.
+CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGNORECASE)
+
+
+def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:
+    """Drop findings whose quoted claim carries no state-of-the-world word, on turns with no diff. Returns (text, dropped)."""
+    if not no_diff:
+        return verdict_text, []
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, dropped = [], []
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            continue
+        body = m.group(1)
+        q = CLAIM_QUOTE_RE.search(body)
+        if q and not MATERIAL_CLAIM_RE.search(q.group(1)):
+            dropped.append(body)
+            log(f"WORDING_FINDING (not material, no diff): {body[:400]}")
+        else:
+            kept.append(body)
+    if not dropped:
+        return verdict_text, []
+    if not kept:
+        return "VERDICT: PASS", dropped
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
+
+
 def filter_unanchored_findings(verdict_text: str, slice_text: str) -> tuple[str, list[str]]:
     """Drop numbered findings whose [quote: "..."] anchor is not in the slice the reviewer saw.
     Premise-wrong findings ('no receipt shown' when the receipt is in the slice, 'claims complete' when it did
@@ -607,6 +646,15 @@ def main() -> None:
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
         dropped = unanchored + dropped
+        verdict_text, wording = filter_wording_findings(
+            verdict_text, not edited_paths(entries) and not (turn_commits(repo_cwd, since) or snapshot))
+        if wording and verdict_status(verdict_text) == "PASS":
+            log(f"WORDING_ONLY: all {len(wording)} finding(s) are wording on a no-diff turn; verdict -> PASS")
+            save_verdict(session_id, turn_id, "PASS", verdict_text)
+            reset_consecutive_blocks(session_id)
+            ledger.clear(session_id)
+            allow_stop("audit passed (only wording findings)")
+            return
         if dropped and verdict_status(verdict_text) == "PASS":
             log(f"VOID_ONLY: all {len(dropped)} finding(s) void; verdict -> PASS")
             save_verdict(session_id, turn_id, "PASS", verdict_text)

@@ -1,0 +1,63 @@
+"""Dom, 2026-10-09 (via Strategy): the Stop reviewer is over-zealous on wording. Rule: on a turn with no diff, a finding
+blocks only when the quoted claim is about the state of the world (live/merged/deployed/passed/fixed, PRs, CI, commits,
+destructive actions). "Would Dom do something different if this word were exact?" Delivered vs queued, starting vs asked
+to start, tense and attribution wording: logged, never blocked. A finding with no quote is kept (fails closed)."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+HOOKS_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HOOKS_DIR))
+
+import mimo_audit as m  # noqa: E402
+
+# Today's four wording blocks in Strategy's session (mimo_audit.log): must NOT block on a no-diff turn.
+WORDING = [
+    'work is starting now rather than waiting on you.',
+    "Both are starting now, in parallel, and I've told Lead the dates go in the 09:00 table",
+    "**Approved, Web is starting now:**",
+    "you, the COO, Lead and Strategy are all aligned, and Hooks Dev has the go to ship it",
+]
+# The genuine catch the same day: stated as fact with no gh check. Must block.
+MATERIAL = [
+    "J is still in flight with four PRs open. No K PR exists yet.",
+    "All four PRs pass their GitHub checks, but none has before/after stills in its description yet.",
+    "The four PRs from my last entry (#1048, #1049, #1050 from Character Main, #1051) are all live.",
+    "The fix is installed and the old process was killed.",
+    "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /^Replay/.",   # failed check, unreported
+    "tests/test_gate_lanes.py:31: AssertionError",
+    "const limb = draw < ARM_SHARE ? 1 : 2, mirror = draw >= .5;",   # code quoted on a no-diff turn
+    "Saved the authority ruling to memory.",
+]
+
+
+def _verdict(*quotes):
+    return "VERDICT: ISSUES\n" + "\n".join(f'{i}. [quote: "{q}"] Nothing in the slice backs this.' for i, q in enumerate(quotes, 1))
+
+
+def test_wording_findings_do_not_block_a_no_diff_turn():
+    for q in WORDING:
+        text, dropped = m.filter_wording_findings(_verdict(q), no_diff=True)
+        assert text == "VERDICT: PASS" and len(dropped) == 1, q
+
+
+def test_material_claims_still_block_a_no_diff_turn():
+    for q in MATERIAL:
+        text, dropped = m.filter_wording_findings(_verdict(q), no_diff=True)
+        assert text.startswith("VERDICT: ISSUES") and not dropped, q
+
+
+def test_mixed_verdict_keeps_only_the_material_finding_renumbered():
+    text, dropped = m.filter_wording_findings(_verdict(WORDING[0], MATERIAL[0]), no_diff=True)
+    assert len(dropped) == 1 and text.splitlines()[1].startswith("1. ") and "PRs open" in text
+
+
+def test_a_turn_with_a_diff_is_never_filtered():
+    text, dropped = m.filter_wording_findings(_verdict(WORDING[0]), no_diff=False)
+    assert text.startswith("VERDICT: ISSUES") and not dropped
+
+
+def test_unquoted_finding_is_kept():
+    text, dropped = m.filter_wording_findings("VERDICT: ISSUES\n1. Something is off with the wording.", no_diff=True)
+    assert text.startswith("VERDICT: ISSUES") and not dropped
