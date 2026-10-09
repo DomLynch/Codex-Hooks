@@ -145,6 +145,24 @@ MAC_ONLY_ROWS = (
     "node scripts/browser-replay-check.mjs --engine webkit", "node scripts/next-fight-black-check.mjs",
 )
 MAC_ROW_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:" + "|".join(re.escape(r) for r in MAC_ONLY_ROWS) + r")(?:\s+\d*>&?\S*)*\s*$")
+# 2026-10-09 (COO, Web): scripts/capture-mac.sh only ssh's to the VPS and launches a Hugging Face job, so the test command it carries
+# does not run on this Mac. Narrow exemption: that script as the command, --hf-ok among its options (before the lane), and nothing that
+# could point the "VPS" back at the Mac: no --host, no leading env (CAPTURE_HOST / CAPTURE_SSH), no other option.
+def hf_capture_wrapper(segment: str) -> bool:
+    words = re.sub(r"\s+\d*>&?\S*", "", segment).split()
+    if not words or not re.fullmatch(r"(?:\S*/)?scripts/capture-mac\.sh", words[0]):
+        return False
+    i, hf_ok = 1, False
+    while i < len(words) and words[i].startswith("--"):
+        if words[i] == "--hf-ok":
+            hf_ok, i = True, i + 1
+        elif words[i] in ("--dir", "--prio") and i + 1 < len(words):
+            i += 2
+        else:
+            return False
+    return hf_ok and len(words) - i >= 2   # a lane and a command
+
+
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
@@ -185,7 +203,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
