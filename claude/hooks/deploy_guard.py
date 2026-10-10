@@ -191,6 +191,55 @@ def hf_capture_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     return hf_ok and len(words) - i >= 2   # a lane and a command
 
 
+# Lead, 2026-10-10: `node scripts/gpu-run.mjs <sha> [--blender] [--timeout 20m] -- <cmd>` only launches a Hugging Face T4 job (the command after
+# `--` is single-quoted into the job script and runs there). Narrow exemption, same rules as capture-mac: the call is the ENTIRE command (no
+# separator, grouping or substitution anywhere, `--` command included), relative script path, a 40-hex sha, only the script's own options, and
+# nothing that could point it at this Mac: the whole scripts/ folder must equal trunk's, and the environment must not redirect it
+# (GPU_RUN_HF replaces the `hf` binary; HF_BIN, HF_LEDGER_DIR, HF_WALL_ROWS_ENV_FILE, NODE_OPTIONS and NODE_PATH change what runs).
+# HF_TOKEN is the login itself and is fine.
+GPU_RUN_SCRIPT = "scripts/gpu-run.mjs"
+GPU_RUN_ENV = ("HF_BIN", "HF_LEDGER_DIR", "HF_WALL_ROWS_ENV_FILE", "NODE_OPTIONS", "NODE_PATH")
+
+
+def scripts_dir_is_trunk(cwd: str) -> bool:
+    if not cwd:
+        return False
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=15)
+    try:
+        if git("rev-parse", "--verify", f"refs/remotes/origin/HEAD:{GPU_RUN_SCRIPT}").returncode != 0 or not (Path(cwd) / GPU_RUN_SCRIPT).is_file():
+            return False
+        clean = git("diff", "--quiet", "refs/remotes/origin/HEAD", "--", "scripts").returncode == 0
+        extra = git("ls-files", "--others", "--exclude-standard", "--", "scripts")
+        return clean and extra.returncode == 0 and not extra.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False   # fail closed
+
+
+def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
+    whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
+    if not command or SHELL_META_RE.search(whole) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+        return False
+    words = whole.split()
+    if words[:2] not in (["node", GPU_RUN_SCRIPT], ["node", "./" + GPU_RUN_SCRIPT]) or len(words) < 6:
+        return False
+    if not re.fullmatch(r"[0-9a-f]{40}", words[2]):
+        return False
+    i = 3
+    while i < len(words) and words[i] != "--":
+        if words[i] == "--blender":
+            i += 1
+        elif words[i] == "--timeout" and i + 1 < len(words) and re.fullmatch(r"\d{1,3}[mh]", words[i + 1]):
+            i += 2
+        else:
+            return False
+    if i >= len(words) - 1:   # no `--`, or nothing after it
+        return False
+    if any(n.startswith("GPU_RUN_") or n in GPU_RUN_ENV for n in os.environ):
+        return False
+    return scripts_dir_is_trunk(cwd)
+
+
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
@@ -240,7 +289,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
