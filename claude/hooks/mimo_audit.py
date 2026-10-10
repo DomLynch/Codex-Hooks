@@ -384,8 +384,10 @@ def _read_only_curl(args: list[str]) -> bool:
             i += 1
         elif arg.startswith("-"):
             return False
+        elif re.match(r"https?://", arg):
+            i += 1   # gopher://, dict://, telnet:// and bare hosts can send raw commands to local services
         else:
-            i += 1   # the URL
+            return False
     return True
 
 
@@ -419,7 +421,7 @@ def _read_only_segment(tokens: list[str]) -> bool:
             return False
         if rest[0] in _RO_GIT:
             return True
-        return (rest[0] == "branch" and rest[1:2] in (["--list"], ["-a"])) or rest[0:2] in (["remote", "-v"], ["worktree", "list"], ["stash", "list"])
+        return (rest[0] == "branch" and rest[1:2] in (["--list"], ["-a"])) or rest in (["remote", "-v"], ["worktree", "list"], ["stash", "list"])   # nothing after: `remote -v add` really adds
     if cmd == "gh":
         if any(bad.match(a) for a in args) or "graphql" in args:
             return False

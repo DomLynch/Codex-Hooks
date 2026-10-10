@@ -527,11 +527,12 @@ def test_contentless_skip_only_after_read_only_tool_calls():
                 "curl -O http://x", "curl -sO http://x", "gh api --method=DELETE /x",
                 "awk 'BEGIN{system (\"rm x\")}'", "awk -f s.awk f", "curl -o /tmp/../etc/x http://x", "curl -w '%output{/root/x}' http://x",
                 "curl --libcurl c.c http://x", "curl --etag-save e http://x", "curl --hsts h http://x", "curl --alt-svc a http://x",
-                "curl -Q 'DELE x' ftp://h", "git fetch origin main:foo", "date --set=2020-01-01", "git -C /planted log", "file -C -m x"):
+                "curl -Q 'DELE x' ftp://h", "git fetch origin main:foo", "date --set=2020-01-01", "git remote -v add evil https://x", "git remote -v remove origin", "git stash list drop",
+                "curl gopher://localhost:6379/_FLUSHALL", "curl dict://localhost:11211/stats", "curl telnet://h", "curl localhost:6379", "git -C /planted log", "file -C -m x"):
         assert not m.read_only_turn(_bash(cmd)), cmd
     for cmd in ("gh pr diff 2151", "git log -3", "git status", "ls -la | head -5", "cat f | wc -l", "rg foo src 2>/dev/null",
                 "grep -c x f 2>&1", "gh run view 1", "gh api repos/a/b/pulls", "curl -s http://x -o /tmp/x", "sed -n '1,5p' f",
-                "date '+%H:%M'", "uptime", "curl -sSL -H 'A: b' -m 5 -o /tmp/x.json http://x", "curl -s http://x", "git fetch -q origin", "git branch --list"):
+                "date '+%H:%M'", "uptime", "curl -sSL -H 'A: b' -m 5 -o /tmp/x.json http://x", "curl -s http://x", "curl -s https://api.github.com/x", "git remote -v", "git worktree list", "git stash list", "git fetch -q origin", "git branch --list"):
         assert m.read_only_turn(_bash(cmd)), cmd
     assert m.read_only_turn([("TOOL CALL", "Read: [t] {}"), ("TOOL CALL", "mcp__semble__search: [t] {}")])
     for tool in ("Edit", "Write", "SendMessage", "Artifact", "mcp__ccd_session__spawn_task", "mcp__Claude_Browser__navigate"):
