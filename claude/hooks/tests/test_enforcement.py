@@ -30,7 +30,7 @@ class EnforcementTests(unittest.TestCase):
         lock.start()
         self.addCleanup(lock.stop)
         # Nor on this Mac's load, a Deploy hold, or a lane's gate running at the same time.
-        for name in ('gate_busy', 'deploy_hold'):
+        for name in ('gate_busy', 'deploy_hold', 'release_in_flight'):
             quiet = patch.object(stop_orchestrator, name, return_value=None)
             quiet.start()
             self.addCleanup(quiet.stop)

@@ -123,6 +123,22 @@ def deploy_hold() -> dict | None:
     return {"reason": f"Deploy is holding the Mac ({DEPLOY_HOLD_PATH.name}, {age:.0f}s old)"} if age < DEPLOY_HOLD_TTL_S else None
 
 
+# Dom, 2026-10-10 (via Strategy): the Stop gate never runs while a release is in flight on the Mac. Matches a process that RUNS
+# scripts/deploy.sh (`bash scripts/deploy.sh ...` or the script itself), not one that merely mentions it: the Deploy lane's
+# monitor loop carries that text inside `bash -c`/`eval` and a plain `pgrep -f` would match it forever.
+RELEASE_CMD_RE = re.compile(r"(?:^|/)(?:ba|z)?sh(?: -\S+)* (?:\S*/)?scripts/deploy\.sh(?: |$)|^(?:\S*/)?scripts/deploy\.sh(?: |$)")
+
+
+def release_in_flight() -> dict | None:
+    try:
+        out = subprocess.run(["ps", "-axo", "args="], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None   # cannot tell: the gate runs, as before
+    if any(RELEASE_CMD_RE.search(line.strip()) for line in out.splitlines()):
+        return {"reason": "release in flight (scripts/deploy.sh is running on this Mac)"}
+    return None
+
+
 def box_slot(cwd: Path) -> dict | None:
     """Lead has handed the box to another worktree until a time (Lead, 2026-09-29: Combat's gate ran while Weapons
     held the slot). A missing, unreadable or expired file holds nothing; a forgotten one expires 12 h after writing."""
