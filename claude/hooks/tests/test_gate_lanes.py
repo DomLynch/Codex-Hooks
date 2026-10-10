@@ -21,6 +21,7 @@ def _run(tmp_path, monkeypatch, folder, title="", transcript_text="t"):
     monkeypatch.setattr(so, "unchanged_from_base", lambda cwd: None, raising=False)
     monkeypatch.setattr(so, "active_deploy_lock", lambda: None, raising=False)
     monkeypatch.setattr(so, "gate_busy", lambda cwd: None)
+    monkeypatch.setattr(so, "release_in_flight", lambda: None)   # not this Mac's real deploys
     monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: called.append(1) or {"ok": True})
     kwargs = {}
     if title:   # a desktop worktree names no lane: only the session title (in the transcript FILE) does
@@ -94,6 +95,7 @@ def test_every_gate_log_line_names_the_lane_cwd_duration_and_failing_command(tmp
     monkeypatch.setattr(so, "unchanged_from_base", lambda cwd: None, raising=False)
     monkeypatch.setattr(so, "active_deploy_lock", lambda: None, raising=False)
     monkeypatch.setattr(so, "gate_busy", lambda cwd: None)
+    monkeypatch.setattr(so, "release_in_flight", lambda: None)   # not this Mac's real deploys
     monkeypatch.setattr(so, "block", lambda *a, **k: None)
     monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": False, "seconds": 7, "results": [
         {"tool": "node scripts/sparring-browser-check.mjs", "ok": False, "output": "boom"}, {"tool": "npm run lint", "ok": True, "output": ""}]})

@@ -30,7 +30,7 @@ class EnforcementTests(unittest.TestCase):
         lock.start()
         self.addCleanup(lock.stop)
         # Nor on this Mac's load, a Deploy hold, or a lane's gate running at the same time.
-        for name in ('gate_busy', 'deploy_hold'):
+        for name in ('gate_busy', 'deploy_hold', 'release_in_flight'):
             quiet = patch.object(stop_orchestrator, name, return_value=None)
             quiet.start()
             self.addCleanup(quiet.stop)
@@ -663,7 +663,7 @@ class EnforcementTests(unittest.TestCase):
                 'gate-test': {'turn_id': 't1', 'verdict': 'PASS', 'updated_at': time.time()}
             }))
         env = dict(os.environ, HOME=str(home), CODEX_HOOK_AUTO_PR='0',
-                   CLAUDE_GATE_MAX_LOAD='100000')  # this Mac's load must not defer the gate under test
+                   CLAUDE_GATE_MAX_LOAD='100000', CLAUDE_GATE_RELEASE_CHECK='0')  # this Mac's load or a real deploy must not defer the gate under test
         # 2026-10-09 (Strategy): the gate is owed by a session that edited something; a read-only session owes none.
         transcript = self.root / 'edits.jsonl'
         transcript.write_text("\n".join(json.dumps(x) for x in (

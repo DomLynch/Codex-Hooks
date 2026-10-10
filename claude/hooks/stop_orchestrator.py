@@ -23,7 +23,7 @@ from lib.git import (
 from lib.json_state import load_json_locked, update_json_locked
 from lib.log import log
 from lib.rehome import is_rehome_turn
-from lib.quality import (ci_covered_commit, deploy_hold, gate_busy, pending_quality, run_project_gate, run_quality_checks,
+from lib.quality import (ci_covered_commit, deploy_hold, gate_busy, pending_quality, release_in_flight, run_project_gate, run_quality_checks,
                          unchanged_from_base)
 from lib.transcript import edited_paths, session_made_edits
 from deploy_guard import active_lock as active_deploy_lock
@@ -147,11 +147,11 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
             # own CI and by the lanes that changed it (Lead, 2026-09-27: Deploy on unchanged trunk, 9 min per Stop).
             log(COMPONENT, f"repository quality gate skipped: clean tree, no change vs {base}")
             return True
-        deploying = active_deploy_lock() or gate_busy(cwd)
+        deploying = active_deploy_lock() or release_in_flight() or gate_busy(cwd)
         if deploying:
             return defer_gate(deploying, session_id)
         # A deploy (or Deploy's hold) that starts mid-gate stops it too, so the release rows get the Mac.
-        result = run_project_gate(cwd, timeout=timeout, defer_to=lambda: active_deploy_lock() or deploy_hold())
+        result = run_project_gate(cwd, timeout=timeout, defer_to=lambda: active_deploy_lock() or release_in_flight() or deploy_hold())
         if result.get("deferred"):
             return defer_gate(result["deferred"], session_id, mid_gate=True)
         failed = "; ".join(str(item["tool"])[:80] for item in result.get("results", []) if not item.get("ok")) or "none"
