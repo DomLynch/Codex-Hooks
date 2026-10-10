@@ -166,7 +166,7 @@ class EarlierSessionEvidenceTests(unittest.TestCase):
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", Path(tmp) / "l.json"),
                 mock.patch.object(mimo_audit, "log"),
                 mock.patch.object(mimo_audit, "latest_task_slice_claude", return_value="x" * 600 + " TOOL CALL edit implemented"),
-                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("USER", "status?")]),
+                mock.patch.object(mimo_audit, "latest_task_entries_claude", return_value=[("USER", "status?"), ("TOOL CALL", "Bash gh pr view 21")]),
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model,
                 mock.patch.object(mimo_audit, "trunk_branch", return_value="codex/01a09a76/task-1"),
             ):

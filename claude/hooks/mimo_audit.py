@@ -354,14 +354,16 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
     return f"no edits, no claim, {len(text)} chars"
 
 
-def no_tools_no_claims(entries: list, last_msg: str) -> str:
-    """Why the model call can be skipped for a turn with no tool call and no factual claim ('' if it cannot)."""
+def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
+    """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
+    2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
+    reviewer exists to catch. The caller still reviews a turn that left a diff or commits, and the deterministic gate runs first."""
     text = (last_msg or "").strip()
-    if any(role == "TOOL CALL" for role, _ in entries) or not text:
-        return ""
-    if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
-        return ""
-    return f"no tool calls, no claims, {len(text)} chars"
+    if any(role == "TOOL CALL" for role, _ in entries) or not text or not Path(transcript_path or "/nonexistent").is_file():
+        return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
+    if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
+        return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
+    return f"no tool calls, {len(text)} chars"
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -588,12 +590,12 @@ def main() -> None:
         reset_consecutive_blocks(session_id)
         allow_stop(f"contentless turn - audit skipped ({why})")
         return
-    elif not released and no_tools_no_claims(entries, last_msg) and not (turn_commits(repo_cwd, since) or snapshot):
-        why = no_tools_no_claims(entries, last_msg)
+    elif not released and no_tool_calls(entries, last_msg, transcript_path) and not (turn_commits(repo_cwd, since) or snapshot):
+        why = no_tool_calls(entries, last_msg, transcript_path)
         log(f"SKIP_NO_TOOLS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_NO_TOOLS", why)
         reset_consecutive_blocks(session_id)
-        allow_stop(f"no-tool turn without claims - audit skipped ({why})")
+        allow_stop(f"no-tool turn - audit skipped ({why})")
         return
     elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
