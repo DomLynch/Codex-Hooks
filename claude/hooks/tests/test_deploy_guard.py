@@ -24,6 +24,9 @@ class DeployGuardTests(unittest.TestCase):
         patcher = mock.patch.object(deploy_guard, "LOCK_PATH", self.path)
         patcher.start()
         self.addCleanup(patcher.stop)
+        mac = mock.patch.object(deploy_guard, "_is_mac", return_value=True)   # the guard is Mac-only (2026-10-10); the tests below run as the Mac
+        mac.start()
+        self.addCleanup(mac.stop)
         self.addCleanup(self.tmp.cleanup)
 
     def test_no_lock_allows_light_commands(self):
@@ -219,6 +222,22 @@ class DeployGuardTests(unittest.TestCase):
         self.assertIn("Deploy abc1234 is in flight", decision["permissionDecisionReason"])
         out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"}}), capture_output=True, text=True, env=env)
         self.assertEqual(out.stdout, "", "light command: no output, allowed")
+
+    def test_off_darwin_the_guard_is_a_noop(self):
+        """2026-10-10: the VPS `lanes` user is Linux; the Mac heavy-job guard refused its npm ci / builds, which is exactly what the VPS is for."""
+        heavy = "npm ci && npx playwright test && npm run build"
+        with mock.patch.object(deploy_guard, "_is_mac", return_value=True):
+            self.assertIn("go to the VPS", deploy_guard.decide(heavy, None))
+        with mock.patch.object(deploy_guard, "_is_mac", return_value=False):
+            self.assertEqual(deploy_guard.decide(heavy, None), "")
+            self.path.write_text(json.dumps(lock(pid=1)))
+            self.assertEqual(deploy_guard.decide("npx playwright test", deploy_guard.active_lock()), "", "a deploy lock is a Mac fact too")
+
+    def test_hook_protocol_allows_on_linux(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "npm run build"}}
+        code = "import sys, runpy; sys.platform = 'linux'; sys.argv=['deploy_guard.py']; runpy.run_path(%r, run_name='__main__')" % str(Path(deploy_guard.__file__))
+        out = subprocess.run([sys.executable, "-c", code], input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(out.stdout, "", "linux: no deny output")
 
 
 if __name__ == "__main__":
