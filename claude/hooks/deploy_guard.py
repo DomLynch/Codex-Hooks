@@ -166,6 +166,18 @@ def capture_script_is_trunk(cwd: str) -> bool:
 
 
 SHELL_META_RE = re.compile(r"[;&|\n(){}`$<]")
+# Auditor on #121: a redirect target is a write. Only 2>&1, >/dev/null and >artifacts/... may appear (no `..`); a bare `>` followed by
+# a word, or a `>` glued to anything else, refuses the exemption (it would truncate e.g. a tracked scripts/lib file).
+REDIRECT_OK_RE = re.compile(r"\d?>&\d|\d?>>?/dev/null|\d?>>?artifacts/[\w./-]*")
+
+
+def redirects_ok(command: str) -> bool:
+    return all(">" not in tok or (REDIRECT_OK_RE.fullmatch(tok) and ".." not in tok) for tok in command.split())
+
+
+def timeout_ok(value: str) -> bool:   # gpu-run's own range: 1m..3h
+    m = re.fullmatch(r"(\d{1,3})([mh])", value)
+    return bool(m) and (1 <= int(m[1]) <= 180 if m[2] == "m" else 1 <= int(m[1]) <= 3)
 
 
 def hf_capture_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
@@ -173,7 +185,7 @@ def hf_capture_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     # scripts/capture-mac.sh; ..., git checkout evil -- ...) could change what runs. The exemption is for a command that IS
     # the capture call and nothing else: one segment, no separators, grouping or substitution (redirects like 2>&1 are fine).
     whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
-    if not command or SHELL_META_RE.search(whole) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+    if not command or SHELL_META_RE.search(whole) or not redirects_ok(command) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
         return False
     words = whole.split()
     if not words or words[0] not in (CAPTURE_SCRIPT, "./" + CAPTURE_SCRIPT):
@@ -218,7 +230,7 @@ def scripts_dir_is_trunk(cwd: str) -> bool:
 
 def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
-    if not command or SHELL_META_RE.search(whole) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+    if not command or SHELL_META_RE.search(whole) or not redirects_ok(command) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
         return False
     words = whole.split()
     if words[:2] not in (["node", GPU_RUN_SCRIPT], ["node", "./" + GPU_RUN_SCRIPT]) or len(words) < 6:
@@ -229,7 +241,7 @@ def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     while i < len(words) and words[i] != "--":
         if words[i] == "--blender":
             i += 1
-        elif words[i] == "--timeout" and i + 1 < len(words) and re.fullmatch(r"\d{1,3}[mh]", words[i + 1]):
+        elif words[i] == "--timeout" and i + 1 < len(words) and timeout_ok(words[i + 1]):
             i += 2
         else:
             return False
