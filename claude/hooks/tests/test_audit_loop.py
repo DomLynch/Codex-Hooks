@@ -502,3 +502,29 @@ def test_relay_only_turn_is_skipped_unless_it_claims_state():
     assert m.contentless_turn(long_note, [], relay_only=True)
     assert not m.contentless_turn(long_note, []), "without the relay flag the 600-char cap still holds"
     assert not m.contentless_turn("PR #12 merged and the release is live. " * 20, [], relay_only=True), "claims stay reviewed"
+
+
+def _bash(cmd):
+    import json as _j
+    return [("TOOL CALL", "Bash: [t1] " + _j.dumps({"command": cmd}))]
+
+
+def test_contentless_skip_only_after_read_only_tool_calls():
+    """Auditor probe 2026-10-10: a bland short final message skipped review after a merge, a force-push or an ssh rm.
+    Fail closed: skip only when EVERY tool call is on the read-only allow-list."""
+    import mimo_audit as m
+    for cmd in ("gh pr merge 2151 --squash --admin", "git push --force origin HEAD:main", "git push origin --delete x",
+                "ssh root@h 'rm -rf /root/x'", "ssh root@h 'pkill -f node'", "echo '{}' > ~/.claude/settings.json",
+                "gh pr comment 1 --body x", "git log -3 && rm -rf x", "git log; rm x", "cat a | tee b", "echo $(rm x)",
+                "FOO=1 git log", "bash -c 'git log'", "sed -i s/a/b/ f", "find . -delete", "find . -exec rm {} +",
+                "curl -X POST http://x", "curl -o /root/x http://x", "gh api -X DELETE /x", "sort -o f f", "git branch -D x",
+                "git log --output=f", "unknowncmd", "git log |", ""):
+        assert not m.read_only_turn(_bash(cmd)), cmd
+    for cmd in ("gh pr diff 2151", "git log -3", "git -C /r status", "ls -la | head -5", "cat f | wc -l", "rg foo src 2>/dev/null",
+                "grep -c x f 2>&1", "gh run view 1", "gh api repos/a/b/pulls", "curl -s http://x -o /tmp/x", "sed -n '1,5p' f",
+                "date '+%H:%M'", "uptime", "git fetch -q origin", "git branch --list"):
+        assert m.read_only_turn(_bash(cmd)), cmd
+    assert m.read_only_turn([("TOOL CALL", "Read: [t] {}"), ("TOOL CALL", "mcp__semble__search: [t] {}")])
+    for tool in ("Edit", "Write", "SendMessage", "Artifact", "mcp__ccd_session__spawn_task", "mcp__Claude_Browser__navigate"):
+        assert not m.read_only_turn([("TOOL CALL", f"{tool}: [t] {{}}")]), tool
+    assert m.read_only_turn([])

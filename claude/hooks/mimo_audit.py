@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -342,6 +343,90 @@ def relay_only_turn(entries: list) -> bool:
     return bool(calls) and all(body.startswith(RELAY_TOOLS) for body in calls)
 
 
+READ_ONLY_TOOLS = frozenset({
+    "Read", "Grep", "Glob", "ToolSearch", "ReadNotifications", "ListAgents", "TaskOutput", "BashOutput",
+    "mcp__semble__search", "mcp__semble__find_related",
+    *(f"mcp__Claude_Browser__{n}" for n in ("read_page", "get_page_text", "find", "read_console_messages",
+                                            "read_network_requests", "tabs_context"))})
+_RO_SIMPLE = frozenset("cat head tail wc ls stat file du df pwd echo printf date which uptime jq sort uniq cut tr awk diff cmp "
+                       "sha256sum shasum grep rg".split())
+_RO_GIT = frozenset("log show diff status rev-parse ls-files ls-tree cat-file merge-base blame describe fetch show-ref "
+                    "for-each-ref".split())
+_RO_REDIRECT_RE = re.compile(r"(\d?>&\d|\d?>\s*/dev/null|&>\s*/dev/null)")   # the only redirects a read may carry
+_RO_DENY_RE = re.compile(r"[;`>\n]|&&|\|\||\$\(|\b(tee|xargs|ssh|scp|rsync|sudo|eval)\b|\b(bash|sh|zsh)\s+-c\b|\b(python3?|node)\s+-[ce]\b")
+
+
+def _read_only_segment(tokens: list[str]) -> bool:
+    cmd, args = tokens[0], tokens[1:]
+    if re.match(r"\w+=", cmd):
+        return False   # an env VAR= prefix can change what a command does
+    flags = " ".join(args)
+    if cmd in _RO_SIMPLE:
+        if cmd == "awk" and "system(" in flags:
+            return False
+        if cmd == "sort" and re.search(r"(^|\s)(-o|--output)", flags):
+            return False
+        if cmd == "date" and re.search(r"(^|\s)-s", flags):
+            return False
+        return not (cmd == "uniq" and len([a for a in args if not a.startswith("-")]) > 1)   # uniq IN OUT writes OUT
+    if cmd == "command":
+        return args[:1] == ["-v"]
+    if cmd == "sed":
+        return len(args) >= 2 and args[0] == "-n" and bool(re.fullmatch(r"['\"]?[0-9$,]*(/[^/]*/)?p['\"]?", args[1]))
+    if cmd == "find":
+        return not re.search(r"(^|\s)-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", flags)
+    if cmd == "git":
+        rest = list(args)
+        while rest and (rest[0] in ("-C", "-c") and len(rest) > 1 or rest[0].startswith("--no-pager")):
+            rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
+        if not rest or "--output" in flags:
+            return False
+        if rest[0] in _RO_GIT:
+            return True
+        return (rest[0] == "branch" and rest[1:2] in (["--list"], ["-a"])) or rest[0:2] in (["remote", "-v"], ["worktree", "list"], ["stash", "list"])
+    if cmd == "gh":
+        if args[:1] in (["pr"], ["issue"]):
+            return args[1:2] in (["view"], ["diff"], ["checks"], ["list"], ["status"])
+        if args[:1] == ["run"]:
+            return args[1:2] in (["list"], ["view"])
+        return args[:1] == ["api"] and not re.search(r"(^|\s)(-X|--method|-f|-F|--field|--raw-field|--input)\b", flags)
+    if cmd == "curl":
+        if re.search(r"(^|\s)(-X|-d|--data\S*|-F|--form|-T|--upload-file)\b", flags):
+            return False
+        return all(a.startswith("/tmp/") or a.startswith("/private/tmp/") for prev, a in zip(args, args[1:]) if prev in ("-o", "--output"))
+    return False
+
+
+def read_only_bash(command: str) -> bool:
+    """Auditor's fail-closed allow-list (2026-10-10): every pipe segment must be a plain read. Anything unparsed is NOT read-only."""
+    text = _RO_REDIRECT_RE.sub(" ", command or "").strip()
+    if not text or _RO_DENY_RE.search(text):
+        return False
+    try:
+        segments = [shlex.split(seg) for seg in text.split("|")]
+    except ValueError:
+        return False
+    return all(tokens and _read_only_segment(tokens) for tokens in segments)
+
+
+def read_only_turn(entries: list) -> bool:
+    """True when every tool call this turn is a read; a send, an edit, a push or any unknown tool makes it False (review it)."""
+    for role, body in entries:
+        if role != "TOOL CALL":
+            continue
+        name = body.split(":", 1)[0].strip()
+        if name == "Bash":
+            try:
+                command = json.loads(body.split("] ", 1)[1]).get("command", "")
+            except (IndexError, ValueError, AttributeError):
+                return False
+            if not read_only_bash(command):
+                return False
+        elif name not in READ_ONLY_TOOLS:
+            return False
+    return True
+
+
 def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str:
     """Why the model call can be skipped ('' if it cannot). Edits, claims and status assertions all disqualify."""
     if edited:
@@ -586,7 +671,7 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif not released and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
+    elif not released and (relay_only_turn(entries) or read_only_turn(entries)) and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
         why = contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
