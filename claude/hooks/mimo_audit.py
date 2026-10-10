@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -332,7 +333,7 @@ HANDOFF_RE = re.compile(r"\b(I (can|could|will|would)\b|next:|next step|if you l
 CONTENTLESS_MAX_CHARS = 600
 
 
-RELAY_TOOLS = ("SendMessage", "ReadNotifications", "ListAgents", "Read", "Monitor")
+RELAY_TOOLS = ("SendMessage", "ReadNotifications", "ListAgents", "Read")   # Monitor runs a shell command: not a relay
 RELAY_MAX_CHARS = 2000
 
 
@@ -340,6 +341,128 @@ def relay_only_turn(entries: list) -> bool:
     """True when every tool call this turn was a send or a read (2026-10-08, Optimizer item 5c)."""
     calls = [body for role, body in entries if role == "TOOL CALL"]
     return bool(calls) and all(body.startswith(RELAY_TOOLS) for body in calls)
+
+
+READ_ONLY_TOOLS = frozenset({
+    "Read", "Grep", "Glob", "ToolSearch", "ReadNotifications", "ListAgents", "TaskOutput", "BashOutput",
+    "mcp__semble__search", "mcp__semble__find_related",
+    *(f"mcp__Claude_Browser__{n}" for n in ("read_page", "get_page_text", "find", "read_console_messages",
+                                            "read_network_requests", "tabs_context"))})
+_RO_SIMPLE = frozenset("cat head tail wc ls stat du df pwd echo printf date which uptime jq sort uniq cut tr diff cmp "
+                       "sha256sum shasum".split())
+_RO_GIT = frozenset("log show diff status rev-parse ls-files ls-tree cat-file merge-base blame describe fetch show-ref "
+                    "for-each-ref".split())
+_RO_REDIRECT_RE = re.compile(r"(\d?>&\d|\d?>\s*/dev/null|&>\s*/dev/null)")   # the only redirects a read may carry
+_RO_DENY_RE = re.compile(r"[;`<>&\n]|\$\(|\|\||\b(tee|xargs|ssh|scp|rsync|sudo|eval)\b|\b(bash|sh|zsh)\s+-c\b|\b(python3?|node)\s+-[ce]\b")
+_RO_TMP = ("/tmp/", "/private/tmp/")
+# Flags that write, delete or run another program, however the value is attached (-XPOST, --pre=cmd, -fquery=...).
+_RO_BAD_FLAG_RE = {
+    "git": re.compile(r"^(-c|--config-env|--upload-pack|--receive-pack|--exec|--ext-diff|--textconv|--output|--open-files-in-pager|--paginate|--exec-path)"),
+    "rg": re.compile(r"^(--pre|--hostname-bin)"),
+    "sort": re.compile(r"^(-o|--output|--compress-program|-T|--temporary-directory)"),
+    "gh": re.compile(r"^(-X|-f|-F|--method|--field|--raw-field|--input|--hostname)"),
+}
+
+
+_CURL_FLAGS = frozenset("--silent --show-error --location --fail --head --include --verbose --compressed --insecure".split())
+_CURL_VALUE_FLAGS = frozenset("-H --header -m --max-time --connect-timeout --retry -A --user-agent".split())
+
+
+def _read_only_curl(args: list[str]) -> bool:
+    """A flag ALLOW-list (Auditor): any curl option not named here may write a file or send a command, so it fails closed."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-o", "--output") or (arg.startswith("-o") and not arg.startswith("--") and not re.fullmatch(r"-[sSLfIivk]+", arg)):
+            target = arg[2:] if arg.startswith("-o") and len(arg) > 2 else (args[i + 1] if i + 1 < len(args) else "")
+            if not target.startswith(_RO_TMP) or ".." in target.split("/"):
+                return False
+            i += 1 if arg.startswith("-o") and len(arg) > 2 else 2
+        elif arg in _CURL_VALUE_FLAGS:
+            i += 2
+        elif arg in _CURL_FLAGS or re.fullmatch(r"-[sSLfIivk]+", arg):
+            i += 1
+        elif arg.startswith("-"):
+            return False
+        elif re.match(r"https?://", arg):
+            i += 1   # gopher://, dict://, telnet:// and bare hosts can send raw commands to local services
+        else:
+            return False
+    return True
+
+
+def _read_only_segment(tokens: list[str]) -> bool:
+    cmd, args = tokens[0], tokens[1:]
+    if re.match(r"\w+=", cmd):
+        return False   # an env VAR= prefix can change what a command does
+    flags = " ".join(args)
+    bad = _RO_BAD_FLAG_RE.get(cmd)
+    if cmd in _RO_SIMPLE:
+        if cmd == "date" and re.search(r"(^|\s)(-s|--set)", flags):
+            return False
+        if cmd == "sort" and any(bad.match(a) for a in args):
+            return False
+        return not (cmd == "uniq" and len([a for a in args if not a.startswith("-")]) > 1)   # uniq IN OUT writes OUT
+    if cmd == "rg":
+        return not any(bad.match(a) for a in args)
+    if cmd == "grep":
+        return True
+    if cmd == "command":
+        return args[:1] == ["-v"]
+    if cmd == "sed":
+        return len(args) >= 2 and args[0] == "-n" and bool(re.fullmatch(r"['\"]?[0-9$,]*(/[^/]*/)?p['\"]?", args[1]))
+    if cmd == "find":
+        return not re.search(r"(^|\s)-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", flags)
+    if cmd == "git":
+        rest = list(args)
+        if not rest or any(bad.match(a) for a in rest) or rest[0] == "-C":   # -C <dir> may name a planted repo whose config runs code
+            return False
+        if rest[0] == "fetch" and any(":" in a for a in rest[1:]):   # a refspec writes a local ref
+            return False
+        if rest[0] in _RO_GIT:
+            return True
+        return (rest[0] == "branch" and rest[1:2] in (["--list"], ["-a"])) or rest in (["remote", "-v"], ["worktree", "list"], ["stash", "list"])   # nothing after: `remote -v add` really adds
+    if cmd == "gh":
+        if any(bad.match(a) for a in args) or "graphql" in args:
+            return False
+        if args[:1] in (["pr"], ["issue"]):
+            return args[1:2] in (["view"], ["diff"], ["checks"], ["list"], ["status"])
+        if args[:1] == ["run"]:
+            return args[1:2] in (["list"], ["view"])
+        return args[:1] == ["api"]
+    if cmd == "curl":
+        return _read_only_curl(args)
+    return False
+
+
+def read_only_bash(command: str) -> bool:
+    """Auditor's fail-closed allow-list (2026-10-10): every pipe segment must be a plain read. Anything unparsed is NOT read-only."""
+    text = _RO_REDIRECT_RE.sub(" ", command or "").strip()
+    if not text or _RO_DENY_RE.search(text):
+        return False
+    try:
+        segments = [shlex.split(seg) for seg in text.split("|")]
+    except ValueError:
+        return False
+    return all(tokens and _read_only_segment(tokens) for tokens in segments)
+
+
+def read_only_turn(entries: list) -> bool:
+    """True when every tool call this turn is a read; a send, an edit, a push or any unknown tool makes it False (review it)."""
+    for role, body in entries:
+        if role != "TOOL CALL":
+            continue
+        name = body.split(":", 1)[0].strip()
+        if name == "Bash":
+            try:
+                command = json.loads(body.split("] ", 1)[1]).get("command", "")
+            except (IndexError, ValueError, AttributeError):
+                return False
+            if not read_only_bash(command):
+                return False
+        elif name not in READ_ONLY_TOOLS:
+            return False
+    return True
 
 
 def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str:
@@ -590,7 +713,7 @@ def main() -> None:
         log(f"DETERMINISTIC_GATE: {len(mechanical)} finding(s) — model call skipped")
     if pre or mechanical:
         verdict_text = "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(pre + mechanical, 1))
-    elif not released and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
+    elif not released and (relay_only_turn(entries) or read_only_turn(entries)) and contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries)) and not (turn_commits(repo_cwd, since) or snapshot):
         why = contentless_turn(last_msg, edited_paths(entries), relay_only_turn(entries))
         log(f"SKIP_CONTENTLESS: {why} — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CONTENTLESS", why)
