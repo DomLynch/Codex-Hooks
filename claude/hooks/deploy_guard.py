@@ -177,8 +177,17 @@ def note_hatch_use(command: str, cwd: str) -> bool:
     return True
 
 
+def _is_mac() -> bool:
+    return sys.platform == "darwin"
+
+
 def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
-    """Return the deny reason, or '' to allow."""
+    """Return the deny reason, or '' to allow.
+
+    2026-10-10 (Dom, Lead: the VPS `lanes` user): this guard keeps heavy runs and builds off the shared MAC. On Linux (the VPS, where heavy
+    runs belong) it is a no-op; it refused npm ci, playwright install and vite build there, even wrapped in `capture`."""
+    if not _is_mac():
+        return ""
     runs = _runs(command)
     pixelmator = bool(lock) and bool(runs) and APP_HOST_RE.search(runs) is not None and PIXELMATOR_RE.search(command) is not None
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
