@@ -534,6 +534,7 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
     {"ok": True, "deferred": lock}: one deployer per Mac, the same as a gate that finds the lock at its start."""
     path = cwd / ".quality-gate.json"
     results = []
+    ran_from = None   # when the checks themselves began, after any deploy-lock wait: the "seconds" the gate log reports
     try:
         contract = json.loads(path.read_text())
         limit = contract.get("timeout_seconds", 420)
@@ -558,7 +559,7 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
         if not acquire_gate_lock(cwd):
             return {"ok": True, "deferred": gate_busy(cwd) or {"reason": "another repository gate took the Mac-wide lock first"},
                     "results": results}
-        started = time.monotonic()
+        started = ran_from = time.monotonic()
         for index, command in enumerate(commands):
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
@@ -589,7 +590,8 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
         results.append(_result(path, "quality contract", False, str(exc)))
     finally:
         release_gate_lock()
-    return {"ok": bool(results) and all(item["ok"] for item in results), "results": results}
+    return {"ok": bool(results) and all(item["ok"] for item in results), "results": results,
+            "seconds": 0 if ran_from is None else round(time.monotonic() - ran_from)}
 
 
 OUTPUT_CAP = 4000

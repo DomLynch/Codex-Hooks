@@ -95,11 +95,11 @@ def test_every_gate_log_line_names_the_lane_cwd_duration_and_failing_command(tmp
     monkeypatch.setattr(so, "active_deploy_lock", lambda: None, raising=False)
     monkeypatch.setattr(so, "gate_busy", lambda cwd: None)
     monkeypatch.setattr(so, "block", lambda *a, **k: None)
-    monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": False, "results": [
+    monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": False, "seconds": 7, "results": [
         {"tool": "node scripts/sparring-browser-check.mjs", "ok": False, "output": "boom"}, {"tool": "npm run lint", "ok": True, "output": ""}]})
     assert so.run_aaa_gate(repo, "t", transcript_path=str(transcript)) is False
     line = next(m for m in lines if m.startswith("repository quality gate ok="))
-    assert "ok=False" in line and "lane=deploy" in line and f"cwd={repo}" in line and "seconds=" in line
+    assert "ok=False" in line and "lane=deploy" in line and f'cwd="{repo}"' in line and "seconds=7" in line
     assert "failed=node scripts/sparring-browser-check.mjs" in line and "npm run lint" not in line
     monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": True, "results": []})
     lines.clear()
