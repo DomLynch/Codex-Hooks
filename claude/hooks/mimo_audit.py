@@ -213,9 +213,11 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
 # One list of state-of-the-world verbs for BOTH the wording filter and the no-tool skip (Auditor, #117): a claim that
 # something crashed, is held, was reinstalled, rolled back, landed or is down is never "wording".
 STATE_VERBS = (r"crash\w*|held|on hold|reinstall\w*|roll(?:ed|ing)?[\s-]*back|landed|down|stopped|broke\w*|"
-               r"restor\w*|paused|blocked|stuck|cancel\w*|disabled|enabled|unmerged")
+               r"restor\w*|paused|blocked|stuck|cancel\w*|disabled|enabled|unmerged|restart\w*|revert\w*|reject\w*|"
+               r"running|published|done|complete\w*|trunk|exists?|offline|launched")
+NUMBER_WORDS = r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|dozen"   # a count is a claim, but not a skip trigger
 MATERIAL_CLAIM_RE = re.compile(
-    r"\b(" + STATE_VERBS + r"|live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
+    r"\b(" + STATE_VERBS + r"|" + NUMBER_WORDS + r"|live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
     r"reverted|killed|mergeable|PRs?|CI|checks?|commits?|open|gh|saved|written|wrote|created|updated|ran|"
     r"fail\w*|error\w*|assert\w*|exception|traceback|timed?\s*out)\b|#\d+|\b[0-9a-f]{7,40}\b"
     r"|[=;{}]|=>|\(\)", re.IGNORECASE)   # failure output and code punctuation are never wording
@@ -231,11 +233,17 @@ CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGN
 CODE_REF_RE = re.compile(r"`|\.(?:py|js|mjs|ts|tsx|json|md|sh|yml)\b|\bline\s+\d+|\w\(\)|\w+/\w+")
 
 
+# A finding that says the claim contradicts the evidence, or that nothing in the slice checked it, is about the facts and
+# never about phrasing (replay of 1,838 past blocks: 25 of 244 would-be downgrades were of this kind).
+EVIDENCE_GAP_RE = re.compile(r"contradict|does not match|is wrong|never called|nothing in this slice (?:reads|checks|backs|verif)|"
+                             r"was never (?:run|read|checked)|no tool call (?:looks|reads|checks)", re.IGNORECASE)
+
+
 def is_wording_finding(body: str, no_diff: bool) -> bool:
     q = CLAIM_QUOTE_RE.search(body)
     if not q or MATERIAL_CLAIM_RE.search(q.group(1)):
         return False
-    return no_diff or not (re.search(r"\d", q.group(1)) or CODE_REF_RE.search(body))
+    return no_diff or not (re.search(r"\d", q.group(1)) or CODE_REF_RE.search(body) or EVIDENCE_GAP_RE.search(body))
 
 
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:

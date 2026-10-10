@@ -95,3 +95,13 @@ def test_blocks_on_numbers_ids_state_words_and_code_stay_exactly_as_before():
             assert not m.is_wording_finding(body, no_diff), (body, no_diff)
     for body in diff_only:
         assert not m.is_wording_finding(body, False), body
+
+
+def test_contradiction_and_unchecked_claims_keep_blocking_on_a_diff_turn_but_queued_wording_does_not():
+    for body in ('1. [quote: "Nothing for Dom."] This contradicts the Lead\'s message, which says it waits on Dom.',
+                 '1. [quote: "no new messages"] ListAgents was never called, so nothing checked this claim.',
+                 '1. [quote: "All nine lanes are running again."] Several lanes show offline.',
+                 '1. [quote: "Five releases published today."] The slice has no output behind this count.',
+                 '1. [quote: "Both moves are now done"] Not shown.'):
+        assert not m.is_wording_finding(body, False), body
+    assert m.is_wording_finding('1. [quote: "Web is starting now"] The send result says queued.', False)
