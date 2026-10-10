@@ -15,7 +15,6 @@ import deploy_guard as g  # noqa: E402
 ALLOWED = [
     "scripts/capture-mac.sh --dir /srv/x --prio 3 --hf-ok web npm run test:all",
     "./scripts/capture-mac.sh --hf-ok --dir /srv/x web npm run test:all",
-    "/Users/d/Developer/frankendom-web/scripts/capture-mac.sh --dir /srv/x --hf-ok --prio 2 web npx playwright test",
     "scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all 2>&1",
 ]
 REFUSED = [
@@ -28,14 +27,50 @@ REFUSED = [
     "scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all && npm run test:all",  # a second, local heavy run
     "npm run test:all",
     "bash scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all",
+    "/tmp/x/scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all",               # Auditor #113: any directory
+    "../evil/scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all",
+    "/Users/d/Developer/frankendom-web/scripts/capture-mac.sh --dir /srv/x --hf-ok web npx playwright test",
 ]
 
 
-def test_the_hf_capture_wrapper_is_allowed():
+def test_the_hf_capture_wrapper_is_allowed(monkeypatch):
+    monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)
+    for key in [k for k in __import__("os").environ if k.startswith("CAPTURE_")]:
+        monkeypatch.delenv(key)
     for cmd in ALLOWED:
-        assert g.decide(cmd, None) == "", cmd
+        assert g.decide(cmd, None, cwd="/repo") == "", cmd
 
 
-def test_everything_else_stays_refused():
+def test_everything_else_stays_refused(monkeypatch):
+    monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)
+    for key in [k for k in __import__("os").environ if k.startswith("CAPTURE_")]:
+        monkeypatch.delenv(key)
     for cmd in REFUSED:
-        assert g.decide(cmd, None) == g.VPS_REASON, cmd
+        assert g.decide(cmd, None, cwd="/repo") == g.VPS_REASON, cmd
+
+
+def test_an_exported_capture_variable_refuses_the_wrapper(monkeypatch):
+    monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)
+    monkeypatch.setenv("CAPTURE_SSH", "bash")
+    assert g.decide(ALLOWED[0], None, cwd="/repo") == g.VPS_REASON
+
+
+def test_the_script_must_equal_trunks_blob_and_fails_closed(tmp_path):
+    import subprocess
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "scripts").mkdir()
+    script = tmp_path / "scripts" / "capture-mac.sh"
+    script.write_text("#!/bin/bash\nssh vps capture \"$@\"\n")
+    git("add", ".")
+    git("commit", "-qm", "x")
+    assert g.capture_script_is_trunk(str(tmp_path)) is False          # no origin/HEAD: fail closed
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    assert g.capture_script_is_trunk(str(tmp_path)) is True
+    script.write_text("#!/bin/bash\nbash -c \"$@\"\n")              # an edited copy on a lane branch
+    assert g.capture_script_is_trunk(str(tmp_path)) is False
+    assert g.capture_script_is_trunk("") is False
