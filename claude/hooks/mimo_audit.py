@@ -355,18 +355,22 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
 
 
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
-    """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
-    2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
-    reviewer exists to catch, unless the text claims a run, a check, a deploy, a pass count or a live/merged state (a fabricated
-    receipt needs no tool call). The caller still reviews a turn that left a diff or commits, and the deterministic gate runs first."""
+    """Why the model call can be skipped for a turn that changed nothing and claims nothing ('' if it cannot). Dom's ruling via
+    Strategy, 2026-10-10 (option B, extended 19:4x from no-tool turns to every no-change turn): a turn with no diff and no commits
+    cannot hide an unauthorized action or a failed check the deterministic gate has not already caught, unless the text claims a
+    run, a check, a deploy, a pass count, an id or a live/merged state (a fabricated receipt is a claim by definition), or stops on
+    an offer or unfinished work. The caller has already ruled out commits and a worktree change; the gate ran first."""
     text = (last_msg or "").strip()
-    if any(role == "TOOL CALL" for role, _ in entries) or not text or not Path(transcript_path or "/nonexistent").is_file():
-        return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
+    if not text or not Path(transcript_path or "/nonexistent").is_file():
+        return ""   # an unreadable transcript means "unknown", not "no change": review it
+    if edited_paths(entries):
+        return ""   # an Edit-tool call that left no diff (reverted or ignored) still gets a review
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
     if STATUS_CLAIM_RE.search(text):
-        return ""   # Strategy, option B: a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
-    return f"no tool calls, {len(text)} chars"
+        return ""   # a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
+    kind = "no change" if any(role == "TOOL CALL" for role, _ in entries) else "no tool calls"
+    return f"{kind}, no claim, {len(text)} chars"
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -516,6 +520,7 @@ def main() -> None:
     # The owner's off switch for the per-Stop reviewer (default on). A verdict is still written so audit_state's
     # retry and iteration bookkeeping sees this turn; it is not PASS.
     if hook_env("CLAUDE_STOP_REVIEW", "1").strip() == "0":
+        log("SKIP_DISABLED: CLAUDE_STOP_REVIEW=0 — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_DISABLED", "CLAUDE_STOP_REVIEW=0")
         allow_stop("stop review disabled by CLAUDE_STOP_REVIEW=0")
         return
@@ -531,6 +536,7 @@ def main() -> None:
         if pending_ids:
             log(f"LEDGER_RELEASED: {', '.join(pending_ids)} after max iterations; unresolved")
         ledger.clear(session_id)
+        log(f"MAX_ALLOW: {iterations}/{MAX_ITERATIONS} iterations — model call skipped")
         save_verdict(session_id, turn_id, "MAX_ALLOW", f"max iterations reached ({iterations}/{MAX_ITERATIONS})")
         allow_stop(f"max iterations reached ({iterations}/{MAX_ITERATIONS})", unresolved=True)
         return
@@ -539,12 +545,14 @@ def main() -> None:
     transcript = latest_task_slice_claude(transcript_path, last_msg, MAX_TRANSCRIPT_CHARS) or redact_sensitive(last_msg)
     log(f"TASK_SLICE: {len(transcript)} chars")
     if len(transcript) < MIN_TRANSCRIPT_CHARS and is_chat_turn(transcript):
+        log(f"SKIP_TOO_SHORT: {len(transcript)} chars — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_TOO_SHORT", f"transcript too short ({len(transcript)} chars)")
         reset_consecutive_blocks(session_id)
         allow_stop(f"transcript too short ({len(transcript)} chars)")
         return
 
     if is_chat_turn(transcript):
+        log("SKIP_CHAT_TURN: no edit tools, no deliverable claims — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_CHAT_TURN", "no edit tools, no deliverable claims")
         reset_consecutive_blocks(session_id)
         allow_stop("chat turn - audit skipped")
@@ -595,14 +603,16 @@ def main() -> None:
         return
     elif not released and no_tool_calls(entries, last_msg, transcript_path) and not (turn_commits(repo_cwd, since) or snapshot):
         why = no_tool_calls(entries, last_msg, transcript_path)
-        log(f"SKIP_NO_TOOLS: {why} — model call skipped")
-        log(f"SKIP_NO_TOOLS_TEXT: {redact_sensitive(last_msg)[:600]!r}")   # so the 24 h replay can audit the skip rule itself
-        save_verdict(session_id, turn_id, "SKIP_NO_TOOLS", why)
+        label = "SKIP_NO_CHANGE" if why.startswith("no change") else "SKIP_NO_TOOLS"
+        log(f"{label}: {why} — model call skipped")
+        log(f"{label}_TEXT: {redact_sensitive(last_msg)[:600]!r}")   # so the 24 h replay can audit the skip rule itself
+        save_verdict(session_id, turn_id, label, why)
         reset_consecutive_blocks(session_id)
-        allow_stop(f"no-tool turn - audit skipped ({why})")
+        allow_stop(f"no-change turn - audit skipped ({why})")
         return
     elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
+        log("SKIP_DOC_ONLY: doc-only edits, no deliverable claim — model call skipped")
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
         reset_consecutive_blocks(session_id)
         allow_stop("doc-only turn - audit skipped")
