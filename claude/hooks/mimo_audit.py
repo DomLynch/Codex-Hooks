@@ -357,12 +357,15 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
     """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
     2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
-    reviewer exists to catch. The caller still reviews a turn that left a diff or commits, and the deterministic gate runs first."""
+    reviewer exists to catch, unless the text claims a run, a check, a deploy, a pass count or a live/merged state (a fabricated
+    receipt needs no tool call). The caller still reviews a turn that left a diff or commits, and the deterministic gate runs first."""
     text = (last_msg or "").strip()
     if any(role == "TOOL CALL" for role, _ in entries) or not text or not Path(transcript_path or "/nonexistent").is_file():
         return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
+    if STATUS_CLAIM_RE.search(text):
+        return ""   # Strategy, option B: a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
     return f"no tool calls, {len(text)} chars"
 
 
@@ -593,6 +596,7 @@ def main() -> None:
     elif not released and no_tool_calls(entries, last_msg, transcript_path) and not (turn_commits(repo_cwd, since) or snapshot):
         why = no_tool_calls(entries, last_msg, transcript_path)
         log(f"SKIP_NO_TOOLS: {why} — model call skipped")
+        log(f"SKIP_NO_TOOLS_TEXT: {redact_sensitive(last_msg)[:600]!r}")   # so the 24 h replay can audit the skip rule itself
         save_verdict(session_id, turn_id, "SKIP_NO_TOOLS", why)
         reset_consecutive_blocks(session_id)
         allow_stop(f"no-tool turn - audit skipped ({why})")
