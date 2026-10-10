@@ -64,22 +64,26 @@ def test_wording_does_not_block_a_diff_turn_but_numbers_and_code_do():
     assert len(text.splitlines()) - 1 == len(MATERIAL) and not dropped
 
 
-def test_no_tool_turn_without_claims_is_skipped_but_claims_and_tools_are_reviewed():
-    assert m.no_tools_no_claims([], "Sure, that works the way you described.")
-    assert not m.no_tools_no_claims([], "Merged #116, all green.")
-    assert not m.no_tools_no_claims([("TOOL CALL", "Bash ls")], "Sure, that works.")
-    assert not m.no_tools_no_claims([], "I can merge it if you like.")
-
-
-def test_unquoted_finding_is_kept():
-    text, dropped = m.filter_wording_findings("VERDICT: ISSUES\n1. Something is off with the wording.", no_diff=True)
-    assert text.startswith("VERDICT: ISSUES") and not dropped
+def test_a_no_tool_turn_is_skipped_only_when_it_claims_nothing(tmp_path):
+    # Strategy, option B (2026-10-10): no run / verification / deploy / pass-count / live / merged claim, no offer, no diff.
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n")
+    for msg in ("Sure, that works the way you described.", "Understood, I'll keep the wording plain.", "Yes, the two options differ in cost."):
+        assert m.no_tool_calls([], msg, str(transcript)), msg
+    for msg in ("I ran the test suite: 3310 pass. AG is live.", "Merged #116, all green.", "I verified it on GitHub.",
+                "Release AA crashed the writer, so it is held on Z.", "Deployed a6d408cb4.", "412 passed, 0 failed.",
+                "I can merge it if you like.", "Next: replace teh with the.", "The work is not yet complete."):
+        assert not m.no_tool_calls([], msg, str(transcript)), msg   # a fabricated receipt or premature stop needs no tool call
+    assert not m.no_tool_calls([], "", str(transcript))
+    assert not m.no_tool_calls([], "Sure.", "")                         # no readable transcript: unknown, so review it
+    assert not m.no_tool_calls([], "Sure.", str(tmp_path / "missing"))
+    assert not m.no_tool_calls([("TOOL CALL", "Bash ls")], "Sure, that works.", str(transcript))
 
 
 def test_state_verbs_are_never_wording_or_skipped():
     for msg in ("Release AA crashed the writer, so it is held on Z.", "It was rolled back and the box is down.",
                 "The hook landed.", "Both were reinstalled."):
-        assert m.no_tools_no_claims([], msg) == "", msg
+        assert m.STATUS_CLAIM_RE.search(msg), msg   # still a claim for the contentless-turn skip
     for diff in (False, True):
         assert not m.is_wording_finding('1. [quote: "the writer is held"] It is not held; it was reinstalled.', diff)
         assert not m.is_wording_finding('1. [quote: "Z crashed and was rolled back"] Not shown.', diff)

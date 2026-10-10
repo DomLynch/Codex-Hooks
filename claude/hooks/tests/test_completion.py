@@ -59,10 +59,10 @@ class CompletionTests(unittest.TestCase):
             return state, stdout.getvalue(), stderr.getvalue(), transport
 
     def test_stop_review_off_switch_skips_the_model_without_passing(self):
-        state, _, _, transport = self.invoke("Fix the typo.", "Fixed the typo in README.", stop_review="0")
+        state, _, _, transport = self.invoke("Fix the typo.", "Next: fix the typo in README.", stop_review="0")
         transport.assert_not_called()
         self.assertEqual(state, "SKIP_DISABLED", "a verdict is still written for audit_state's bookkeeping, but not PASS")
-        state, _, _, transport = self.invoke("Fix the typo.", "Fixed the typo in README.")
+        state, _, _, transport = self.invoke("Fix the typo.", "Next: fix the typo in README.")
         transport.assert_called()
 
     def test_short_handoffs_reach_reviewer_and_block(self):
