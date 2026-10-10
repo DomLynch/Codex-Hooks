@@ -348,7 +348,7 @@ READ_ONLY_TOOLS = frozenset({
     "mcp__semble__search", "mcp__semble__find_related",
     *(f"mcp__Claude_Browser__{n}" for n in ("read_page", "get_page_text", "find", "read_console_messages",
                                             "read_network_requests", "tabs_context"))})
-_RO_SIMPLE = frozenset("cat head tail wc ls stat file du df pwd echo printf date which uptime jq sort uniq cut tr awk diff cmp "
+_RO_SIMPLE = frozenset("cat head tail wc ls stat du df pwd echo printf date which uptime jq sort uniq cut tr diff cmp "
                        "sha256sum shasum".split())
 _RO_GIT = frozenset("log show diff status rev-parse ls-files ls-tree cat-file merge-base blame describe fetch show-ref "
                     "for-each-ref".split())
@@ -361,26 +361,31 @@ _RO_BAD_FLAG_RE = {
     "rg": re.compile(r"^(--pre|--hostname-bin)"),
     "sort": re.compile(r"^(-o|--output|--compress-program|-T|--temporary-directory)"),
     "gh": re.compile(r"^(-X|-f|-F|--method|--field|--raw-field|--input|--hostname)"),
-    "curl": re.compile(r"^(--request|--data|--form|--upload-file|--config|--remote-name|--dump-header|--cookie-jar|--trace|--stderr|--output-dir|--json|--create-dirs)"),
 }
 
 
+_CURL_FLAGS = frozenset("--silent --show-error --location --fail --head --include --verbose --compressed --insecure".split())
+_CURL_VALUE_FLAGS = frozenset("-H --header -m --max-time --connect-timeout --retry -A --user-agent".split())
+
+
 def _read_only_curl(args: list[str]) -> bool:
-    for i, arg in enumerate(args):
-        if arg.startswith("--"):
-            if _RO_BAD_FLAG_RE["curl"].match(arg):
+    """A flag ALLOW-list (Auditor): any curl option not named here may write a file or send a command, so it fails closed."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-o", "--output") or (arg.startswith("-o") and not arg.startswith("--") and not re.fullmatch(r"-[sSLfIivk]+", arg)):
+            target = arg[2:] if arg.startswith("-o") and len(arg) > 2 else (args[i + 1] if i + 1 < len(args) else "")
+            if not target.startswith(_RO_TMP) or ".." in target.split("/"):
                 return False
-            if arg.split("=")[0] == "--output" and not (arg.partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "")).startswith(_RO_TMP):
-                return False
-        elif arg.startswith("-") and len(arg) > 1:
-            letters = arg[1:]
-            if re.search(r"[XdFTKODcJ]", letters):
-                return False
-            if "o" in letters:   # -o FILE or -oFILE: only into /tmp
-                tail = letters.partition("o")[2]
-                target = tail or (args[i + 1] if i + 1 < len(args) else "")
-                if not target.startswith(_RO_TMP):
-                    return False
+            i += 1 if arg.startswith("-o") and len(arg) > 2 else 2
+        elif arg in _CURL_VALUE_FLAGS:
+            i += 2
+        elif arg in _CURL_FLAGS or re.fullmatch(r"-[sSLfIivk]+", arg):
+            i += 1
+        elif arg.startswith("-"):
+            return False
+        else:
+            i += 1   # the URL
     return True
 
 
@@ -391,9 +396,7 @@ def _read_only_segment(tokens: list[str]) -> bool:
     flags = " ".join(args)
     bad = _RO_BAD_FLAG_RE.get(cmd)
     if cmd in _RO_SIMPLE:
-        if cmd == "awk" and "system(" in flags:
-            return False
-        if cmd == "date" and re.search(r"(^|\s)-s", flags):
+        if cmd == "date" and re.search(r"(^|\s)(-s|--set)", flags):
             return False
         if cmd == "sort" and any(bad.match(a) for a in args):
             return False
@@ -410,9 +413,9 @@ def _read_only_segment(tokens: list[str]) -> bool:
         return not re.search(r"(^|\s)-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", flags)
     if cmd == "git":
         rest = list(args)
-        while rest and rest[0] == "-C" and len(rest) > 1:
-            rest = rest[2:]
-        if not rest or any(bad.match(a) for a in rest):
+        if not rest or any(bad.match(a) for a in rest) or rest[0] == "-C":   # -C <dir> may name a planted repo whose config runs code
+            return False
+        if rest[0] == "fetch" and any(":" in a for a in rest[1:]):   # a refspec writes a local ref
             return False
         if rest[0] in _RO_GIT:
             return True

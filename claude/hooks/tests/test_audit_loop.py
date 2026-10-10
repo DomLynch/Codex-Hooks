@@ -524,11 +524,14 @@ def test_contentless_skip_only_after_read_only_tool_calls():
                 "ls & rm -rf x", "cat <(rm -rf x)", "git -c core.pager='sh -c x' log", "git -c core.sshCommand=x fetch",
                 "git fetch --upload-pack=x", "rg --pre 'cmd' foo", "sort --compress-program=sh f", "gh api -XDELETE /x",
                 "gh api graphql -fquery='mutation{x}'", "curl -XPOST http://x", "curl -dfoo http://x", "curl -o/etc/x http://x",
-                "curl -O http://x", "curl -sO http://x", "gh api --method=DELETE /x"):
+                "curl -O http://x", "curl -sO http://x", "gh api --method=DELETE /x",
+                "awk 'BEGIN{system (\"rm x\")}'", "awk -f s.awk f", "curl -o /tmp/../etc/x http://x", "curl -w '%output{/root/x}' http://x",
+                "curl --libcurl c.c http://x", "curl --etag-save e http://x", "curl --hsts h http://x", "curl --alt-svc a http://x",
+                "curl -Q 'DELE x' ftp://h", "git fetch origin main:foo", "date --set=2020-01-01", "git -C /planted log", "file -C -m x"):
         assert not m.read_only_turn(_bash(cmd)), cmd
-    for cmd in ("gh pr diff 2151", "git log -3", "git -C /r status", "ls -la | head -5", "cat f | wc -l", "rg foo src 2>/dev/null",
+    for cmd in ("gh pr diff 2151", "git log -3", "git status", "ls -la | head -5", "cat f | wc -l", "rg foo src 2>/dev/null",
                 "grep -c x f 2>&1", "gh run view 1", "gh api repos/a/b/pulls", "curl -s http://x -o /tmp/x", "sed -n '1,5p' f",
-                "date '+%H:%M'", "uptime", "git fetch -q origin", "git branch --list"):
+                "date '+%H:%M'", "uptime", "curl -sSL -H 'A: b' -m 5 -o /tmp/x.json http://x", "curl -s http://x", "git fetch -q origin", "git branch --list"):
         assert m.read_only_turn(_bash(cmd)), cmd
     assert m.read_only_turn([("TOOL CALL", "Read: [t] {}"), ("TOOL CALL", "mcp__semble__search: [t] {}")])
     for tool in ("Edit", "Write", "SendMessage", "Artifact", "mcp__ccd_session__spawn_task", "mcp__Claude_Browser__navigate"):
