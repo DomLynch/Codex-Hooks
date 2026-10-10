@@ -130,6 +130,8 @@ RELEASE_CMD_RE = re.compile(r"(?:^|/)(?:ba|z)?sh(?: -\S+)* (?:\S*/)?scripts/depl
 
 
 def release_in_flight() -> dict | None:
+    if os.environ.get("CLAUDE_GATE_RELEASE_CHECK", "1") == "0":   # tests that run the real entrypoint (like CLAUDE_GATE_MAX_LOAD)
+        return None
     try:
         out = subprocess.run(["ps", "-axo", "args="], capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.SubprocessError):
