@@ -210,8 +210,12 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
 # text words." On a turn with no diff, a finding blocks only when the quoted claim is about the state of the world:
 # live/merged/deployed/installed/passed/fixed, PRs, CI, commits, destructive actions. Wording (delivered vs queued,
 # starting vs asked to start, "aligned", tense, attribution) is logged and never blocks. A finding with no quote is kept.
+# One list of state-of-the-world verbs for BOTH the wording filter and the no-tool skip (Auditor, #117): a claim that
+# something crashed, is held, was reinstalled, rolled back, landed or is down is never "wording".
+STATE_VERBS = (r"crash\w*|held|on hold|reinstall\w*|roll(?:ed|ing)?[\s-]*back|landed|down|stopped|broke\w*|"
+               r"restor\w*|paused|blocked|stuck|cancel\w*|disabled|enabled|unmerged")
 MATERIAL_CLAIM_RE = re.compile(
-    r"\b(live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
+    r"\b(" + STATE_VERBS + r"|live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
     r"reverted|killed|mergeable|PRs?|CI|checks?|commits?|open|gh|saved|written|wrote|created|updated|ran|"
     r"fail\w*|error\w*|assert\w*|exception|traceback|timed?\s*out)\b|#\d+|\b[0-9a-f]{7,40}\b"
     r"|[=;{}]|=>|\(\)", re.IGNORECASE)   # failure output and code punctuation are never wording
@@ -310,7 +314,7 @@ def has_deliverable_claim(transcript: str) -> bool:
 # advisories. Measured 2026-09-22: 1,614 reviews, 133 with a code diff. The claim words below are the safety
 # net - anything that asserts state (live, merged, green, a sha, a count, a PR number) is still reviewed.
 STATUS_CLAIM_RE = re.compile(
-    r"\b(live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
+    r"\b(" + STATE_VERBS + r"|live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
     r"green|pass\w*|fail\w*|verified|applied|resolved|running|started|queued|open|ready|clean|"
     r"[0-9a-f]{7,40})\b"
     r"|#\d+|\d+\s*/\s*\d+|\d+\s*(tests?|checks?|rows?|files?|PRs?)\b",
