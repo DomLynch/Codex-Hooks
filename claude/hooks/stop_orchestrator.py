@@ -124,9 +124,12 @@ def gate_skipped_for(lane: str) -> bool:
     return any(lane == k or lane.startswith(k + "-") for k in SKIP_GATE_LANES)
 
 
-def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "") -> bool | str:
+def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: str = "", transcript_path: str = "") -> bool | str:
+    """`transcript` is the TEXT of the task slice (milestone detection); `transcript_path` is the FILE, which the lane lookup needs:
+    a desktop worktree folder names no lane, so only the title inside the file does (2026-10-10: passing the text here meant
+    every worktree lane failed the lookup and ran this gate on the Mac)."""
     if (cwd / ".quality-gate.json").exists():
-        lane = session_lane(transcript, str(cwd))
+        lane = session_lane(transcript_path, str(cwd))
         if gate_skipped_for(lane):
             log(COMPONENT, f"repository quality gate skipped: lane {lane} relies on PR CI (local gate is Deploy-only)")
             return True
@@ -290,7 +293,7 @@ def main() -> None:
             owed = load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{target}")
             if not (target / ".quality-gate.json").exists() and not owed:   # owed: deferred as not_run, re-check below
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
-            outcome = run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
+            outcome = run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id, transcript_path=payload.get("transcript_path") or "")
             if not outcome:
                 return
             if outcome == DEFERRED:
@@ -299,7 +302,7 @@ def main() -> None:
                 update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, f"not_run:{session_id}:{target}": False})
         # 2026-10-09 (Strategy): a session that made no edits owes no gate for the repo it only ran commands in.
         if str(cwd) not in pending and is_git_repo(cwd) and session_made_edits(entries):
-            outcome = run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id)
+            outcome = run_aaa_gate(cwd, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id, transcript_path=payload.get("transcript_path") or "")
             if not outcome:
                 return
             if outcome == DEFERRED:
