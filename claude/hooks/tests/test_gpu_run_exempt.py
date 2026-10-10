@@ -97,3 +97,21 @@ def test_the_scripts_folder_must_equal_trunk_and_fails_closed(repo):
 def test_nothing_after_the_separator_is_not_exempted(repo):
     cmd = f"node scripts/gpu-run.mjs {SHA} --"   # not a heavy command, so the guard has nothing to refuse; the exemption must still say no
     assert g.gpu_run_wrapper(cmd, str(repo), cmd) is False
+
+
+@pytest.mark.parametrize("suffix", [" >scripts/lib/hf-slots.mjs", " > out.txt", " >> scripts/gpu-run.mjs", " >artifacts/../scripts/x", " 2>scripts/e",
+                                    " &>/dev/null", " >/etc/hosts"])
+def test_a_redirect_target_other_than_the_allowed_ones_refuses_it(suffix, repo):
+    assert _decide(CALL + suffix, repo) == g.VPS_REASON, suffix   # would truncate a tracked file
+
+
+@pytest.mark.parametrize("suffix", [" 2>&1", " >/dev/null", " 2>/dev/null", " >artifacts/gpu.log", " >>artifacts/run/out-1.txt"])
+def test_the_allowed_redirects_still_pass(suffix, repo):
+    assert _decide(CALL + suffix, repo) == "", suffix
+
+
+@pytest.mark.parametrize("value,ok", [("1m", True), ("180m", True), ("3h", True), ("2h", True), ("0m", False), ("181m", False),
+                                      ("4h", False), ("999h", False), ("0h", False), ("30", False), ("3.5h", False)])
+def test_timeout_is_capped_at_gpu_runs_own_range(value, ok, repo):
+    cmd = f"node scripts/gpu-run.mjs {SHA} --timeout {value} -- npm run test:all"
+    assert (_decide(cmd, repo) == "") is ok, value

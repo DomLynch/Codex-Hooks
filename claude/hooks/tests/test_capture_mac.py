@@ -109,3 +109,13 @@ def test_chained_probes_are_refused_even_with_a_real_trunk_matching_cwd(tmp_path
     for cmd in (f"cd /tmp/x && {call}", f"(cd /tmp/x && {call})", f"cp /tmp/evil.sh scripts/capture-mac.sh; {call}",
                 f"git checkout evil -- scripts/capture-mac.sh && {call}", f"pushd /tmp/x && {call}"):
         assert g.decide(cmd, None, cwd=str(tmp_path)) == g.VPS_REASON, cmd
+
+
+def test_capture_redirect_targets_are_checked_too(monkeypatch):
+    monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)
+    for key in [k for k in __import__("os").environ if k.startswith("CAPTURE_")]:
+        monkeypatch.delenv(key)
+    for suffix in (" >scripts/capture-mac.sh", " > out.txt", " 2>scripts/e"):
+        assert g.decide(ALLOWED[0] + suffix, None, cwd="/repo") == g.VPS_REASON, suffix
+    for suffix in (" 2>&1", " >/dev/null", " >artifacts/c.log"):
+        assert g.decide(ALLOWED[0] + suffix, None, cwd="/repo") == "", suffix
