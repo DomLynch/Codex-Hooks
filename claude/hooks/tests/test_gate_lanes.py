@@ -78,3 +78,30 @@ def test_edits_and_tree_mutating_bash_are_edits():
     assert session_made_edits([("TOOL CALL", 'Edit: [t1] {"file_path": "/r/src/a.ts", "old_string": "a", "new_string": "b"}')])
     for cmd in ("git commit -m x", "git add -A", "sed -i s/a/b/ src/a.ts", "cat > src/new.ts", "mv a.ts b.ts", "rm src/a.ts"):
         assert session_made_edits(_bash(cmd)), cmd
+
+
+def test_every_gate_log_line_names_the_lane_cwd_duration_and_failing_command(tmp_path, monkeypatch):
+    """2026-10-10 (Strategy, COO): the 'ok=' line carried no lane, folder, duration or failing command, so nobody could count the Mac's
+    gate runs per lane or say which failures were browser rows."""
+    lines = []
+    repo = tmp_path / "blissful-almeida-fa420c"
+    repo.mkdir()
+    (repo / ".quality-gate.json").write_text("{}")
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text('{"customTitle":"Frankendom - Deploy"}\n')
+    monkeypatch.setattr(so, "log", lambda component, msg: lines.append(msg))
+    monkeypatch.setattr(so, "ci_covered_commit", lambda cwd: ("abc1234", "none"))
+    monkeypatch.setattr(so, "unchanged_from_base", lambda cwd: None, raising=False)
+    monkeypatch.setattr(so, "active_deploy_lock", lambda: None, raising=False)
+    monkeypatch.setattr(so, "gate_busy", lambda cwd: None)
+    monkeypatch.setattr(so, "block", lambda *a, **k: None)
+    monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": False, "results": [
+        {"tool": "node scripts/sparring-browser-check.mjs", "ok": False, "output": "boom"}, {"tool": "npm run lint", "ok": True, "output": ""}]})
+    assert so.run_aaa_gate(repo, "t", transcript_path=str(transcript)) is False
+    line = next(m for m in lines if m.startswith("repository quality gate ok="))
+    assert "ok=False" in line and "lane=deploy" in line and f"cwd={repo}" in line and "seconds=" in line
+    assert "failed=node scripts/sparring-browser-check.mjs" in line and "npm run lint" not in line
+    monkeypatch.setattr(so, "run_project_gate", lambda *a, **k: {"ok": True, "results": []})
+    lines.clear()
+    assert so.run_aaa_gate(repo, "t", transcript_path=str(transcript)) is True
+    assert "failed=none" in next(m for m in lines if m.startswith("repository quality gate ok="))

@@ -131,7 +131,7 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
     if (cwd / ".quality-gate.json").exists():
         lane = session_lane(transcript_path, str(cwd))
         if gate_skipped_for(lane):
-            log(COMPONENT, f"repository quality gate skipped: lane {lane} relies on PR CI (local gate is Deploy-only)")
+            log(COMPONENT, f"repository quality gate skipped: lane {lane} relies on PR CI (local gate is Deploy-only) cwd={cwd}")
             return True
         sha, ci = ci_covered_commit(cwd)
         if ci == "passed":
@@ -150,11 +150,13 @@ def run_aaa_gate(cwd: Path, transcript: str, timeout: float = 420, session_id: s
         deploying = active_deploy_lock() or gate_busy(cwd)
         if deploying:
             return defer_gate(deploying, session_id)
+        started = time.monotonic()
         # A deploy (or Deploy's hold) that starts mid-gate stops it too, so the release rows get the Mac.
         result = run_project_gate(cwd, timeout=timeout, defer_to=lambda: active_deploy_lock() or deploy_hold())
         if result.get("deferred"):
             return defer_gate(result["deferred"], session_id, mid_gate=True)
-        log(COMPONENT, f"repository quality gate ok={result['ok']}")
+        failed = "; ".join(str(item["tool"])[:80] for item in result.get("results", []) if not item.get("ok")) or "none"
+        log(COMPONENT, f"repository quality gate ok={result['ok']} lane={lane or 'session'} cwd={cwd} seconds={time.monotonic() - started:.0f} failed={failed}")
         if not result["ok"]:
             block("[Repository Quality Gate]\n\n" + "\n".join(
                 f"{item['tool']}: {item['output']}" for item in result["results"] if not item["ok"]
