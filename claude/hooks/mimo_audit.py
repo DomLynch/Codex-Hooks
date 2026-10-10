@@ -355,22 +355,18 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
 
 
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
-    """Why the model call can be skipped for a turn that changed nothing and claims nothing ('' if it cannot). Dom's ruling via
-    Strategy, 2026-10-10 (option B, extended 19:4x from no-tool turns to every no-change turn): a turn with no diff and no commits
-    cannot hide an unauthorized action or a failed check the deterministic gate has not already caught, unless the text claims a
-    run, a check, a deploy, a pass count, an id or a live/merged state (a fabricated receipt is a claim by definition), or stops on
-    an offer or unfinished work. The caller has already ruled out commits and a worktree change; the gate ran first."""
+    """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
+    2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
+    reviewer exists to catch, unless the text claims a run, a check, a deploy, a pass count or a live/merged state (a fabricated
+    receipt needs no tool call). The caller still reviews a turn that left a diff or commits, and the deterministic gate runs first."""
     text = (last_msg or "").strip()
-    if not text or not Path(transcript_path or "/nonexistent").is_file():
-        return ""   # an unreadable transcript means "unknown", not "no change": review it
-    if edited_paths(entries):
-        return ""   # an Edit-tool call that left no diff (reverted or ignored) still gets a review
+    if any(role == "TOOL CALL" for role, _ in entries) or not text or not Path(transcript_path or "/nonexistent").is_file():
+        return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
     if STATUS_CLAIM_RE.search(text):
-        return ""   # a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
-    kind = "no change" if any(role == "TOOL CALL" for role, _ in entries) else "no tool calls"
-    return f"{kind}, no claim, {len(text)} chars"
+        return ""   # Strategy, option B: a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
+    return f"no tool calls, {len(text)} chars"
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -603,12 +599,11 @@ def main() -> None:
         return
     elif not released and no_tool_calls(entries, last_msg, transcript_path) and not (turn_commits(repo_cwd, since) or snapshot):
         why = no_tool_calls(entries, last_msg, transcript_path)
-        label = "SKIP_NO_CHANGE" if why.startswith("no change") else "SKIP_NO_TOOLS"
-        log(f"{label}: {why} — model call skipped")
-        log(f"{label}_TEXT: {redact_sensitive(last_msg)[:600]!r}")   # so the 24 h replay can audit the skip rule itself
-        save_verdict(session_id, turn_id, label, why)
+        log(f"SKIP_NO_TOOLS: {why} — model call skipped")
+        log(f"SKIP_NO_TOOLS_TEXT: {redact_sensitive(last_msg)[:600]!r}")   # so the 24 h replay can audit the skip rule itself
+        save_verdict(session_id, turn_id, "SKIP_NO_TOOLS", why)
         reset_consecutive_blocks(session_id)
-        allow_stop(f"no-change turn - audit skipped ({why})")
+        allow_stop(f"no-tool turn - audit skipped ({why})")
         return
     elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.

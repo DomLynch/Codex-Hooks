@@ -77,14 +77,7 @@ def test_a_no_tool_turn_is_skipped_only_when_it_claims_nothing(tmp_path):
     assert not m.no_tool_calls([], "", str(transcript))
     assert not m.no_tool_calls([], "Sure.", "")                         # no readable transcript: unknown, so review it
     assert not m.no_tool_calls([], "Sure.", str(tmp_path / "missing"))
-    # Strategy 2026-10-10 19:4x: the same claim test covers a no-change turn that DID call tools (reads, greps, messages).
-    ls = [("TOOL CALL", 'Bash: [t1] {"command": "ls"}')]
-    assert m.no_tool_calls(ls, "Sure, that works.", str(transcript)).startswith("no change")
-    assert m.no_tool_calls([], "Sure, that works.", str(transcript)).startswith("no tool calls")
-    for msg in ("Merged #116, all green.", "I can merge it if you like.", "I ran it: 3310 pass."):
-        assert not m.no_tool_calls(ls, msg, str(transcript)), msg
-    edit = [("TOOL CALL", 'Edit: [t1] {"file_path": "/r/a.py", "old_string": "a", "new_string": "b"}')]
-    assert not m.no_tool_calls(edit, "Sure, that works.", str(transcript))   # an edit that left no diff is still reviewed
+    assert not m.no_tool_calls([("TOOL CALL", "Bash ls")], "Sure, that works.", str(transcript))
 
 
 def test_state_verbs_are_never_wording_or_skipped():
@@ -116,4 +109,3 @@ def test_contradiction_and_unchecked_claims_keep_blocking_on_a_diff_turn_but_que
                  '1. [quote: "Both moves are now done"] Not shown.'):
         assert not m.is_wording_finding(body, False), body
     assert m.is_wording_finding('1. [quote: "Web is starting now"] The send result says queued.', False)
-
