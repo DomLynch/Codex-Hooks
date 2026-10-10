@@ -210,8 +210,12 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
 # text words." On a turn with no diff, a finding blocks only when the quoted claim is about the state of the world:
 # live/merged/deployed/installed/passed/fixed, PRs, CI, commits, destructive actions. Wording (delivered vs queued,
 # starting vs asked to start, "aligned", tense, attribution) is logged and never blocks. A finding with no quote is kept.
+# One list of state-of-the-world verbs for BOTH the wording filter and the no-tool skip (Auditor, #117): a claim that
+# something crashed, is held, was reinstalled, rolled back, landed or is down is never "wording".
+STATE_VERBS = (r"crash\w*|held|on hold|reinstall\w*|roll(?:ed|ing)?[\s-]*back|landed|down|stopped|broke\w*|"
+               r"restor\w*|paused|blocked|stuck|cancel\w*|disabled|enabled|unmerged")
 MATERIAL_CLAIM_RE = re.compile(
-    r"\b(live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
+    r"\b(" + STATE_VERBS + r"|live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
     r"reverted|killed|mergeable|PRs?|CI|checks?|commits?|open|gh|saved|written|wrote|created|updated|ran|"
     r"fail\w*|error\w*|assert\w*|exception|traceback|timed?\s*out)\b|#\d+|\b[0-9a-f]{7,40}\b"
     r"|[=;{}]|=>|\(\)", re.IGNORECASE)   # failure output and code punctuation are never wording
@@ -221,10 +225,22 @@ MATERIAL_CLAIM_RE = re.compile(
 CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGNORECASE)
 
 
+# Dom, 2026-10-10 (Strategy spec + Auditor 4b): wording never blocks on a turn WITH a diff either. On a diff turn the bar
+# is stricter, so a code defect is never mistaken for wording: any digit in the quote (a count, an id) or any code
+# reference in the finding (path, backtick, call, line number) keeps it blocking.
+CODE_REF_RE = re.compile(r"`|\.(?:py|js|mjs|ts|tsx|json|md|sh|yml)\b|\bline\s+\d+|\w\(\)|\w+/\w+")
+
+
+def is_wording_finding(body: str, no_diff: bool) -> bool:
+    q = CLAIM_QUOTE_RE.search(body)
+    if not q or MATERIAL_CLAIM_RE.search(q.group(1)):
+        return False
+    return no_diff or not (re.search(r"\d", q.group(1)) or CODE_REF_RE.search(body))
+
+
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:
-    """Drop findings whose quoted claim carries no state-of-the-world word, on turns with no diff. Returns (text, dropped)."""
-    if not no_diff:
-        return verdict_text, []
+    """Drop findings whose quoted claim carries no state-of-the-world word. Returns (text, dropped); the caller shows
+    the dropped ones as an advisory. On a turn with a diff, numbers, ids and code references still block."""
     numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
     kept, dropped = [], []
     for line in verdict_text.splitlines()[1:]:
@@ -232,10 +248,9 @@ def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list
         if not m:
             continue
         body = m.group(1)
-        q = CLAIM_QUOTE_RE.search(body)
-        if q and not MATERIAL_CLAIM_RE.search(q.group(1)):
+        if is_wording_finding(body, no_diff):
             dropped.append(body)
-            log(f"WORDING_FINDING (not material, no diff): {body[:400]}")
+            log(f"WORDING_FINDING (not material, {'no diff' if no_diff else 'diff turn'}): {body[:400]}")
         else:
             kept.append(body)
     if not dropped:
@@ -299,7 +314,7 @@ def has_deliverable_claim(transcript: str) -> bool:
 # advisories. Measured 2026-09-22: 1,614 reviews, 133 with a code diff. The claim words below are the safety
 # net - anything that asserts state (live, merged, green, a sha, a count, a PR number) is still reviewed.
 STATUS_CLAIM_RE = re.compile(
-    r"\b(live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
+    r"\b(" + STATE_VERBS + r"|live|trunk|deploy\w*|merg\w*|ship\w*|push\w*|committ?ed|fixed|implement\w*|complet\w*|done|"
     r"green|pass\w*|fail\w*|verified|applied|resolved|running|started|queued|open|ready|clean|"
     r"[0-9a-f]{7,40})\b"
     r"|#\d+|\d+\s*/\s*\d+|\d+\s*(tests?|checks?|rows?|files?|PRs?)\b",
@@ -329,6 +344,16 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
     if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""
     return f"no edits, no claim, {len(text)} chars"
+
+
+def no_tools_no_claims(entries: list, last_msg: str) -> str:
+    """Why the model call can be skipped for a turn with no tool call and no factual claim ('' if it cannot)."""
+    text = (last_msg or "").strip()
+    if any(role == "TOOL CALL" for role, _ in entries) or not text:
+        return ""
+    if STATUS_CLAIM_RE.search(text) or PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
+        return ""
+    return f"no tool calls, no claims, {len(text)} chars"
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -555,6 +580,13 @@ def main() -> None:
         reset_consecutive_blocks(session_id)
         allow_stop(f"contentless turn - audit skipped ({why})")
         return
+    elif not released and no_tools_no_claims(entries, last_msg) and not (turn_commits(repo_cwd, since) or snapshot):
+        why = no_tools_no_claims(entries, last_msg)
+        log(f"SKIP_NO_TOOLS: {why} — model call skipped")
+        save_verdict(session_id, turn_id, "SKIP_NO_TOOLS", why)
+        reset_consecutive_blocks(session_id)
+        allow_stop(f"no-tool turn without claims - audit skipped ({why})")
+        return
     elif not released and doc_only_turn(entries, last_msg, DELIVERABLE_RE):   # a released stop always gets one review
         # Prose-only edits with no shipping claim: nothing a code reviewer should block on. $0.
         save_verdict(session_id, turn_id, "SKIP_DOC_ONLY", "doc-only edits, no deliverable claim")
@@ -643,13 +675,17 @@ def main() -> None:
 
     if verdict_status(verdict_text) == "ISSUES":
         log_noise_classes(verdict_text)
+        log(f"VERDICT_FULL: {redact_sensitive(verdict_text)[:1500]!r}")   # so a block can be replayed offline
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
         dropped = unanchored + dropped
         verdict_text, wording = filter_wording_findings(
             verdict_text, not edited_paths(entries) and not (turn_commits(repo_cwd, since) or snapshot))
+        if wording:   # advisory only: shown in the lane's transcript, never re-prompts
+            _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nReviewer wording advisory (not blocking): "
+                                + " | ".join(w[:160] for w in wording[:3])).strip()
         if wording and verdict_status(verdict_text) == "PASS":
-            log(f"WORDING_ONLY: all {len(wording)} finding(s) are wording on a no-diff turn; verdict -> PASS")
+            log(f"WORDING_ONLY: all {len(wording)} finding(s) are wording; verdict -> PASS")
             save_verdict(session_id, turn_id, "PASS", verdict_text)
             reset_consecutive_blocks(session_id)
             ledger.clear(session_id)

@@ -53,11 +53,45 @@ def test_mixed_verdict_keeps_only_the_material_finding_renumbered():
     assert len(dropped) == 1 and text.splitlines()[1].startswith("1. ") and "PRs open" in text
 
 
-def test_a_turn_with_a_diff_is_never_filtered():
+def test_wording_does_not_block_a_diff_turn_but_numbers_and_code_do():
     text, dropped = m.filter_wording_findings(_verdict(WORDING[0]), no_diff=False)
-    assert text.startswith("VERDICT: ISSUES") and not dropped
+    assert text == "VERDICT: PASS" and len(dropped) == 1
+    for q in ("seven tests passed", "ran 12 tests", "it handles the empty case"):
+        body = f'1. [quote: "{q}"] See `quality.py` line 40.' if "empty" in q else f'1. [quote: "{q}"] Not shown.'
+        text, dropped = m.filter_wording_findings("VERDICT: ISSUES\n" + body, no_diff=False)
+        assert text.startswith("VERDICT: ISSUES") and not dropped, q
+    text, dropped = m.filter_wording_findings(_verdict(*MATERIAL), no_diff=False)
+    assert len(text.splitlines()) - 1 == len(MATERIAL) and not dropped
+
+
+def test_no_tool_turn_without_claims_is_skipped_but_claims_and_tools_are_reviewed():
+    assert m.no_tools_no_claims([], "Sure, that works the way you described.")
+    assert not m.no_tools_no_claims([], "Merged #116, all green.")
+    assert not m.no_tools_no_claims([("TOOL CALL", "Bash ls")], "Sure, that works.")
+    assert not m.no_tools_no_claims([], "I can merge it if you like.")
 
 
 def test_unquoted_finding_is_kept():
     text, dropped = m.filter_wording_findings("VERDICT: ISSUES\n1. Something is off with the wording.", no_diff=True)
     assert text.startswith("VERDICT: ISSUES") and not dropped
+
+
+def test_state_verbs_are_never_wording_or_skipped():
+    for msg in ("Release AA crashed the writer, so it is held on Z.", "It was rolled back and the box is down.",
+                "The hook landed.", "Both were reinstalled."):
+        assert m.no_tools_no_claims([], msg) == "", msg
+    for diff in (False, True):
+        assert not m.is_wording_finding('1. [quote: "the writer is held"] It is not held; it was reinstalled.', diff)
+        assert not m.is_wording_finding('1. [quote: "Z crashed and was rolled back"] Not shown.', diff)
+
+
+def test_blocks_on_numbers_ids_state_words_and_code_stay_exactly_as_before():
+    both = ['[quote: "all 12 checks passed"] x', '[quote: "merged as db2ce77"] x', '[quote: "PR #116 is live"] x',
+            '[quote: "it is green"] x']
+    diff_only = ['[quote: "the fix handles it"] See `quality.py`.', '[quote: "it works"] Fails at line 40.',
+                 '[quote: "we use it"] mimo_audit.py ignores it.', '[quote: "ran 12 tests"] x']
+    for body in both:
+        for no_diff in (True, False):
+            assert not m.is_wording_finding(body, no_diff), (body, no_diff)
+    for body in diff_only:
+        assert not m.is_wording_finding(body, False), body
