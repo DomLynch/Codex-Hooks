@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,9 +149,36 @@ MAC_ROW_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:" + "|".join(re.escape(r) for r 
 # 2026-10-09 (COO, Web): scripts/capture-mac.sh only ssh's to the VPS and launches a Hugging Face job, so the test command it carries
 # does not run on this Mac. Narrow exemption: that script as the command, --hf-ok among its options (before the lane), and nothing that
 # could point the "VPS" back at the Mac: no --host, no leading env (CAPTURE_HOST / CAPTURE_SSH), no other option.
-def hf_capture_wrapper(segment: str) -> bool:
-    words = re.sub(r"\s+\d*>&?\S*", "", segment).split()
-    if not words or not re.fullmatch(r"(?:\S*/)?scripts/capture-mac\.sh", words[0]):
+# Auditor on #113: the script must be THIS checkout's scripts/capture-mac.sh (relative path, never /tmp/x/scripts/... or ../evil/...), byte-identical to
+# trunk's blob (a lane branch could edit it to run locally), and no CAPTURE_* variable may be exported in the environment (the script honours them).
+CAPTURE_SCRIPT = "scripts/capture-mac.sh"
+
+
+def capture_script_is_trunk(cwd: str) -> bool:
+    if not cwd:
+        return False
+    def git(*args: str) -> str:
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+    try:
+        return bool(git("hash-object", CAPTURE_SCRIPT)) and git("hash-object", CAPTURE_SCRIPT) == git("rev-parse", f"refs/remotes/origin/HEAD:{CAPTURE_SCRIPT}")
+    except (OSError, subprocess.SubprocessError):
+        return False   # fail closed
+
+
+SHELL_META_RE = re.compile(r"[;&|\n(){}`$<]")
+
+
+def hf_capture_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
+    # Auditor on #120: the blob check reads the cwd BEFORE the command runs, so an earlier segment (cd /tmp/x && ..., cp evil
+    # scripts/capture-mac.sh; ..., git checkout evil -- ...) could change what runs. The exemption is for a command that IS
+    # the capture call and nothing else: one segment, no separators, grouping or substitution (redirects like 2>&1 are fine).
+    whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
+    if not command or SHELL_META_RE.search(whole) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+        return False
+    words = whole.split()
+    if not words or words[0] not in (CAPTURE_SCRIPT, "./" + CAPTURE_SCRIPT):
+        return False
+    if any(name.startswith("CAPTURE_") for name in os.environ) or not capture_script_is_trunk(cwd):
         return False
     i, hf_ok = 1, False
     while i < len(words) and words[i].startswith("--"):
@@ -199,7 +227,7 @@ def _is_mac() -> bool:
     return sys.platform == "darwin"
 
 
-def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
+def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str = "") -> str:
     """Return the deny reason, or '' to allow.
 
     2026-10-10 (Dom, Lead: the VPS `lanes` user): this guard keeps heavy runs and builds off the shared MAC. On Linux (the VPS, where heavy
@@ -212,7 +240,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None) -> str:
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
@@ -232,7 +260,7 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = decide(command, lock, own_pid=os.getpid())
+    reason = decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
