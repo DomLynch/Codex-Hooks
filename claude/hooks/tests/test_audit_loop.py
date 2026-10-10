@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import tempfile
+
+import pytest
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -518,7 +520,11 @@ def test_contentless_skip_only_after_read_only_tool_calls():
                 "gh pr comment 1 --body x", "git log -3 && rm -rf x", "git log; rm x", "cat a | tee b", "echo $(rm x)",
                 "FOO=1 git log", "bash -c 'git log'", "sed -i s/a/b/ f", "find . -delete", "find . -exec rm {} +",
                 "curl -X POST http://x", "curl -o /root/x http://x", "gh api -X DELETE /x", "sort -o f f", "git branch -D x",
-                "git log --output=f", "unknowncmd", "git log |", ""):
+                "git log --output=f", "unknowncmd", "git log |", "",
+                "ls & rm -rf x", "cat <(rm -rf x)", "git -c core.pager='sh -c x' log", "git -c core.sshCommand=x fetch",
+                "git fetch --upload-pack=x", "rg --pre 'cmd' foo", "sort --compress-program=sh f", "gh api -XDELETE /x",
+                "gh api graphql -fquery='mutation{x}'", "curl -XPOST http://x", "curl -dfoo http://x", "curl -o/etc/x http://x",
+                "curl -O http://x", "curl -sO http://x", "gh api --method=DELETE /x"):
         assert not m.read_only_turn(_bash(cmd)), cmd
     for cmd in ("gh pr diff 2151", "git log -3", "git -C /r status", "ls -la | head -5", "cat f | wc -l", "rg foo src 2>/dev/null",
                 "grep -c x f 2>&1", "gh run view 1", "gh api repos/a/b/pulls", "curl -s http://x -o /tmp/x", "sed -n '1,5p' f",
@@ -528,3 +534,34 @@ def test_contentless_skip_only_after_read_only_tool_calls():
     for tool in ("Edit", "Write", "SendMessage", "Artifact", "mcp__ccd_session__spawn_task", "mcp__Claude_Browser__navigate"):
         assert not m.read_only_turn([("TOOL CALL", f"{tool}: [t] {{}}")]), tool
     assert m.read_only_turn([])
+
+
+def test_main_reviews_a_short_bland_turn_after_a_write_but_skips_after_a_read(tmp_path, monkeypatch):
+    """Call-site test (Auditor): same 'Sure, that works.' final message; only the read-only turn skips the model call."""
+    import io
+    import json as _j
+    from contextlib import redirect_stdout
+    from unittest import mock
+    import mimo_audit as m
+    from lib import audit_state
+
+    def run(entries, sid):
+        monkeypatch.setattr(audit_state, "STATE_FILE", tmp_path / f"{sid}-s.json")
+        monkeypatch.setattr(audit_state, "VERDICT_FILE", tmp_path / f"{sid}-v.json")
+        monkeypatch.setattr(m.ledger, "LEDGER_PATH", tmp_path / f"{sid}-l.json")
+        monkeypatch.setattr(m, "log", lambda *_a, **_k: None)
+        monkeypatch.setattr(m, "latest_task_slice_claude", lambda *a, **k: "x" * 600 + " TOOL CALL ran something")
+        monkeypatch.setattr(m, "latest_task_entries_claude", lambda *a, **k: entries)
+        payload = {"session_id": sid, "turn_id": "t", "transcript_path": "/nope", "cwd": str(tmp_path),
+                   "last_assistant_message": "Sure, that works."}
+        with mock.patch.object(m, "ask_mimo_with_retry", return_value="VERDICT: PASS") as model:
+            monkeypatch.setattr(m.sys, "stdin", io.StringIO(_j.dumps(payload)))
+            with redirect_stdout(io.StringIO()), pytest.raises(SystemExit):
+                m.main()
+        return model.called
+
+    assert run(_bash("gh pr merge 2151 --squash --admin"), "w1")
+    assert run(_bash("git push --force origin HEAD:main"), "w2")
+    assert run([("TOOL CALL", "Monitor: [t] {}")], "w3")
+    assert not run(_bash("gh pr diff 2151"), "r1")
+    assert not run(_bash("git log -3"), "r2")

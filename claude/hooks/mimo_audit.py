@@ -333,7 +333,7 @@ HANDOFF_RE = re.compile(r"\b(I (can|could|will|would)\b|next:|next step|if you l
 CONTENTLESS_MAX_CHARS = 600
 
 
-RELAY_TOOLS = ("SendMessage", "ReadNotifications", "ListAgents", "Read", "Monitor")
+RELAY_TOOLS = ("SendMessage", "ReadNotifications", "ListAgents", "Read")   # Monitor runs a shell command: not a relay
 RELAY_MAX_CHARS = 2000
 
 
@@ -349,11 +349,39 @@ READ_ONLY_TOOLS = frozenset({
     *(f"mcp__Claude_Browser__{n}" for n in ("read_page", "get_page_text", "find", "read_console_messages",
                                             "read_network_requests", "tabs_context"))})
 _RO_SIMPLE = frozenset("cat head tail wc ls stat file du df pwd echo printf date which uptime jq sort uniq cut tr awk diff cmp "
-                       "sha256sum shasum grep rg".split())
+                       "sha256sum shasum".split())
 _RO_GIT = frozenset("log show diff status rev-parse ls-files ls-tree cat-file merge-base blame describe fetch show-ref "
                     "for-each-ref".split())
 _RO_REDIRECT_RE = re.compile(r"(\d?>&\d|\d?>\s*/dev/null|&>\s*/dev/null)")   # the only redirects a read may carry
-_RO_DENY_RE = re.compile(r"[;`>\n]|&&|\|\||\$\(|\b(tee|xargs|ssh|scp|rsync|sudo|eval)\b|\b(bash|sh|zsh)\s+-c\b|\b(python3?|node)\s+-[ce]\b")
+_RO_DENY_RE = re.compile(r"[;`<>&\n]|\$\(|\|\||\b(tee|xargs|ssh|scp|rsync|sudo|eval)\b|\b(bash|sh|zsh)\s+-c\b|\b(python3?|node)\s+-[ce]\b")
+_RO_TMP = ("/tmp/", "/private/tmp/")
+# Flags that write, delete or run another program, however the value is attached (-XPOST, --pre=cmd, -fquery=...).
+_RO_BAD_FLAG_RE = {
+    "git": re.compile(r"^(-c|--config-env|--upload-pack|--receive-pack|--exec|--ext-diff|--textconv|--output|--open-files-in-pager|--paginate|--exec-path)"),
+    "rg": re.compile(r"^(--pre|--hostname-bin)"),
+    "sort": re.compile(r"^(-o|--output|--compress-program|-T|--temporary-directory)"),
+    "gh": re.compile(r"^(-X|-f|-F|--method|--field|--raw-field|--input|--hostname)"),
+    "curl": re.compile(r"^(--request|--data|--form|--upload-file|--config|--remote-name|--dump-header|--cookie-jar|--trace|--stderr|--output-dir|--json|--create-dirs)"),
+}
+
+
+def _read_only_curl(args: list[str]) -> bool:
+    for i, arg in enumerate(args):
+        if arg.startswith("--"):
+            if _RO_BAD_FLAG_RE["curl"].match(arg):
+                return False
+            if arg.split("=")[0] == "--output" and not (arg.partition("=")[2] or (args[i + 1] if i + 1 < len(args) else "")).startswith(_RO_TMP):
+                return False
+        elif arg.startswith("-") and len(arg) > 1:
+            letters = arg[1:]
+            if re.search(r"[XdFTKODcJ]", letters):
+                return False
+            if "o" in letters:   # -o FILE or -oFILE: only into /tmp
+                tail = letters.partition("o")[2]
+                target = tail or (args[i + 1] if i + 1 < len(args) else "")
+                if not target.startswith(_RO_TMP):
+                    return False
+    return True
 
 
 def _read_only_segment(tokens: list[str]) -> bool:
@@ -361,14 +389,19 @@ def _read_only_segment(tokens: list[str]) -> bool:
     if re.match(r"\w+=", cmd):
         return False   # an env VAR= prefix can change what a command does
     flags = " ".join(args)
+    bad = _RO_BAD_FLAG_RE.get(cmd)
     if cmd in _RO_SIMPLE:
         if cmd == "awk" and "system(" in flags:
             return False
-        if cmd == "sort" and re.search(r"(^|\s)(-o|--output)", flags):
-            return False
         if cmd == "date" and re.search(r"(^|\s)-s", flags):
             return False
+        if cmd == "sort" and any(bad.match(a) for a in args):
+            return False
         return not (cmd == "uniq" and len([a for a in args if not a.startswith("-")]) > 1)   # uniq IN OUT writes OUT
+    if cmd == "rg":
+        return not any(bad.match(a) for a in args)
+    if cmd == "grep":
+        return True
     if cmd == "command":
         return args[:1] == ["-v"]
     if cmd == "sed":
@@ -377,23 +410,23 @@ def _read_only_segment(tokens: list[str]) -> bool:
         return not re.search(r"(^|\s)-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b", flags)
     if cmd == "git":
         rest = list(args)
-        while rest and (rest[0] in ("-C", "-c") and len(rest) > 1 or rest[0].startswith("--no-pager")):
-            rest = rest[2:] if rest[0] in ("-C", "-c") else rest[1:]
-        if not rest or "--output" in flags:
+        while rest and rest[0] == "-C" and len(rest) > 1:
+            rest = rest[2:]
+        if not rest or any(bad.match(a) for a in rest):
             return False
         if rest[0] in _RO_GIT:
             return True
         return (rest[0] == "branch" and rest[1:2] in (["--list"], ["-a"])) or rest[0:2] in (["remote", "-v"], ["worktree", "list"], ["stash", "list"])
     if cmd == "gh":
+        if any(bad.match(a) for a in args) or "graphql" in args:
+            return False
         if args[:1] in (["pr"], ["issue"]):
             return args[1:2] in (["view"], ["diff"], ["checks"], ["list"], ["status"])
         if args[:1] == ["run"]:
             return args[1:2] in (["list"], ["view"])
-        return args[:1] == ["api"] and not re.search(r"(^|\s)(-X|--method|-f|-F|--field|--raw-field|--input)\b", flags)
+        return args[:1] == ["api"]
     if cmd == "curl":
-        if re.search(r"(^|\s)(-X|-d|--data\S*|-F|--form|-T|--upload-file)\b", flags):
-            return False
-        return all(a.startswith("/tmp/") or a.startswith("/private/tmp/") for prev, a in zip(args, args[1:]) if prev in ("-o", "--output"))
+        return _read_only_curl(args)
     return False
 
 
