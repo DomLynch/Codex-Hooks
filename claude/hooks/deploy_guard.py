@@ -165,8 +165,17 @@ def capture_script_is_trunk(cwd: str) -> bool:
         return False   # fail closed
 
 
-def hf_capture_wrapper(segment: str, cwd: str = "") -> bool:
-    words = re.sub(r"\s+\d*>&?\S*", "", segment).split()
+SHELL_META_RE = re.compile(r"[;&|\n(){}`$<]")
+
+
+def hf_capture_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
+    # Auditor on #120: the blob check reads the cwd BEFORE the command runs, so an earlier segment (cd /tmp/x && ..., cp evil
+    # scripts/capture-mac.sh; ..., git checkout evil -- ...) could change what runs. The exemption is for a command that IS
+    # the capture call and nothing else: one segment, no separators, grouping or substitution (redirects like 2>&1 are fine).
+    whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
+    if not command or SHELL_META_RE.search(whole) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+        return False
+    words = whole.split()
     if not words or words[0] not in (CAPTURE_SCRIPT, "./" + CAPTURE_SCRIPT):
         return False
     if any(name.startswith("CAPTURE_") for name in os.environ) or not capture_script_is_trunk(cwd):
@@ -231,7 +240,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60

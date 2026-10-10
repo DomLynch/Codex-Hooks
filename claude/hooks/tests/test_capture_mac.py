@@ -49,6 +49,18 @@ def test_everything_else_stays_refused(monkeypatch):
         assert g.decide(cmd, None, cwd="/repo") == g.VPS_REASON, cmd
 
 
+def test_earlier_segments_cannot_change_what_runs(monkeypatch):
+    monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)   # the cwd's blob matches trunk BEFORE the command runs
+    for key in [k for k in __import__("os").environ if k.startswith("CAPTURE_")]:
+        monkeypatch.delenv(key)
+    call = "scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all"
+    for cmd in (f"cd /tmp/x && {call}", f"cd /tmp/x; ./{call}", f"pushd /tmp/x && {call}", f"(cd /tmp/x && {call})",
+                f"cp /tmp/evil.sh scripts/capture-mac.sh; {call}", f"git checkout evil -- scripts/capture-mac.sh && {call}",
+                f"{call} ; echo done", f"echo hi | {call}", f"true && {call}", f"{{ {call}; }}", f"$(echo {call})", f"{call} < /tmp/x"):
+        assert g.decide(cmd, None, cwd="/repo") == g.VPS_REASON, cmd
+    assert g.decide(call + " 2>&1", None, cwd="/repo") == ""
+
+
 def test_an_exported_capture_variable_refuses_the_wrapper(monkeypatch):
     monkeypatch.setattr(g, "capture_script_is_trunk", lambda cwd: True)
     monkeypatch.setenv("CAPTURE_SSH", "bash")
@@ -74,3 +86,26 @@ def test_the_script_must_equal_trunks_blob_and_fails_closed(tmp_path):
     script.write_text("#!/bin/bash\nbash -c \"$@\"\n")              # an edited copy on a lane branch
     assert g.capture_script_is_trunk(str(tmp_path)) is False
     assert g.capture_script_is_trunk("") is False
+
+
+def test_chained_probes_are_refused_even_with_a_real_trunk_matching_cwd(tmp_path, monkeypatch):
+    import subprocess
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "t")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "capture-mac.sh").write_text("#!/bin/bash\nssh vps capture \"$@\"\n")
+    git("add", ".")
+    git("commit", "-qm", "x")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    for key in [k for k in __import__("os").environ if k.startswith("CAPTURE_")]:
+        monkeypatch.delenv(key)
+    call = "scripts/capture-mac.sh --dir /srv/x --hf-ok web npm run test:all"
+    assert g.decide(call, None, cwd=str(tmp_path)) == ""
+    for cmd in (f"cd /tmp/x && {call}", f"(cd /tmp/x && {call})", f"cp /tmp/evil.sh scripts/capture-mac.sh; {call}",
+                f"git checkout evil -- scripts/capture-mac.sh && {call}", f"pushd /tmp/x && {call}"):
+        assert g.decide(cmd, None, cwd=str(tmp_path)) == g.VPS_REASON, cmd
