@@ -460,7 +460,7 @@ class ClaudeAdapterTests(unittest.TestCase):
                 mock.patch.object(audit_state, "STATE_FILE", tmp_path / "iterations.json"),
                 mock.patch.object(mimo_audit.ledger, "LEDGER_PATH", tmp_path  / "ledger.json"),
                 mock.patch.object(audit_state, "VERDICT_FILE", tmp_path / "verdict.json"),
-                mock.patch.object(mimo_audit, "log"),
+                mock.patch.object(mimo_audit, "log") as log,
                 mock.patch.object(mimo_audit, "ask_mimo_with_retry") as ask_mimo,
             ):
                 rc, out = run_main_with_stdin(mimo_audit.main, payload)
@@ -470,6 +470,7 @@ class ClaudeAdapterTests(unittest.TestCase):
         self.assertEqual(out, "")
         ask_mimo.assert_not_called()
         self.assertEqual(verdict["claude-chat-turn"]["verdict"], "SKIP_CHAT_TURN")
+        self.assertTrue(any(str(c.args[0]).startswith("SKIP_CHAT_TURN:") for c in log.call_args_list))   # 2026-10-10: no unlabelled exit
 
     def test_claude_mimo_block_chain_damper_allows_without_recording_lesson(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
