@@ -136,14 +136,15 @@ _ROW = r"(?:webkit|safari|iphone|simctl|sparring)"
 MAC_EXEMPT_RE = re.compile(
     rf"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b|^\s*(?:\w+=\S*\s+)*(?:xcrun\s+simctl\b|npm\s+run\s+[\w:-]*{_ROW}"
     rf"|node\s+(?:\S*/)?scripts/[\w-]*{_ROW}|npx\s+playwright\s+test\b[^\n]*--project[= ]{_ROW})", re.IGNORECASE)
-# 2026-10-09 (Lead, Dom's rule: WebKit and real-clock rows never run on HF/the VPS): the eight Mac-only release rows
-# (.quality-gate.json release_commands 2, 4, 22, 44, 45, 48, 49, 52) are allowed by EXACT command, never by pattern.
+# 2026-10-09 (Lead, Dom's rule: WebKit and real-clock rows never run on HF/the VPS): the nine Mac-only release rows
+# (.quality-gate.json release_commands 2, 4, 22, 44, 45, 48, 49, 52, 54) are allowed by EXACT command, never by pattern.
 # Only leading env assignments and trailing redirects are tolerated; any other argument or a different script is refused.
 MAC_ONLY_ROWS = (
     "node scripts/roster-browser-check.mjs", "node scripts/audio-preview.mjs --label audio-gate --check",
     "node scripts/arena-audio-check.mjs", "node scripts/sparring-browser-check.mjs",
     "node scripts/double-tap-browser-check.mjs", "node scripts/browser-replay-check.mjs",
     "node scripts/browser-replay-check.mjs --engine webkit", "node scripts/next-fight-black-check.mjs",
+    "node scripts/pit-landscape-webkit.mjs --engine webkit",   # release row 54 (Web, RPG-game#2280; Lead asked 2026-10-12)
 )
 MAC_ROW_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:" + "|".join(re.escape(r) for r in MAC_ONLY_ROWS) + r")(?:\s+\d*>&?\S*)*\s*$")
 # 2026-10-09 (COO, Web): scripts/capture-mac.sh only ssh's to the VPS and launches a Hugging Face job, so the test command it carries

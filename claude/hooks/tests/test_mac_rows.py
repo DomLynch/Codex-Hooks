@@ -20,11 +20,13 @@ ROWS = [
     "node scripts/browser-replay-check.mjs",
     "node scripts/browser-replay-check.mjs --engine webkit",
     "node scripts/next-fight-black-check.mjs",
+    "node scripts/pit-landscape-webkit.mjs --engine webkit",   # row 54
 ]
 
 
-def test_the_eight_named_mac_rows_are_allowed():
+def test_the_nine_named_mac_rows_are_allowed():
     for cmd in ROWS:
+        assert g.MAC_ROW_RE.match(cmd), cmd                         # by exact row, not only by the *webkit* name pattern
         assert g.decide(cmd, None) == "", cmd
         assert g.decide(cmd + " 2>&1", None) == "", cmd           # a redirect does not change what runs
         assert g.decide("DEPLOY_X=1 " + cmd, None) == "", cmd     # a leading env does not either
