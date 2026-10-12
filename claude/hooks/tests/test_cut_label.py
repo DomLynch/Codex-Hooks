@@ -27,6 +27,10 @@ S = "a" * 40
     f"{BASE} --title t --label auditor:ready,ci:release-checks",
     f"{BASE} --title t --label 'ci:release-checks'",
     f'{BASE} --title "release-CI: x" --body "b" --label "ci:release-checks"',
+    "sudo -u x gh pr create --head release-CI --title t --label ci:release-checks",
+    'bash -c "gh pr create --head release-CI --title t --label ci:release-checks"',
+    'bash -c "gh pr create --head web/x --title t"',
+    "sudo -n -- env A=b gh pr create --head release-CI --label ci:release-checks",
     "gh pr create --title t --head feature/x",                                   # not a release candidate
     "gh pr create --title t",
     "gh pr edit 5 --add-label auditor:ready",
@@ -71,6 +75,13 @@ def test_these_are_allowed(cmd):
     "/opt/homebrew/bin/gh pr create --head release-CJ",
     "command gh pr create --head release-CJ",
     "env -i gh pr create --head=release-CJ --body 'x; y'",
+    "sudo -u x gh pr create --head release-CJ --title t",                          # Auditor LOW on #135: wrapper prefixes with option values
+    "sudo -n gh pr create --head release-CJ --title t",
+    "sudo -u deploy -H env GH_TOKEN=x gh pr create --head release-CJ",
+    "nice -n 5 gh pr create --head release-CJ --title t",
+    'bash -c "gh pr create --head release-CJ --title t"',                          # a shell -c script is judged like the command it runs
+    "sh -lc 'gh pr create --head release-CJ --title t'",
+    'sudo bash -c "git push -q origin release-CJ; gh pr create --head release-CJ --body \'a; b\'"',
 ])
 def test_a_release_cut_without_the_label_is_refused(cmd):
     assert "ci:release-checks" in g.cut_label_reason(cmd), cmd
