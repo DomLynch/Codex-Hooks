@@ -485,18 +485,27 @@ def _wait_check(proc, started: float, timeout: float, defer_to: Any, command: li
     return proc.returncode
 
 
-def _deadline(command: list[str], elapsed: float, budget: float) -> TimeoutError:
-    return TimeoutError(
-        f"repository quality deadline exceeded: `{' '.join(command)}` was still running after {elapsed:.0f}s of the "
-        f"{budget:.0f}s Stop budget. This is the hook's time limit, not a failing check. Keep `commands` and "
-        "`completion_commands` fast (unit tests, lint); run long CI in the release workflow instead, or set "
-        "`timeout_seconds` (max 420). A pass on an unchanged tree is remembered for 6h."
+class GateDeadline(TimeoutError):
+    """The hook's own time limit, not a failing check. `reason` is the stable deferral text (the elapsed seconds sit in parentheses so
+    defer_gate's once-per-session key does not change between Stops)."""
+    reason = ""
+
+
+def _deadline(command: list[str], elapsed: float, budget: float) -> GateDeadline:
+    # Lead, 2026-10-12: Deploy B sat 1h55m in "running Stop hooks" because scripts/sparring-browser-check.mjs hit this limit on a loaded VPS
+    # (load 12-21) and a timeout BLOCKED the Stop, so the lane retried the same check for ever. A time limit proves nothing either way:
+    # it is reported once and deferred, never a block (the PR's CI and the next Stop still cover the change).
+    name = " ".join(command)[:120]
+    err = GateDeadline(
+        f"repository quality deadline exceeded: `{name}` was still running after {elapsed:.0f}s of the {budget:.0f}s Stop budget. "
+        "This is the hook's time limit, not a failing check. Keep `commands` and `completion_commands` fast (unit tests, lint); "
+        "run long CI in the release workflow instead, or set `timeout_seconds` (max 420)."
     )
+    err.reason = f"the repository quality gate hit its {budget:.0f}s time limit on `{name}` (ran {elapsed:.0f}s): unproven, not a failing check"
+    return err
 
 
 _CI_OK = {"success", "skipped", "neutral"}
-
-
 def _check_runs(cwd: Path, sha: str, timeout: int = 8) -> list[tuple[str, str, str]] | None:
     """(name, status, conclusion) of every check run on commit `sha`, whichever app made it; None when gh fails."""
     rc, out, _ = safe_run(["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100",
@@ -604,6 +613,10 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
                 break
         if results and all(item["ok"] for item in results) and _tree_key(cwd, commands) == key:
             _remember_pass(key, cwd)   # not when the checked files changed while the checks ran
+    except GateDeadline as exc:
+        # unproven, reported, never a block: the lane is told once (defer_gate) and the next Stop tries again
+        return {"ok": True, "deferred": {"reason": exc.reason}, "results": results, "timed_out": True,
+                "seconds": 0 if ran_from is None else round(time.monotonic() - ran_from)}
     except Exception as exc:
         results.append(_result(path, "quality contract", False, str(exc)))
     finally:
