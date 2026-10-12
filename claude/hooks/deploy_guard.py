@@ -262,6 +262,11 @@ def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
 LANEJOB_MAC_SCRIPT = "scripts/lanejob/lanejob-mac.sh"
 LANEJOB_MAC_ENV = ("NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV")
 LANEJOB_MAC_OFF = ("LANEJOB_NO_MAC", "LANEJOB_NO_SPILL")
+# Mac GPU slot (Dom's word via Lead and the COO, 2026-10-12; Deploy's gate, router PR scripts/lib/mac-gpu.mjs): `... lanejob-mac.sh --gpu -- CMD` carries
+# only (a) a release_commands row of TRUNK's .quality-gate.json, spelled exactly, or (b) node scripts/*-still*.mjs / *-contact-sheet.mjs with simple args.
+# The wrapper enforces the gates (load1 < 6, one job, nice 15, 30 min cap, no release Mac row or WebKit run); this guard only lets a named job start.
+LANEJOB_GPU_STILLS_RE = re.compile(r"(?:\./)?scripts/(?:[\w-]*-stills?[\w-]*|[\w-]*-contact-sheet)\.mjs")
+LANEJOB_GPU_ARG_RE = re.compile(r"[\w.:=@/-]+")
 LANEJOB_NODE_TEST_RE = re.compile(r"node --test(?: -[^\s*]+)*(?: [^-\s*][^\s*]*)+")
 LANEJOB_INNER_DENY_RE = re.compile(r"playwright|test:all|test:slow|test:browser|quality|release-check|build|blender|webkit|safari|iphone|simctl|meshopt|gltfpack", re.IGNORECASE)
 
@@ -281,6 +286,22 @@ def lanejob_dir_is_trunk(cwd: str) -> bool:
         return False   # fail closed
 
 
+def trunk_release_rows(cwd: str) -> set[str]:
+    try:
+        out = subprocess.run(["git", "-C", cwd, "show", "refs/remotes/origin/HEAD:.quality-gate.json"], capture_output=True, text=True, timeout=10, check=True).stdout
+        return {" ".join(row) for row in json.loads(out).get("release_commands", []) if isinstance(row, list)}
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return set()   # fail closed
+
+
+def lanejob_gpu_job_ok(job: list[str], cwd: str) -> bool:
+    if not job or any(".." in w for w in job):
+        return False
+    if job[0] == "node" and len(job) >= 2 and LANEJOB_GPU_STILLS_RE.fullmatch(job[1]):
+        return all(LANEJOB_GPU_ARG_RE.fullmatch(w) for w in job[2:])
+    return " ".join(job) in trunk_release_rows(cwd)
+
+
 def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
     if not command or SHELL_META_RE.search(whole) or not redirects_ok(command) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
@@ -288,10 +309,13 @@ def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     words = whole.split()
     if len(words) < 3 or words[0] != "bash" or words[1] not in (LANEJOB_MAC_SCRIPT, "./" + LANEJOB_MAC_SCRIPT):
         return False
+    gpu = words[2:3] == ["--gpu"]
+    if gpu and (words[3:4] != ["--"] or not lanejob_gpu_job_ok(words[4:], cwd)):
+        return False
     inner = " ".join(words[2:])
     # Auditor on #129: wrapped is never looser than bare. The inner command is judged by this guard's own HEAVY_RE; the one heavy shape the Mac
     # tier may carry is targeted `node --test <files>` (no glob), and the name blocklist stays as a second fence.
-    if LANEJOB_INNER_DENY_RE.search(inner) or (HEAVY_RE.search(" " + inner) and not LANEJOB_NODE_TEST_RE.fullmatch(inner)):
+    if not gpu and (LANEJOB_INNER_DENY_RE.search(inner) or (HEAVY_RE.search(" " + inner) and not LANEJOB_NODE_TEST_RE.fullmatch(inner))):
         return False
     if any((n.startswith("LANEJOB_") and n not in LANEJOB_MAC_OFF) or n in LANEJOB_MAC_ENV for n in os.environ):
         return False
