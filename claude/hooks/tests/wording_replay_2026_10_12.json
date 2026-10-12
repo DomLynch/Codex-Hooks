@@ -431,7 +431,8 @@
   "body": "[quote: \"Both fixes are small and Backend is making them now\"] The only support for this is the agent's own SendMessage, and its result says \"not confirmed read\". No reply from Backend shows the work has started. Replace it with: \"I've ordered Backend to make these fixes; it hasn't confirmed yet.\" The sentence also says \"Both fixes\" but the list has three items, so change it to \"all three\".",
   "turn": "nodiff",
   "quote": "Both fixes are small and Backend is making them now",
-  "expected": "advisory"
+  "expected": "block",
+  "note": "second defect in the same finding: the lane wrote \"Both fixes\" for a list of three. The whole-body rule blocks it (accepted)."
  },
  {
   "id": 55,

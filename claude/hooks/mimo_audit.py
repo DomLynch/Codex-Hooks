@@ -238,7 +238,12 @@ CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGN
 # message is the sole support, a peer has not confirmed, a paraphrase of a peer is off). Anything left over blocks. Strategy's rule
 # stays: a state word, number or id in the quote keeps blocking.
 _PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels|another lane|the peer|the agent|a peer)"
-_SUGGESTION_RE=re.compile(r"\b(?:Replace (?:it|the sentence|this|with)|Say instead|Write|Change (?:it|the line|this)|Relabel|Either|Fix:|Check the)\b.*$",re.S)
+# Advice to the lane ("Replace it with: \"...\""): only the cue and its own quoted replacement are removed, never the rest of the body
+# (Auditor, #127: a defect sentence after the advice used to be stripped with it). A cue with no quoted replacement stays, so it has
+# to match an attribution shape itself. The gap before the quote may not cross a sentence end.
+_SUGGESTION_RE = re.compile(
+    r"\b(?:Replace (?:it|the sentence|this|with)|Say instead|Write|Change (?:it|the line|this)|Relabel|Either|Fix:|Check the)\b"
+    r"(?:[^\"\u201c.!?;]|\.(?=\S)){0,200}[\"\u201c][^\"\u201d]*[\"\u201d]\.?", re.S)
 ATTRIBUTION_SENTENCES = [re.compile(p,re.I) for p in (
  r"^Nothing in (?:the|this) slice backs this\.?$",
  r"^This (?:states|says|is stated)[^.]{0,80}(?:as fact|is done|stated as fact)[^.]{0,60}$",
@@ -269,6 +274,7 @@ ATTRIBUTION_SENTENCES = [re.compile(p,re.I) for p in (
  r"^Its result says [^.;]{0,50}and no reply came back$",
  r"^the PR (?:list|#\d+ output) (?:came back empty|shows only [^.;]{0,60})$",
  r"^no reply came back$",
+ r"^,?\s*or show a reply or PR from [^.;]{0,60}$|^or say where the new number came from$|^Relabel it as [^.;]{0,100}$",
 )]
 
 
