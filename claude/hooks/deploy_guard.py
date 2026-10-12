@@ -299,7 +299,7 @@ def lanejob_gpu_job_ok(job: list[str], cwd: str) -> bool:
     if not job or any(".." in w for w in job):
         return False
     if job[0] == "node" and len(job) >= 2 and LANEJOB_GPU_STILLS_RE.fullmatch(job[1]):
-        return all(LANEJOB_GPU_ARG_RE.fullmatch(w) for w in job[2:])
+        return all(LANEJOB_GPU_ARG_RE.fullmatch(w) and not re.search(r"=/", w) for w in job[2:])   # no absolute path after = either
     return tuple(job) in trunk_release_rows(cwd)
 
 

@@ -65,6 +65,7 @@ def test_the_gpu_forms_are_allowed(cmd, repo):
     f"{W} node scripts/browser-replay-check.mjs --engine webkit",   # LOW 1 (a listed WebKit row is a Mac-only row)
     f"{W} bash -c node scripts/x-check.mjs",                              # LOW 3: rows are compared as argv, not as joined text
     f"{W} node scripts/zone1-signin-stills.mjs /etc/passwd",              # LOW 4: no absolute-path args
+    f"{W} node scripts/zone1-signin-stills.mjs --out=/Users/x/.ssh",      # Auditor on #134: an absolute path after =
     f"{W} node scripts/browser-replay-check.mjs",                         # a release script that is not a row of trunk's list
     f"{W} {ROW} --extra",                                                 # a row is matched exactly, not by prefix
     f"{W} node scripts/pit-landscape-check.mjs --engine webkit",
