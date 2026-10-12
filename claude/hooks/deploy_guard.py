@@ -31,6 +31,7 @@ HEAVY_RE = re.compile(
     r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
+    r"|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*[*?\[$]\S*|\S*/|\"\")(?=\s|$)|tsx\s+--test\b(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*"   # dir, glob, substitution, tsx (Auditor on #129)
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test(?:\s+-[^\s]*)*\s+[^-\s][^\s]*\s+[^-\s][^\s]*"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
@@ -312,6 +313,7 @@ def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the h
 
 
 def _runs(command: str) -> str:
+    command = re.sub(r"(?<=\w)(?:''|\"\")(?=\w)|\\(?=\w)", "", command or "")   # play''wright, play""wright, pla\\ywright are all playwright
     runs = executable_text(command) if command else ""
     return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg) and not HF_JOBS_RE.search(seg)) if runs else ""
 
