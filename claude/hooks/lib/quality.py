@@ -506,7 +506,7 @@ def _deadline(command: list[str], elapsed: float, budget: float) -> GateDeadline
     err = GateDeadline(
         f"repository quality deadline exceeded: `{name}` was still running after {elapsed:.0f}s of the {budget:.0f}s Stop budget. "
         "This is the hook's time limit, not a failing check. Keep `commands` and `completion_commands` fast (unit tests, lint); "
-        "run long CI in the release workflow instead, or set `timeout_seconds` (the Stop gate is capped at CLAUDE_GATE_TOTAL_BUDGET, default 120 s)."
+        "run long CI in the release workflow instead, (the whole Stop gate is capped at CLAUDE_GATE_TOTAL_BUDGET, default 120 s; `timeout_seconds` can only lower it)."
     )
     err.reason = f"the repository quality gate hit its {budget:.0f}s time limit on `{name}` (ran {elapsed:.0f}s): unproven, not a failing check"
     return err

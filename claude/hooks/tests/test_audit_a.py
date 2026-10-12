@@ -303,7 +303,6 @@ class DetachedPipeHolderTests(Base):
         self.assertIn('check done', result['results'][0]['output'])
 
 
-@unittest.skipUnless(shutil.which('node'), 'node not installed')
 class TotalBudgetTests(Base):
     """Dom, 2026-10-12: the whole Stop gate, regular `commands` too, ends at GATE_TOTAL_BUDGET_S whatever timeout_seconds says."""
 
@@ -378,6 +377,7 @@ class CompletionBudgetTests(Base):
         self.assertTrue(marker.exists(), 'only completion commands are filtered')
 
 
+@unittest.skipUnless(shutil.which('node'), 'node not installed')
 class JsQuickCheckTests(Base):
     def test_f17_invalid_js_fails_and_valid_js_passes_with_a_check_executed(self):
         for name in ('bad.js', 'bad.mjs', 'bad.cjs'):
