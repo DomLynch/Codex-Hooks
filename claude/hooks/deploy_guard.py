@@ -378,6 +378,28 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
     )
 
 
+# CI work, hooks side (Dom's all-hands rule via Lead and the COO, 2026-10-12; skill ci-runners-first): a release candidate PR must carry ci:release-checks AT CUT, or
+# release-checks.yml plans no rows and every deploy log reads "0 CI" (3-12 October: no candidate carried it). The cut is `gh pr create ... --head release-<X>` (by hand
+# today, scripts/cut-release.mjs soon): refuse it unless the same command names the label. Not a Mac-only rule, and no heavy-job exemption was needed:
+# Deploy's cut, pre-launch.sh, launch.mjs unit and deploy.sh commands were never refused (tests/test_cut_label.py probes them).
+CUT_HEAD_RE = re.compile(r"(?:--head(?:=|\s+)|-H\s*)[\"']?(?:[\w.-]+:)?release-")
+CUT_LABEL_RE = re.compile(r"(?:--label(?:=|\s+)|-l\s*)[\"']?(?:[^\s\"',]+,)*ci:release-checks(?:,[^\s\"']*)?[\"']?(?=\s|$)")
+CUT_CREATE_RE = re.compile(r"^\s*\(?\s*(?:\w+=\S*\s+)*gh\s+pr\s+create\b")
+CUT_REASON = (
+    "A release candidate PR must carry the ci:release-checks label at cut (Dom, 2026-10-12): without it release-checks runs no rows and the deploy log reads 0 CI. "
+    "Add --label ci:release-checks to gh pr create, or cut with node scripts/cut-release.mjs."
+)
+
+
+def cut_label_reason(command: str) -> str:
+    text = HEREDOC_RE.sub("", _dequote_heads(command or ""))
+    parts = re.split(r"(&&|\|\||[;&|\n])", text)[::2]
+    for part in parts:
+        if CUT_CREATE_RE.search(part) and CUT_HEAD_RE.search(part) and not CUT_LABEL_RE.search(part):
+            return CUT_REASON
+    return ""
+
+
 def main() -> None:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -387,7 +409,7 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+    reason = cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
