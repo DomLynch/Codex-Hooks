@@ -608,6 +608,10 @@ class EnforcementTests(unittest.TestCase):
             proc.communicate.return_value = ('', '')
             proc.returncode = 0
             self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
+            self.assertGreater(proc.communicate.call_args.kwargs['timeout'], 110)
+            self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 120, 'the total budget caps the default')
+            with patch.object(quality, 'GATE_TOTAL_BUDGET_S', 420.0):   # operator override: still bounded by the contract max of 420
+                self.assertTrue(quality.run_project_gate(self.root, timeout=500)['ok'])
             self.assertGreater(proc.communicate.call_args.kwargs['timeout'], 410)
             self.assertLessEqual(proc.communicate.call_args.kwargs['timeout'], 420)
 
