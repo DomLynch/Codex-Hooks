@@ -36,6 +36,11 @@ S = "a" * 40
     f"node scripts/vps-shadow/launch.mjs unit {S}",
     "git merge --no-ff -q -m 'Merge pull request #1 (release-CI candidate)' " + S,
     "git push -q origin release-CI",
+    'gh pr create --head web/x --body "see --head release-CJ"',                   # --head release- quoted in a body is not the head
+    'gh pr create --head web/x --title "cut --head=release-CJ"',
+    'gh pr create --body "a; b && c\nd" --head web/x',
+    f'{BASE} --body "a; b && c\nd" --label ci:release-checks',                    # separators inside a quoted body do not split the cut
+    f"env GH_TOKEN=x {BASE} --label ci:release-checks",
 ])
 def test_these_are_allowed(cmd):
     assert g.cut_label_reason(cmd) == "", cmd
@@ -57,6 +62,15 @@ def test_these_are_allowed(cmd):
     f"{BASE} --title t --body 'ci:release-checks'",                              # the label named in the body is not a label
     f"{BASE} --title t --label auditor:ready && gh pr edit 5 --add-label ci:release-checks",   # label on a later command, not at cut
     f"GH_TOKEN=x {BASE} --title t",
+    'gh pr create --body "a; b" --head release-CJ',                              # Auditor 2026-10-12: separators inside a quoted body
+    'gh pr create --body "a && b" --head release-CJ',
+    'gh pr create --body "line one\nline two" --head release-CJ',
+    'gh pr create --body "remember --label ci:release-checks" --head release-CJ',   # the label named only in a body or title
+    "gh pr create --title 'cut -l ci:release-checks later' --head release-CJ",
+    "env GH_TOKEN=x gh pr create --head release-CJ",                             # prefixes
+    "/opt/homebrew/bin/gh pr create --head release-CJ",
+    "command gh pr create --head release-CJ",
+    "env -i gh pr create --head=release-CJ --body 'x; y'",
 ])
 def test_a_release_cut_without_the_label_is_refused(cmd):
     assert "ci:release-checks" in g.cut_label_reason(cmd), cmd
