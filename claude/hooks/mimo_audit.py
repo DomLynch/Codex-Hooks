@@ -228,23 +228,11 @@ MATERIAL_CLAIM_RE = re.compile(
 CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGNORECASE)
 
 
-# Dom, 2026-10-10 (Strategy spec + Auditor 4b): wording never blocks on a turn WITH a diff either. On a diff turn the bar
-# is stricter, so a code defect is never mistaken for wording: any digit in the quote (a count, an id) or any code
-# reference in the finding (path, backtick, call, line number) keeps it blocking.
-CODE_REF_RE = re.compile(r"`|\.(?:py|js|mjs|ts|tsx|json|md|sh|yml)\b|\bline\s+\d+|\w\(\)|\w+/\w+")
-
-
-# A finding that says the claim contradicts the evidence, or that nothing in the slice checked it, is about the facts and
-# never about phrasing (replay of 1,838 past blocks: 25 of 244 would-be downgrades were of this kind).
-EVIDENCE_GAP_RE = re.compile(r"contradict|does not match|is wrong|never called|nothing in this slice (?:reads|checks|backs|verif)|"
-                             r"was never (?:run|read|checked)|no tool call (?:looks|reads|checks)", re.IGNORECASE)
-
-
+# 2026-10-12 replay (65 downgraded findings): the #117 extension of wording-advisory to a turn WITH a diff downgraded a real
+# premature stop ("Want me to do both Monday?"). Wording is advisory only on a turn with no diff; a diff turn always blocks.
 def is_wording_finding(body: str, no_diff: bool) -> bool:
     q = CLAIM_QUOTE_RE.search(body)
-    if not q or MATERIAL_CLAIM_RE.search(q.group(1)):
-        return False
-    return no_diff or not (re.search(r"\d", q.group(1)) or CODE_REF_RE.search(body) or EVIDENCE_GAP_RE.search(body))
+    return bool(no_diff and q and not MATERIAL_CLAIM_RE.search(q.group(1)))
 
 
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:

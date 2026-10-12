@@ -53,15 +53,14 @@ def test_mixed_verdict_keeps_only_the_material_finding_renumbered():
     assert len(dropped) == 1 and text.splitlines()[1].startswith("1. ") and "PRs open" in text
 
 
-def test_wording_does_not_block_a_diff_turn_but_numbers_and_code_do():
-    text, dropped = m.filter_wording_findings(_verdict(WORDING[0]), no_diff=False)
-    assert text == "VERDICT: PASS" and len(dropped) == 1
-    for q in ("seven tests passed", "ran 12 tests", "it handles the empty case"):
-        body = f'1. [quote: "{q}"] See `quality.py` line 40.' if "empty" in q else f'1. [quote: "{q}"] Not shown.'
-        text, dropped = m.filter_wording_findings("VERDICT: ISSUES\n" + body, no_diff=False)
+def test_wording_never_downgrades_on_a_diff_turn():
+    # 2026-10-12 replay: #117 downgraded "Want me to do both Monday?" on a diff turn (a premature stop). A diff turn always blocks.
+    for q in WORDING:
+        text, dropped = m.filter_wording_findings(_verdict(q), no_diff=False)
         assert text.startswith("VERDICT: ISSUES") and not dropped, q
-    text, dropped = m.filter_wording_findings(_verdict(*MATERIAL), no_diff=False)
-    assert len(text.splitlines()) - 1 == len(MATERIAL) and not dropped
+    body = '1. [quote: "Want me to do both Monday?"] The work is not blocked, so it should not wait for permission or Monday.'
+    assert not m.is_wording_finding(body, False)
+    assert m.is_wording_finding(body, True), "unchanged on a no-diff turn (the 10-09 filter is tightened separately)"
 
 
 def test_a_no_tool_turn_is_skipped_only_when_it_claims_nothing(tmp_path):
@@ -99,13 +98,3 @@ def test_blocks_on_numbers_ids_state_words_and_code_stay_exactly_as_before():
             assert not m.is_wording_finding(body, no_diff), (body, no_diff)
     for body in diff_only:
         assert not m.is_wording_finding(body, False), body
-
-
-def test_contradiction_and_unchecked_claims_keep_blocking_on_a_diff_turn_but_queued_wording_does_not():
-    for body in ('1. [quote: "Nothing for Dom."] This contradicts the Lead\'s message, which says it waits on Dom.',
-                 '1. [quote: "no new messages"] ListAgents was never called, so nothing checked this claim.',
-                 '1. [quote: "All nine lanes are running again."] Several lanes show offline.',
-                 '1. [quote: "Five releases published today."] The slice has no output behind this count.',
-                 '1. [quote: "Both moves are now done"] Not shown.'):
-        assert not m.is_wording_finding(body, False), body
-    assert m.is_wording_finding('1. [quote: "Web is starting now"] The send result says queued.', False)
