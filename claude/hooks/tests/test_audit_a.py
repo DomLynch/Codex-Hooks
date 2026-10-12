@@ -283,8 +283,9 @@ class DetachedPipeHolderTests(Base):
         started = time.monotonic()
         result = quality.run_project_gate(repo)
         self.assertLess(time.monotonic() - started, 12, 'the gate returns by its deadline')
-        self.assertFalse(result['ok'])
-        self.assertIn('deadline', result['results'][-1]['output'])
+        self.assertTrue(result['ok'], 'a time limit is unproven, not a block')
+        self.assertTrue(result['timed_out'])
+        self.assertIn('time limit', result['deferred']['reason'])
 
     def test_f11_a_finished_check_is_not_held_up_by_a_detached_child_on_its_pipe(self):
         pidfile = self.root / 'child2.pid'

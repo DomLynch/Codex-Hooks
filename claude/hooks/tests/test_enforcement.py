@@ -219,12 +219,16 @@ class EnforcementTests(unittest.TestCase):
         self.assertTrue(quality.run_project_gate(self.root)['ok'])   # no cached pass: the full contract runs
         self.assertTrue(marker.exists())
 
-    def test_deadline_blocks_and_says_it_is_a_time_limit(self):
+    def test_deadline_is_unproven_and_deferred_never_a_block(self):
+        # Lead 2026-10-12: a time limit on a loaded box (Deploy B, 1h55m in Stop hooks) must not trap a lane in endless retries
         self.contract([[sys.executable, '-c', 'import time; time.sleep(5)']])
         result = quality.run_project_gate(self.root, timeout=0.05)
-        self.assertFalse(result['ok'])
-        self.assertIn('not a failing check', result['results'][-1]['output'])
-        self.assertIn('time.sleep(5)', result['results'][-1]['output'])
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['timed_out'])
+        self.assertIn('unproven', result['deferred']['reason'])
+        self.assertIn('time.sleep(5)', result['deferred']['reason'])
+        self.assertIn(' (ran ', result['deferred']['reason'])   # the elapsed seconds stay after " (": defer_gate's key is stable between Stops
+        self.assertEqual(result['deferred']['reason'].split(' (')[0], quality.run_project_gate(self.root, timeout=0.05)['deferred']['reason'].split(' (')[0])
 
     def test_pass_on_identical_tree_is_remembered_until_the_tree_changes(self):
         repo = self.root / 'repo'
