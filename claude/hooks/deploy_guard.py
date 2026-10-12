@@ -436,50 +436,48 @@ def _opt_values(args: list[str], long: str, short: str) -> list[str]:
     return vals
 
 
-# Command prefixes that wrap the real command, with the options of each that take a value (Auditor LOW on #135, 2026-10-12: `sudo -u x gh pr create`, `bash -c "gh pr create ..."`).
-CUT_PREFIX_VALUE_OPTS = {
-    "env": {"-u", "-C", "-S"}, "command": set(), "exec": set(), "nohup": set(), "time": set(),
-    "nice": {"-n"}, "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"},
-}
 CUT_SHELLS = {"bash", "sh", "zsh", "dash"}
+_CUT_SUBST_RE = re.compile(r"`([^`]*)`|\$\(([^()]*)\)")
 
 
-def _cut_command_start(argv: list[str]) -> int:
-    """Index of the real command word after VAR=x assignments and wrapper prefixes (and their options)."""
-    i = 0
-    while i < len(argv):
-        word = os.path.basename(argv[i])
-        if re.match(r"\w+=", argv[i]):
-            i += 1
-        elif word in CUT_PREFIX_VALUE_OPTS:
-            value_opts = CUT_PREFIX_VALUE_OPTS[word]
-            i += 1
-            while i < len(argv) and argv[i].startswith("-") and argv[i] != "--":
-                i += 2 if argv[i] in value_opts else 1
-            if i < len(argv) and argv[i] == "--":
-                i += 1
-        else:
-            break
-    return i
+def _cut_gh_reason(args: list[str]) -> str:
+    heads = [h.split(":", 1)[-1] for h in _opt_values(args, "--head", "-H")]
+    labels = [x for v in _opt_values(args, "--label", "-l") for x in v.split(",")]
+    return CUT_REASON if any(h.startswith("release-") for h in heads) and "ci:release-checks" not in labels else ""
 
 
 def cut_label_reason(command: str) -> str:
-    for argv in _cut_segments(HEREDOC_RE.sub("", command or "")):
-        i = _cut_command_start(argv)
-        word = os.path.basename(argv[i]) if i < len(argv) else ""
-        if word in CUT_SHELLS:   # bash -c "gh pr create ..." / sh -lc '...': judge the script text the same way
-            for j in range(i + 1, len(argv) - 1):
-                if re.fullmatch(r"-[a-zA-Z]*c", argv[j]):
-                    inner = cut_label_reason(argv[j + 1])
-                    if inner:
-                        return inner
-                    break
-        if word == "gh" and argv[i + 1:i + 3] == ["pr", "create"]:
-            args = argv[i + 3:]
-            heads = [h.split(":", 1)[-1] for h in _opt_values(args, "--head", "-H")]
-            labels = [x for v in _opt_values(args, "--label", "-l") for x in v.split(",")]
-            if any(h.startswith("release-") for h in heads) and "ci:release-checks" not in labels:
-                return CUT_REASON
+    """Refuse `gh pr create --head release-*` without ci:release-checks. Auditor on #136 (2026-10-12): the wrapper list kept growing (sudo, env, timeout,
+    xargs, caffeinate, eval, braces, if/then, `!`), so the rule is: in every segment find ANY token whose basename is gh, skip gh's global -R/--repo,
+    and require `pr create`; look inside `bash -c` / eval scripts and backtick / $(...) bodies the same way."""
+    text = HEREDOC_RE.sub("", command or "")
+    for m in _CUT_SUBST_RE.finditer(text):
+        inner = cut_label_reason(m.group(1) or m.group(2) or "")
+        if inner:
+            return inner
+    for argv in _cut_segments(text):
+        for k, tok in enumerate(argv):
+            word = os.path.basename(tok)
+            if word in CUT_SHELLS:
+                for j in range(k + 1, len(argv) - 1):
+                    if re.fullmatch(r"-[a-zA-Z]*c", argv[j]):
+                        script = argv[j + 1 + (argv[j + 1] == "--")] if j + 1 + (argv[j + 1] == "--") < len(argv) else ""
+                        inner = cut_label_reason(script)
+                        if inner:
+                            return inner
+                        break
+            elif word == "eval":
+                inner = cut_label_reason(" ".join(argv[k + 1:]))
+                if inner:
+                    return inner
+            elif word == "gh":
+                m = k + 1
+                while m < len(argv) and argv[m].startswith("-"):
+                    m += 2 if argv[m] in ("-R", "--repo") else 1
+                if argv[m:m + 2] == ["pr", "create"]:
+                    reason = _cut_gh_reason(argv[m + 2:])
+                    if reason:
+                        return reason
     return ""
 
 

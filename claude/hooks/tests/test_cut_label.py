@@ -31,6 +31,9 @@ S = "a" * 40
     'bash -c "gh pr create --head release-CI --title t --label ci:release-checks"',
     'bash -c "gh pr create --head web/x --title t"',
     "sudo -n -- env A=b gh pr create --head release-CI --label ci:release-checks",
+    "gh -R DomLynch/RPG-game pr create --head release-CI --label ci:release-checks",
+    'timeout 60 gh pr create --head release-CI --label ci:release-checks',
+    "gh -R DomLynch/RPG-game pr view 5 --head release-CI",
     "gh pr create --title t --head feature/x",                                   # not a release candidate
     "gh pr create --title t",
     "gh pr edit 5 --add-label auditor:ready",
@@ -75,6 +78,20 @@ def test_these_are_allowed(cmd):
     "/opt/homebrew/bin/gh pr create --head release-CJ",
     "command gh pr create --head release-CJ",
     "env -i gh pr create --head=release-CJ --body 'x; y'",
+    "gh -R DomLynch/RPG-game pr create --head release-CX --title t",               # Auditor on #136: gh's global flag before `pr`
+    "gh --repo=DomLynch/RPG-game pr create --head release-CX --title t",
+    "gh --repo DomLynch/RPG-game pr create --head release-CX --title t",
+    "timeout 60 gh pr create --head release-CX --title t",                          # wrappers are not a list any more: ANY token whose basename is gh
+    "stdbuf -oL gh pr create --head release-CX --title t",
+    "caffeinate -i gh pr create --head release-CX --title t",
+    "xargs gh pr create --head release-CX --title t",
+    'eval "gh pr create --head release-CX --title t"',
+    "echo `gh pr create --head release-CX --title t`",
+    "echo $(gh pr create --head release-CX --title t)",
+    "{ gh pr create --head release-CX --title t; }",
+    "if true; then gh pr create --head release-CX --title t; fi",
+    "! gh pr create --head release-CX --title t",
+    "bash -c -- 'gh pr create --head release-CX --title t'",
     "sudo -u x gh pr create --head release-CJ --title t",                          # Auditor LOW on #135: wrapper prefixes with option values
     "sudo -n gh pr create --head release-CJ --title t",
     "sudo -u deploy -H env GH_TOKEN=x gh pr create --head release-CJ",
