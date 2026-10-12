@@ -51,7 +51,8 @@ def _decide(cmd, repo):
 
 def test_the_wrapper_call_is_allowed(repo, monkeypatch):
     monkeypatch.setenv("LANEJOB_NO_MAC", "1")  # the off-switch only turns the tier off
-    for cmd in (CALL, CALL.replace("bash scripts", "bash ./scripts"), CALL + " 2>&1"):
+    for cmd in (CALL, CALL.replace("bash scripts", "bash ./scripts"), CALL + " 2>&1",
+                    "bash scripts/lanejob/lanejob-mac.sh node --test --test-concurrency=2 tests/a.test.ts tests/b.test.ts"):
         assert _decide(cmd, repo) == "", cmd
 
 
@@ -61,6 +62,12 @@ def test_the_wrapper_call_is_allowed(repo, monkeypatch):
         "bash scripts/lanejob/lanejob-mac.sh npm run test:all",  # full suite
         "bash scripts/lanejob/lanejob-mac.sh npx playwright test tests/a.spec.ts",  # browser
         "bash scripts/lanejob/lanejob-mac.sh npm run build",
+    "bash scripts/lanejob/lanejob-mac.sh npm test",                                  # Auditor on #129: wrapped is never looser than bare
+    "bash scripts/lanejob/lanejob-mac.sh node scripts/origins-signedin-check.mjs",
+    "bash scripts/lanejob/lanejob-mac.sh node scripts/pit-landscape-check.mjs",
+    "bash scripts/lanejob/lanejob-mac.sh node --test tests/*",                       # a whole-suite glob
+    "bash scripts/lanejob/lanejob-mac.sh node --test tests/*.test.ts tests/a.test.ts",
+    "bash scripts/lanejob/lanejob-mac.sh vite build",
         "bash scripts/lanejob/lanejob-mac.sh node --test tests/a.test.ts tests/b.test.ts --project webkit",
         "bash scripts/lanejob/lanejob-mac.sh blender -b x.blend",
         "bash scripts/lanejob/lanejob-mac.sh node --test tests/a.test.ts tests/b.test.ts && npm run test:all",

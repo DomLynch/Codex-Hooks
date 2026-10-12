@@ -260,6 +260,7 @@ def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
 LANEJOB_MAC_SCRIPT = "scripts/lanejob/lanejob-mac.sh"
 LANEJOB_MAC_ENV = ("NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV")
 LANEJOB_MAC_OFF = ("LANEJOB_NO_MAC", "LANEJOB_NO_SPILL")
+LANEJOB_NODE_TEST_RE = re.compile(r"node --test(?: -[^\s*]+)*(?: [^-\s*][^\s*]*)+")
 LANEJOB_INNER_DENY_RE = re.compile(r"playwright|test:all|test:slow|test:browser|quality|release-check|build|blender|webkit|safari|iphone|simctl|meshopt|gltfpack", re.IGNORECASE)
 
 
@@ -285,7 +286,10 @@ def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     words = whole.split()
     if len(words) < 3 or words[0] != "bash" or words[1] not in (LANEJOB_MAC_SCRIPT, "./" + LANEJOB_MAC_SCRIPT):
         return False
-    if LANEJOB_INNER_DENY_RE.search(" ".join(words[2:])):
+    inner = " ".join(words[2:])
+    # Auditor on #129: wrapped is never looser than bare. The inner command is judged by this guard's own HEAVY_RE; the one heavy shape the Mac
+    # tier may carry is targeted `node --test <files>` (no glob), and the name blocklist stays as a second fence.
+    if LANEJOB_INNER_DENY_RE.search(inner) or (HEAVY_RE.search(" " + inner) and not LANEJOB_NODE_TEST_RE.fullmatch(inner)):
         return False
     if any((n.startswith("LANEJOB_") and n not in LANEJOB_MAC_OFF) or n in LANEJOB_MAC_ENV for n in os.environ):
         return False
