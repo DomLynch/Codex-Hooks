@@ -26,6 +26,10 @@ import deploy_guard as g  # noqa: E402
     "npx play''wright test",
     'npx play""wright test',
     "npx pla\\ywright test",
+    "node --test tests",                                  # Auditor on #131: a directory without the trailing slash
+    "npx 'playwright' test",
+    'npx "play"wright test',
+    "FOO=1 'npx' 'playwright' test",
 ])
 def test_these_were_allowed_bare_and_are_heavy(cmd):
     assert g.decide(cmd, None, cwd="") == g.VPS_REASON, cmd
@@ -37,6 +41,8 @@ def test_these_were_allowed_bare_and_are_heavy(cmd):
     "node scripts/vps-shadow/launch.mjs unit " + "a" * 40,   # only submits a Hugging Face job; blocking it would stop every PR receipt
     "echo 'it''s fine'",
     "git status",
+    'git commit -m "run npx playwright test later"',    # quoted data is still data
+    "echo 'npx' is a tool",
 ])
 def test_light_commands_stay_allowed(cmd):
     assert g.decide(cmd, None, cwd="") == "", cmd
