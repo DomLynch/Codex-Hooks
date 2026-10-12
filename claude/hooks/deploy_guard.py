@@ -252,6 +252,50 @@ def gpu_run_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     return scripts_dir_is_trunk(cwd)
 
 
+# Mac middle tier, piece 2 (Strategy + Dom, 2026-10-12): `bash scripts/lanejob/lanejob-mac.sh CMD...` runs a CPU-only job on this Mac only when
+# the VPS would queue or spill, under its own gates (load, release lock, one slot, nice, 30 min cap). Same shape as the other wrappers: the call
+# is the ENTIRE command (no separator, grouping or substitution), relative script path, the script and the whole scripts/lanejob folder equal
+# trunk's, and the environment must not redirect it (any LANEJOB_* but the two off-switches, plus NODE_OPTIONS/NODE_PATH/BASH_ENV/ENV).
+# The inner command may never be a browser, full suite, build or Blender run: those stay on the VPS whatever the wrapper does.
+LANEJOB_MAC_SCRIPT = "scripts/lanejob/lanejob-mac.sh"
+LANEJOB_MAC_ENV = ("NODE_OPTIONS", "NODE_PATH", "BASH_ENV", "ENV")
+LANEJOB_MAC_OFF = ("LANEJOB_NO_MAC", "LANEJOB_NO_SPILL")
+LANEJOB_NODE_TEST_RE = re.compile(r"node --test(?: -[^\s*]+)*(?: [^-\s*][^\s*]*)+")
+LANEJOB_INNER_DENY_RE = re.compile(r"playwright|test:all|test:slow|test:browser|quality|release-check|build|blender|webkit|safari|iphone|simctl|meshopt|gltfpack", re.IGNORECASE)
+
+
+def lanejob_dir_is_trunk(cwd: str) -> bool:
+    if not cwd:
+        return False
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, timeout=15)
+    try:
+        if git("rev-parse", "--verify", f"refs/remotes/origin/HEAD:{LANEJOB_MAC_SCRIPT}").returncode != 0 or not (Path(cwd) / LANEJOB_MAC_SCRIPT).is_file():
+            return False
+        clean = git("diff", "--quiet", "refs/remotes/origin/HEAD", "--", "scripts/lanejob").returncode == 0
+        extra = git("ls-files", "--others", "--exclude-standard", "--", "scripts/lanejob")
+        return clean and extra.returncode == 0 and not extra.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False   # fail closed
+
+
+def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
+    whole = re.sub(r"\s+\d*>&?\S*", "", command.strip())
+    if not command or SHELL_META_RE.search(whole) or not redirects_ok(command) or whole.split() != re.sub(r"\s+\d*>&?\S*", "", segment).split():
+        return False
+    words = whole.split()
+    if len(words) < 3 or words[0] != "bash" or words[1] not in (LANEJOB_MAC_SCRIPT, "./" + LANEJOB_MAC_SCRIPT):
+        return False
+    inner = " ".join(words[2:])
+    # Auditor on #129: wrapped is never looser than bare. The inner command is judged by this guard's own HEAVY_RE; the one heavy shape the Mac
+    # tier may carry is targeted `node --test <files>` (no glob), and the name blocklist stays as a second fence.
+    if LANEJOB_INNER_DENY_RE.search(inner) or (HEAVY_RE.search(" " + inner) and not LANEJOB_NODE_TEST_RE.fullmatch(inner)):
+        return False
+    if any((n.startswith("LANEJOB_") and n not in LANEJOB_MAC_OFF) or n in LANEJOB_MAC_ENV for n in os.environ):
+        return False
+    return lanejob_dir_is_trunk(cwd)
+
+
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
@@ -301,7 +345,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
+        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command) or lanejob_mac_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
