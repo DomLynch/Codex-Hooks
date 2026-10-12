@@ -106,6 +106,10 @@ DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
 # Lead, 2026-09-26 18:11: gates stacked to load 386 while Deploy waited to launch. A gate does not start when
 # the Mac is overloaded, when Deploy holds the Mac before its lock exists, or when the same check already runs
 # in this folder (a lane's own run, or one a Stop deadline left behind).
+# Lead, 2026-10-12: one Stop must not hold a lane for the whole 420 s. All completion commands together get this window (from the
+# first one's start); what is left is deferred to the PR's CI, never rerun in the same Stop. A browser/playwright command is a CI job.
+COMPLETION_BUDGET_S = float(os.environ.get("CLAUDE_GATE_COMPLETION_BUDGET") or 120)
+_BROWSER_ARG_RE = re.compile(r"playwright|chromium|puppeteer|[-_/.]browser|browser[-_.]", re.I)
 GATE_MAX_LOAD = float(os.environ.get("CLAUDE_GATE_MAX_LOAD") or 60)
 DEPLOY_HOLD_PATH = Path.home() / ".claude" / "state" / "deploy_hold"   # Deploy touches it while it waits to launch
 # The hold stands while the file exists: a paused release can go 46 min without a touch (Lead, 2026-09-30, when a
@@ -587,10 +591,20 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             return {"ok": True, "deferred": gate_busy(cwd) or {"reason": "another repository gate took the Mac-wide lock first"},
                     "results": results}
         started = ran_from = time.monotonic()
+        completion_end = None   # absolute end of the shared completion window, set when the first completion command starts
+        skipped = False
         for index, command in enumerate(commands):
-            remaining = timeout - (time.monotonic() - started)
+            if index >= browser_from and any(_BROWSER_ARG_RE.search(arg) for arg in command):
+                skipped = True
+                results.append(_result(path, " ".join(command), True, "skipped: a browser/playwright command runs in CI, not in the Stop gate"))
+                continue
+            if index >= browser_from and completion_end is None:
+                completion_end = time.monotonic() + COMPLETION_BUDGET_S
+            end = started + timeout if completion_end is None else min(started + timeout, completion_end)
+            budget = end - started
+            remaining = end - time.monotonic()
             if remaining <= 0:
-                raise _deadline(command, time.monotonic() - started, timeout)
+                raise _deadline(command, time.monotonic() - started, budget)
             lock = defer_to() if defer_to else None
             if not lock and index >= browser_from and (load := os.getloadavg()[0]) > GATE_MAX_LOAD:
                 # Strategy/Auditor, 2026-10-06: load was sampled once at the gate's start; Chromium rows then failed on
@@ -604,14 +618,14 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
             with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
                 with subprocess.Popen(command, cwd=cwd, stdout=out_f, stderr=err_f, start_new_session=True) as proc:
                     _note_gate_child(proc.pid)   # its own session: pgid == pid
-                    rc = _wait_check(proc, started, timeout, defer_to, command, results)
+                    rc = _wait_check(proc, started, budget, defer_to, command, results)
                     if isinstance(rc, dict):
                         return rc
                 out, err = (_read_back(f) for f in (out_f, err_f))
             results.append(_result(path, " ".join(command), rc == 0, out + err))
             if rc != 0:
                 break
-        if results and all(item["ok"] for item in results) and _tree_key(cwd, commands) == key:
+        if results and all(item["ok"] for item in results) and not skipped and _tree_key(cwd, commands) == key:
             _remember_pass(key, cwd)   # not when the checked files changed while the checks ran
     except GateDeadline as exc:
         # unproven, reported, never a block: the lane is told once (defer_gate) and the next Stop tries again
