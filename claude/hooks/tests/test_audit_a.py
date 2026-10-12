@@ -304,6 +304,50 @@ class DetachedPipeHolderTests(Base):
 
 
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
+class CompletionBudgetTests(Base):
+    """Lead, 2026-10-12: all completion commands share one window; a browser command is never run by the Stop gate."""
+
+    def test_completion_commands_share_one_window_and_the_rest_is_deferred(self):
+        py = sys.executable
+        repo = self.repo([[py, '-c', 'pass']], completion_commands=[[py, '-c', 'import time; time.sleep(1.2)'],
+                                                                    [py, '-c', 'import time; time.sleep(30)']])
+        with patch.object(quality, 'COMPLETION_BUDGET_S', 2.0):
+            started = time.monotonic()
+            result = quality.run_project_gate(repo)
+        self.assertLess(time.monotonic() - started, 10, 'the second command is cut at the shared 2 s window, not its own')
+        self.assertTrue(result['ok'], 'unproven, not a block')
+        self.assertTrue(result['timed_out'])
+
+    def test_a_slow_regular_command_is_not_cut_by_the_completion_window(self):
+        py = sys.executable
+        repo = self.repo([[py, '-c', 'import time; time.sleep(1.5)']], completion_commands=[[py, '-c', 'pass']])
+        with patch.object(quality, 'COMPLETION_BUDGET_S', 0.5):
+            result = quality.run_project_gate(repo)
+        self.assertTrue(result['ok'])
+        self.assertNotIn('timed_out', result)
+
+    def test_browser_completion_commands_are_skipped_not_run_and_not_cached(self):
+        py = sys.executable
+        marker = self.root / 'ran.txt'
+        for cmd in ([py, '-c', f"open({str(marker)!r}, 'w')", 'scripts/sparring-browser-check.mjs'],
+                    [py, '-c', f"open({str(marker)!r}, 'w')", '--playwright']):
+            repo = self.repo([[py, '-c', 'pass']], completion_commands=[cmd])
+            result = quality.run_project_gate(repo)
+            self.assertTrue(result['ok'])
+            self.assertFalse(marker.exists(), 'the browser command never ran')
+            self.assertIn('skipped', result['results'][-1]['output'])
+            cache = self.root / 'gate-cache.json'
+            self.assertEqual(json.loads(cache.read_text() or '{}') if cache.exists() else {}, {}, 'a skipped check is not a proven pass')
+            shutil.rmtree(repo)
+
+    def test_a_browser_word_in_a_regular_command_still_runs(self):
+        py = sys.executable
+        marker = self.root / 'ran2.txt'
+        repo = self.repo([[py, '-c', f"open({str(marker)!r}, 'w')", 'browser-check.mjs']])
+        self.assertTrue(quality.run_project_gate(repo)['ok'])
+        self.assertTrue(marker.exists(), 'only completion commands are filtered')
+
+
 class JsQuickCheckTests(Base):
     def test_f17_invalid_js_fails_and_valid_js_passes_with_a_check_executed(self):
         for name in ('bad.js', 'bad.mjs', 'bad.cjs'):
