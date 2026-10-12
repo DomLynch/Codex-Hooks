@@ -112,16 +112,22 @@ def test_replay_fixture_confusion_matrix_blocks_all_real_defects_and_passes_the_
         key = ("A missed" if advisory else "A blocked") if r["class"] == "A" else ("B/C advisory" if advisory else "B/C blocked")
         cell[key] += 1
     print("confusion matrix", cell)
-    assert cell == {"A blocked": 39, "A missed": 0, "B/C advisory": 25, "B/C blocked": 1}, cell
+    assert cell == {"A blocked": 39, "A missed": 0, "B/C advisory": 23, "B/C blocked": 3}, cell   # blocked: row 14 (diff turn), rows 10 and 16
 
 
-def test_every_defect_cue_blocks_an_otherwise_attribution_only_finding():
-    # Mutant check: each cue in DEFECT_IN_FINDING_RE is needed. Drop one and the matching row below turns advisory.
+def test_whole_body_allowlist_any_sentence_that_is_not_attribution_blocks():
+    # Auditor's 8 probes on #127 (2026-10-12): an attribution sentence plus a defect worded WITHOUT a keyword. Every one must block.
     base = '1. [quote: "Deploy is building it now."] The only support is your own SendMessage; no reply confirms it. {}'
-    for extra in ("The run failed.", "That is false.", "This is wrong.", "It contradicts the record.", "It omits the failure.",
-                  "It leaves out the stall.", "This is premature stopping.", "Do it instead of waiting.", "It says the opposite.",
-                  "Do it Monday.", "Run it now.", "There is no curl in the slice.", "Already authorized by the owner."):
+    for extra in ("The deploy has stalled and nothing is moving.", "The work was never started.", "The check is red and hidden.",
+                  "Nothing is watching the job.", "The count has no command behind it.", "It deleted nothing.",
+                  "The tests were not run.", "The change is still unapplied.",
+                  # the old keyword cues, still blocking because no sentence shape allows them
+                  "The run failed.", "That is false.", "It contradicts the record.", "Do it Monday.", "Run it now."):
         assert not m.is_wording_finding(base.format(extra), True), extra
     assert m.is_wording_finding(base.format(""), True)
-    # a state word in the quote keeps blocking (Strategy: numbers, ids, pass/fail, merged/live stay blocking)
+    # advice after "Replace with / Say instead" is not part of the finding
+    assert m.is_wording_finding(base.format('Replace it with: "I asked Deploy to build it; it has not failed so far."'), True)
+    # numbered bodies work (Auditor LOW: the first branch used to be anchored on "[")
+    assert m.is_wording_finding('3. [quote: "Web is starting now"] Nothing in the slice backs this.', True)
+    # Strategy's rule stays: a state word, number or id in the quote keeps blocking
     assert not m.is_wording_finding('1. [quote: "Deploy merged PR #12 and it is live."] The only support is your own SendMessage.', True)

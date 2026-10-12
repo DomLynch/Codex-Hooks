@@ -231,29 +231,60 @@ CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGN
 # 2026-10-12 replay (65 downgraded findings): the #117 extension of wording-advisory to a turn WITH a diff downgraded a real
 # premature stop ("Want me to do both Monday?"). Wording is advisory only on a turn with no diff; a diff turn always blocks.
 # 2026-10-12 replay of 65 downgraded findings (fixture tests/wording_replay_2026_10_12.json): 39 were real defects (a hidden
-# failure, a premature stop, an unbacked or false claim, a bad command), 22 only restated a peer's message or an order as done,
-# 4 were minor wording. On a no-diff turn a finding is advisory only when it says the SOLE support is an order or a message
-# (attribution) and names no defect; the absence phrase "Nothing in the slice backs this" alone is not a defect type.
-ATTRIBUTION_ONLY_RE = re.compile(
-    r"^\s*\[(?:F\d+\]\s*\[)?quote:[^\]]*\]\s*Nothing in the slice backs this\.?\s*$|"
-    r"only (?:support|evidence)[^.]{0,80}(?:send_?message|order|your own)|"
-    r"(?:send_?message|result)[^.]{0,80}not (?:yet )?(?:read|confirmed)|"
-    r"no reply[^.]{0,100}(?:confirm|shows|work has)|"
-    r"states? (?:another|a peer|the|an?)[^.]{0,50}(?:work|message|claim|report|order)[^.]{0,40}as (?:fact|your own|done)|"
-    r"repeats [^.]{0,60} as (?:your|its|if)|states an order|slice only shows a SendMessage|"
-    r"only visible messages are the orders|shows \w+ confirming|"
-    r"(?:tool output|tool call)[^.]{0,60}(?:confirms that \w+ is|reads replies from)|"
-    r"did not say|gives it a meaning nobody stated|\bRelabel\b|\breport says \"[^\"]+,\" not\b|names this \"", re.IGNORECASE)
-DEFECT_IN_FINDING_RE = re.compile(
-    r"\b(fail\w*|false|wrong|contradict\w*|omit\w*|leaves? out|premature|instead of|opposite)\b|"
-    r"Monday|run it now|no curl|already (?:authori|said|answered)", re.IGNORECASE)
+# failure, a premature stop, an unbacked or false claim, a bad command), 22 only restated a peer's message or an order as done.
+# A keyword list of defect words failed the Auditor's probes (any defect worded without the keywords came back advisory), so this
+# is an ALLOWLIST of the whole body (Auditor, #127): on a no-diff turn a finding is advisory only when its quote carries no state word
+# AND, after removing the quote and the "Replace with / Say instead" advice, EVERY sentence has a known attribution shape (an order or
+# message is the sole support, a peer has not confirmed, a paraphrase of a peer is off). Anything left over blocks. Strategy's rule
+# stays: a state word, number or id in the quote keeps blocking.
+_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels|another lane|the peer|the agent|a peer)"
+_SUGGESTION_RE=re.compile(r"\b(?:Replace (?:it|the sentence|this|with)|Say instead|Write|Change (?:it|the line|this)|Relabel|Either|Fix:|Check the)\b.*$",re.S)
+ATTRIBUTION_SENTENCES = [re.compile(p,re.I) for p in (
+ r"^Nothing in (?:the|this) slice backs this\.?$",
+ r"^This (?:states|says|is stated)[^.]{0,80}(?:as fact|is done|stated as fact)[^.]{0,60}$",
+ r"^This states [^.]{0,60} as fact, but nothing in the slice confirms it$",
+ r"^This (?:states|says)[^.]{0,60}but the (?:slice|only support) [^.]{0,120}$",
+ r"^(?:The )?only (?:support|evidence)(?: for this)? is [^.;]{0,140}$",
+ r"^(?:Its|The|That) (?:send )?(?:result|delivery receipt|message) [^.;]{0,60}(?:not (?:yet )?(?:read|confirmed)|was \"not yet read)[^.;]{0,60}$",
+ r"^(?:Your )?messages? to [^.;]{0,80}(?:not (?:yet )?(?:read|confirmed)|reported as not confirmed read)[^.;]{0,40}$",
+ r"^SendMessage returned \"not[^\"]*\"$",
+ r"^Nothing (?:confirms|in (?:the|this) slice (?:shows|confirms|backs)) "+_PEER+r"[^.;]{0,160}$",
+ r"^Nothing confirms "+_PEER+r"[^.;]{0,100}$",
+ r"^Nothing in (?:the|this) slice shows "+_PEER+r"[^.;]{0,160}$",
+ r"^Nothing in (?:the|this) slice shows "+_PEER+r" (?:working|building|started)[^.;]{0,100}$",
+ r"^Nothing in the slice shows the COO replied or acted, so this states an order you sent as work that is under way$",
+ r"^Nothing in the slice backs this: no reply from "+_PEER+r"[^.;]{0,160}$",
+ r"^No (?:reply|tool output|tool call)[^.;]{0,120}(?:confirm|shows|reads replies|appears in the slice)[^.;]{0,120}$",
+ r"^No reply from "+_PEER+r"[^.;]{0,60}$",
+ r"^(?:Its|The) result says [^.;]{0,40}\"?not confirmed read\"?[^.;]{0,50}$",
+ r"^The only visible messages are the orders that were sent$",
+ r"^Neither "+_PEER+r" nor "+_PEER+r" has confirmed[^.;]{0,80}$",
+ r"^"+_PEER+r" hasn't started yet[^.;]{0,60}$",
+ r"^This (?:sentence )?says the work is (?:done|under way)[^.;]{0,160}$",
+ r"^Hooks Dev said [^.;]{0,120}$|^It did not say [^.;]{0,80}$",
+ r"^The (?:agent's )?(?:report|message) says [^.;]{0,160}, not [^.;]{0,60}$",
+ r"^The Lead's message says [^.;]{0,100}$|^Lead's message names this [^.;]{0,100}, not item \d+$",
+ r"^Calling it [^.;]{0,60} gives it a meaning nobody stated[^.;]{0,120}$",
+ r"^Unless [^.;]{0,100}has been confirmed[^.;]{0,100}$",
+ r"^Its result says [^.;]{0,50}and no reply came back$",
+ r"^the PR (?:list|#\d+ output) (?:came back empty|shows only [^.;]{0,60})$",
+ r"^no reply came back$",
+)]
+
+
+def _body_sentences(body: str) -> list[str]:
+    text = re.sub(r"^\s*\d+[.)]\s*", "", body)
+    text = re.sub(r"^\s*\[F\d+\]\s*", "", text)
+    text = _SUGGESTION_RE.sub("", re.sub(r"\[quote:[^\]]*\]", "", text))
+    return [x.strip().rstrip(".") for x in re.split(r"(?<=[.!?])\s+|;\s+|,\s+and\s+(?=no |the )", text) if x.strip().rstrip(".")]
 
 
 def is_wording_finding(body: str, no_diff: bool) -> bool:
     q = CLAIM_QUOTE_RE.search(body)
     if not (no_diff and q) or MATERIAL_CLAIM_RE.search(q.group(1)):
         return False
-    return bool(ATTRIBUTION_ONLY_RE.search(body)) and not DEFECT_IN_FINDING_RE.search(body)
+    sentences = _body_sentences(body)
+    return bool(sentences) and all(any(p.match(x) for p in ATTRIBUTION_SENTENCES) for x in sentences)
 
 
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:
