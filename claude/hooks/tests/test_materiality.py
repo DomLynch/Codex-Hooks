@@ -60,7 +60,6 @@ def test_wording_never_downgrades_on_a_diff_turn():
         assert text.startswith("VERDICT: ISSUES") and not dropped, q
     body = '1. [quote: "Want me to do both Monday?"] The work is not blocked, so it should not wait for permission or Monday.'
     assert not m.is_wording_finding(body, False)
-    assert m.is_wording_finding(body, True), "unchanged on a no-diff turn (the 10-09 filter is tightened separately)"
 
 
 def test_a_no_tool_turn_is_skipped_only_when_it_claims_nothing(tmp_path):
@@ -98,3 +97,31 @@ def test_blocks_on_numbers_ids_state_words_and_code_stay_exactly_as_before():
             assert not m.is_wording_finding(body, no_diff), (body, no_diff)
     for body in diff_only:
         assert not m.is_wording_finding(body, False), body
+
+
+def test_replay_fixture_confusion_matrix_blocks_all_real_defects_and_passes_the_rest():
+    """The 65 findings downgraded 2026-10-10..11, labelled by hand: real defect (A) must block; peer-restated (B) and minor
+    wording (C) stay advisory on a no-diff turn. Row 14 is a diff-turn attribution row: it blocks after the #126 revert."""
+    import json
+    rows = json.loads((Path(__file__).parent / "wording_replay_2026_10_12.json").read_text())
+    assert len(rows) == 65 and sum(r["class"] == "A" for r in rows) == 39
+    cell = {"A blocked": 0, "A missed": 0, "B/C advisory": 0, "B/C blocked": 0}
+    for r in rows:
+        advisory = m.is_wording_finding(r["body"], r["turn"] == "nodiff")
+        assert advisory == (r["expected"] == "advisory"), (r["id"], r["class"], r["body"][:100])
+        key = ("A missed" if advisory else "A blocked") if r["class"] == "A" else ("B/C advisory" if advisory else "B/C blocked")
+        cell[key] += 1
+    print("confusion matrix", cell)
+    assert cell == {"A blocked": 39, "A missed": 0, "B/C advisory": 25, "B/C blocked": 1}, cell
+
+
+def test_every_defect_cue_blocks_an_otherwise_attribution_only_finding():
+    # Mutant check: each cue in DEFECT_IN_FINDING_RE is needed. Drop one and the matching row below turns advisory.
+    base = '1. [quote: "Deploy is building it now."] The only support is your own SendMessage; no reply confirms it. {}'
+    for extra in ("The run failed.", "That is false.", "This is wrong.", "It contradicts the record.", "It omits the failure.",
+                  "It leaves out the stall.", "This is premature stopping.", "Do it instead of waiting.", "It says the opposite.",
+                  "Do it Monday.", "Run it now.", "There is no curl in the slice.", "Already authorized by the owner."):
+        assert not m.is_wording_finding(base.format(extra), True), extra
+    assert m.is_wording_finding(base.format(""), True)
+    # a state word in the quote keeps blocking (Strategy: numbers, ids, pass/fail, merged/live stay blocking)
+    assert not m.is_wording_finding('1. [quote: "Deploy merged PR #12 and it is live."] The only support is your own SendMessage.', True)

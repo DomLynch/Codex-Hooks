@@ -230,9 +230,30 @@ CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGN
 
 # 2026-10-12 replay (65 downgraded findings): the #117 extension of wording-advisory to a turn WITH a diff downgraded a real
 # premature stop ("Want me to do both Monday?"). Wording is advisory only on a turn with no diff; a diff turn always blocks.
+# 2026-10-12 replay of 65 downgraded findings (fixture tests/wording_replay_2026_10_12.json): 39 were real defects (a hidden
+# failure, a premature stop, an unbacked or false claim, a bad command), 22 only restated a peer's message or an order as done,
+# 4 were minor wording. On a no-diff turn a finding is advisory only when it says the SOLE support is an order or a message
+# (attribution) and names no defect; the absence phrase "Nothing in the slice backs this" alone is not a defect type.
+ATTRIBUTION_ONLY_RE = re.compile(
+    r"^\s*\[(?:F\d+\]\s*\[)?quote:[^\]]*\]\s*Nothing in the slice backs this\.?\s*$|"
+    r"only (?:support|evidence)[^.]{0,80}(?:send_?message|order|your own)|"
+    r"(?:send_?message|result)[^.]{0,80}not (?:yet )?(?:read|confirmed)|"
+    r"no reply[^.]{0,100}(?:confirm|shows|work has)|"
+    r"states? (?:another|a peer|the|an?)[^.]{0,50}(?:work|message|claim|report|order)[^.]{0,40}as (?:fact|your own|done)|"
+    r"repeats [^.]{0,60} as (?:your|its|if)|states an order|slice only shows a SendMessage|"
+    r"only visible messages are the orders|shows \w+ confirming|"
+    r"(?:tool output|tool call)[^.]{0,60}(?:confirms that \w+ is|reads replies from)|"
+    r"did not say|gives it a meaning nobody stated|\bRelabel\b|\breport says \"[^\"]+,\" not\b|names this \"", re.IGNORECASE)
+DEFECT_IN_FINDING_RE = re.compile(
+    r"\b(fail\w*|false|wrong|contradict\w*|omit\w*|leaves? out|premature|instead of|opposite)\b|"
+    r"Monday|run it now|no curl|already (?:authori|said|answered)", re.IGNORECASE)
+
+
 def is_wording_finding(body: str, no_diff: bool) -> bool:
     q = CLAIM_QUOTE_RE.search(body)
-    return bool(no_diff and q and not MATERIAL_CLAIM_RE.search(q.group(1)))
+    if not (no_diff and q) or MATERIAL_CLAIM_RE.search(q.group(1)):
+        return False
+    return bool(ATTRIBUTION_ONLY_RE.search(body)) and not DEFECT_IN_FINDING_RE.search(body)
 
 
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:
