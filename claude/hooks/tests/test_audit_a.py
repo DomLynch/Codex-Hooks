@@ -303,7 +303,36 @@ class DetachedPipeHolderTests(Base):
         self.assertIn('check done', result['results'][0]['output'])
 
 
-@unittest.skipUnless(shutil.which('node'), 'node not installed')
+class TotalBudgetTests(Base):
+    """Dom, 2026-10-12: the whole Stop gate, regular `commands` too, ends at GATE_TOTAL_BUDGET_S whatever timeout_seconds says."""
+
+    def test_a_slow_regular_command_is_cut_at_the_total_budget_not_at_timeout_seconds(self):
+        repo = self.repo([[sys.executable, '-c', 'import time; time.sleep(30)']], timeout_seconds=420)
+        with patch.object(quality, 'GATE_TOTAL_BUDGET_S', 1.5):
+            started = time.monotonic()
+            result = quality.run_project_gate(repo)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertTrue(result['ok'], 'a time limit is unproven, not a block')
+        self.assertTrue(result['timed_out'])
+        self.assertIn('time limit', result['deferred']['reason'])
+
+    def test_the_total_budget_is_shared_by_all_commands(self):
+        py = sys.executable
+        repo = self.repo([[py, '-c', 'import time; time.sleep(1.0)'], [py, '-c', 'import time; time.sleep(30)']])
+        with patch.object(quality, 'GATE_TOTAL_BUDGET_S', 2.0):
+            started = time.monotonic()
+            result = quality.run_project_gate(repo)
+        self.assertLess(time.monotonic() - started, 10, 'the second command only gets what the first left')
+        self.assertTrue(result['timed_out'])
+
+    def test_a_fast_gate_inside_the_budget_still_passes_and_caches(self):
+        repo = self.repo([[sys.executable, '-c', 'pass']])
+        with patch.object(quality, 'GATE_TOTAL_BUDGET_S', 5.0):
+            result = quality.run_project_gate(repo)
+        self.assertTrue(result['ok'])
+        self.assertNotIn('timed_out', result)
+
+
 class CompletionBudgetTests(Base):
     """Lead, 2026-10-12: all completion commands share one window; a browser command is never run by the Stop gate."""
 
@@ -348,6 +377,7 @@ class CompletionBudgetTests(Base):
         self.assertTrue(marker.exists(), 'only completion commands are filtered')
 
 
+@unittest.skipUnless(shutil.which('node'), 'node not installed')
 class JsQuickCheckTests(Base):
     def test_f17_invalid_js_fails_and_valid_js_passes_with_a_check_executed(self):
         for name in ('bad.js', 'bad.mjs', 'bad.cjs'):

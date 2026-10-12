@@ -108,6 +108,9 @@ DEFER_POLL_S = 5   # how often a running gate re-reads the deploy lock
 # in this folder (a lane's own run, or one a Stop deadline left behind).
 # Lead, 2026-10-12: one Stop must not hold a lane for the whole 420 s. All completion commands together get this window (from the
 # first one's start); what is left is deferred to the PR's CI, never rerun in the same Stop. A browser/playwright command is a CI job.
+# Dom, 2026-10-12: Deploy B sat 7 minutes in "running Stop hooks" on `commands` (quality-stop-targeted.mjs ran its full 420 s, twice in 10 min).
+# The WHOLE gate, `commands` included, now ends at this total whatever the contract's timeout_seconds says; the rest is deferred to CI.
+GATE_TOTAL_BUDGET_S = float(os.environ.get("CLAUDE_GATE_TOTAL_BUDGET") or 120)
 COMPLETION_BUDGET_S = float(os.environ.get("CLAUDE_GATE_COMPLETION_BUDGET") or 120)
 _BROWSER_ARG_RE = re.compile(r"playwright|chromium|puppeteer|[-_/.]browser|browser[-_.]", re.I)
 GATE_MAX_LOAD = float(os.environ.get("CLAUDE_GATE_MAX_LOAD") or 60)
@@ -503,7 +506,7 @@ def _deadline(command: list[str], elapsed: float, budget: float) -> GateDeadline
     err = GateDeadline(
         f"repository quality deadline exceeded: `{name}` was still running after {elapsed:.0f}s of the {budget:.0f}s Stop budget. "
         "This is the hook's time limit, not a failing check. Keep `commands` and `completion_commands` fast (unit tests, lint); "
-        "run long CI in the release workflow instead, or set `timeout_seconds` (max 420)."
+        "run long CI in the release workflow instead, (the whole Stop gate is capped at CLAUDE_GATE_TOTAL_BUDGET, default 120 s; `timeout_seconds` can only lower it)."
     )
     err.reason = f"the repository quality gate hit its {budget:.0f}s time limit on `{name}` (ran {elapsed:.0f}s): unproven, not a failing check"
     return err
@@ -571,7 +574,7 @@ def run_project_gate(cwd: Path, timeout: float = 420, defer_to: Any = None) -> d
         limit = contract.get("timeout_seconds", 420)
         if type(limit) is not int or not 1 <= limit <= 420:
             raise ValueError("timeout_seconds must be an integer from 1 to 420")
-        timeout = min(timeout, limit)
+        timeout = min(timeout, limit, GATE_TOTAL_BUDGET_S)
         commands = contract["commands"]
         if not isinstance(commands, list) or not commands:
             raise ValueError("commands must be a nonempty list of argv lists")
