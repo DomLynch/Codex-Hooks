@@ -133,3 +133,17 @@ def test_whole_body_allowlist_any_sentence_that_is_not_attribution_blocks():
     assert m.is_wording_finding('3. [quote: "Web is starting now"] Nothing in the slice backs this.', True)
     # Strategy's rule stays: a state word, number or id in the quote keeps blocking
     assert not m.is_wording_finding('1. [quote: "Deploy merged PR #12 and it is live."] The only support is your own SendMessage.', True)
+
+
+def test_one_as_a_pronoun_is_wording_but_one_as_a_count_is_material():
+    # Auditor LOW on #126/#127: "no one else needs it" blocked because NUMBER_WORDS held a bare "one".
+    for q in ("no one else needs it", "one of the lanes asked for it", "someone else, no one knows", "any one of them", "one another"):
+        assert not m.MATERIAL_CLAIM_RE.search(q), q
+    for q in ("one PR is open", "there is one failing", "one test timed out", "only one left"):
+        assert m.MATERIAL_CLAIM_RE.search(q), q
+
+
+def test_approval_wording_stays_wording():
+    # Auditor LOW: approv* is a STATUS claim for the no-tool skip, never a material claim ("Approved, Web is starting now" must stay wording).
+    assert not m.MATERIAL_CLAIM_RE.search("**Approved, Web is starting now:**")
+    assert not m.MATERIAL_CLAIM_RE.search("approval came from Strategy")
