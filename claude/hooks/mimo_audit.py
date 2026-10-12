@@ -230,9 +230,67 @@ CLAIM_QUOTE_RE = re.compile(r"\[quote:\s*[\"“](.{3,400}?)[\"”]\s*\]", re.IGN
 
 # 2026-10-12 replay (65 downgraded findings): the #117 extension of wording-advisory to a turn WITH a diff downgraded a real
 # premature stop ("Want me to do both Monday?"). Wording is advisory only on a turn with no diff; a diff turn always blocks.
+# 2026-10-12 replay of 65 downgraded findings (fixture tests/wording_replay_2026_10_12.json): 39 were real defects (a hidden
+# failure, a premature stop, an unbacked or false claim, a bad command), 22 only restated a peer's message or an order as done.
+# A keyword list of defect words failed the Auditor's probes (any defect worded without the keywords came back advisory), so this
+# is an ALLOWLIST of the whole body (Auditor, #127): on a no-diff turn a finding is advisory only when its quote carries no state word
+# AND, after removing the quote and the "Replace with / Say instead" advice, EVERY sentence has a known attribution shape (an order or
+# message is the sole support, a peer has not confirmed, a paraphrase of a peer is off). Anything left over blocks. Strategy's rule
+# stays: a state word, number or id in the quote keeps blocking.
+_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels|another lane|the peer|the agent|a peer)"
+# Advice to the lane ("Replace it with: \"...\""): only the cue and its own quoted replacement are removed, never the rest of the body
+# (Auditor, #127: a defect sentence after the advice used to be stripped with it). A cue with no quoted replacement stays, so it has
+# to match an attribution shape itself. The gap before the quote may not cross a sentence end.
+_SUGGESTION_RE = re.compile(
+    r"\b(?:Replace (?:it|the sentence|this|with)|Say instead|Write|Change (?:it|the line|this)|Relabel|Either|Fix:|Check the)\b"
+    r"(?:[^\"\u201c.!?;]|\.(?=\S)){0,200}[\"\u201c][^\"\u201d]*[\"\u201d]\.?", re.S)
+ATTRIBUTION_SENTENCES = [re.compile(p,re.I) for p in (
+ r"^Nothing in (?:the|this) slice backs this\.?$",
+ r"^This (?:states|says|is stated)[^.]{0,80}(?:as fact|is done|stated as fact)[^.]{0,60}$",
+ r"^This states [^.]{0,60} as fact, but nothing in the slice confirms it$",
+ r"^This (?:states|says)[^.]{0,60}but the (?:slice|only support) [^.]{0,120}$",
+ r"^(?:The )?only (?:support|evidence)(?: for this)? is [^.;]{0,140}$",
+ r"^(?:Its|The|That) (?:send )?(?:result|delivery receipt|message) [^.;]{0,60}(?:not (?:yet )?(?:read|confirmed)|was \"not yet read)[^.;]{0,60}$",
+ r"^(?:Your )?messages? to [^.;]{0,80}(?:not (?:yet )?(?:read|confirmed)|reported as not confirmed read)[^.;]{0,40}$",
+ r"^SendMessage returned \"not[^\"]*\"$",
+ r"^Nothing (?:confirms|in (?:the|this) slice (?:shows|confirms|backs)) "+_PEER+r"[^.;]{0,160}$",
+ r"^Nothing confirms "+_PEER+r"[^.;]{0,100}$",
+ r"^Nothing in (?:the|this) slice shows "+_PEER+r"[^.;]{0,160}$",
+ r"^Nothing in (?:the|this) slice shows "+_PEER+r" (?:working|building|started)[^.;]{0,100}$",
+ r"^Nothing in the slice shows the COO replied or acted, so this states an order you sent as work that is under way$",
+ r"^Nothing in the slice backs this: no reply from "+_PEER+r"[^.;]{0,160}$",
+ r"^No (?:reply|tool output|tool call)[^.;]{0,120}(?:confirm|shows|reads replies|appears in the slice)[^.;]{0,120}$",
+ r"^No reply from "+_PEER+r"[^.;]{0,60}$",
+ r"^(?:Its|The) result says [^.;]{0,40}\"?not confirmed read\"?[^.;]{0,50}$",
+ r"^The only visible messages are the orders that were sent$",
+ r"^Neither "+_PEER+r" nor "+_PEER+r" has confirmed[^.;]{0,80}$",
+ r"^"+_PEER+r" hasn't started yet[^.;]{0,60}$",
+ r"^This (?:sentence )?says the work is (?:done|under way)[^.;]{0,160}$",
+ r"^Hooks Dev said [^.;]{0,120}$|^It did not say [^.;]{0,80}$",
+ r"^The (?:agent's )?(?:report|message) says [^.;]{0,160}, not [^.;]{0,60}$",
+ r"^The Lead's message says [^.;]{0,100}$|^Lead's message names this [^.;]{0,100}, not item \d+$",
+ r"^Calling it [^.;]{0,60} gives it a meaning nobody stated[^.;]{0,120}$",
+ r"^Unless [^.;]{0,100}has been confirmed[^.;]{0,100}$",
+ r"^Its result says [^.;]{0,50}and no reply came back$",
+ r"^the PR (?:list|#\d+ output) (?:came back empty|shows only [^.;]{0,60})$",
+ r"^no reply came back$",
+ r"^,?\s*or show a reply or PR from [^.;]{0,60}$|^or say where the new number came from$|^Relabel it as [^.;]{0,100}$",
+)]
+
+
+def _body_sentences(body: str) -> list[str]:
+    text = re.sub(r"^\s*\d+[.)]\s*", "", body)
+    text = re.sub(r"^\s*\[F\d+\]\s*", "", text)
+    text = _SUGGESTION_RE.sub("", re.sub(r"\[quote:[^\]]*\]", "", text))
+    return [x.strip().rstrip(".") for x in re.split(r"(?<=[.!?])\s+|;\s+|,\s+and\s+(?=no |the )", text) if x.strip().rstrip(".")]
+
+
 def is_wording_finding(body: str, no_diff: bool) -> bool:
     q = CLAIM_QUOTE_RE.search(body)
-    return bool(no_diff and q and not MATERIAL_CLAIM_RE.search(q.group(1)))
+    if not (no_diff and q) or MATERIAL_CLAIM_RE.search(q.group(1)):
+        return False
+    sentences = _body_sentences(body)
+    return bool(sentences) and all(any(p.match(x) for p in ATTRIBUTION_SENTENCES) for x in sentences)
 
 
 def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list[str]]:
