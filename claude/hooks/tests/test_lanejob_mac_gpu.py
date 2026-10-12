@@ -20,6 +20,8 @@ import deploy_guard as g  # noqa: E402
 W = "bash scripts/lanejob/lanejob-mac.sh --gpu --"
 ROW = "node scripts/pit-landscape-check.mjs --engine chromium"   # a release_commands row of the fixture
 COUNTED = "node scripts/arena-gl-check.mjs"
+WEBKIT = "node scripts/pit-landscape-webkit.mjs --engine webkit"      # release row 54: a Mac-only WebKit row
+SPACED = ["bash", "-c", "node scripts/x-check.mjs"]                  # one argv element holds spaces: the joined text is ambiguous
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ def repo(tmp_path, monkeypatch):
     git("config", "user.name", "t")
     (tmp_path / "scripts" / "lanejob").mkdir(parents=True)
     (tmp_path / "scripts" / "lanejob" / "lanejob-mac.sh").write_text("#!/bin/bash\n# runs a job under gates\n")
-    (tmp_path / ".quality-gate.json").write_text(json.dumps({"release_commands": [ROW.split(), COUNTED.split()]}))
+    (tmp_path / ".quality-gate.json").write_text(json.dumps({"release_commands": [ROW.split(), COUNTED.split(), WEBKIT.split(), SPACED]}))
     git("add", ".")
     git("commit", "-qm", "x")
     git("update-ref", "refs/remotes/origin/main", "HEAD")
@@ -53,12 +55,16 @@ def _decide(cmd, repo):
     f"{W} node scripts/gear-paperdoll-still.mjs",
     f"{W} node ./scripts/zone-theme-stills.mjs",
     f"{W} node scripts/hero-contact-sheet.mjs",
+    f"{W} node scripts/zone1-stills-mac.mjs --label ./out",
 ])
 def test_the_gpu_forms_are_allowed(cmd, repo):
     assert _decide(cmd, repo) == "", cmd
 
 
 @pytest.mark.parametrize("cmd", [
+    f"{W} node scripts/browser-replay-check.mjs --engine webkit",   # LOW 1 (a listed WebKit row is a Mac-only row)
+    f"{W} bash -c node scripts/x-check.mjs",                              # LOW 3: rows are compared as argv, not as joined text
+    f"{W} node scripts/zone1-signin-stills.mjs /etc/passwd",              # LOW 4: no absolute-path args
     f"{W} node scripts/browser-replay-check.mjs",                         # a release script that is not a row of trunk's list
     f"{W} {ROW} --extra",                                                 # a row is matched exactly, not by prefix
     f"{W} node scripts/pit-landscape-check.mjs --engine webkit",
@@ -87,3 +93,10 @@ def test_everything_else_stays_refused(cmd, repo):
 def test_an_edited_wrapper_refuses_the_gpu_form(repo):
     (repo / "scripts" / "lanejob" / "lanejob-mac.sh").write_text("#!/bin/bash\nnpm run test:all\n")
     assert _decide(f"{W} {ROW}", repo) == g.VPS_REASON
+
+
+def test_webkit_row_and_stillness_name_are_not_heavy_so_the_guard_never_sees_them_but_the_job_set_excludes_them(repo):
+    # LOW 1 and 2: neither command is heavy by HEAVY_RE (the guard only gates heavy commands); the job set itself refuses them, and the wrapper does too.
+    assert ("node", "scripts/pit-landscape-webkit.mjs", "--engine", "webkit") not in g.trunk_release_rows(str(repo))
+    assert not g.lanejob_gpu_job_ok(["node", "scripts/deploy-stillness.mjs"], str(repo))
+    assert g.lanejob_gpu_job_ok(["node", "scripts/zone1-signin-stills.mjs"], str(repo))

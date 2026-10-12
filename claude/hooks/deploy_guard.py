@@ -265,8 +265,8 @@ LANEJOB_MAC_OFF = ("LANEJOB_NO_MAC", "LANEJOB_NO_SPILL")
 # Mac GPU slot (Dom's word via Lead and the COO, 2026-10-12; Deploy's gate, router PR scripts/lib/mac-gpu.mjs): `... lanejob-mac.sh --gpu -- CMD` carries
 # only (a) a release_commands row of TRUNK's .quality-gate.json, spelled exactly, or (b) node scripts/*-still*.mjs / *-contact-sheet.mjs with simple args.
 # The wrapper enforces the gates (load1 < 6, one job, nice 15, 30 min cap, no release Mac row or WebKit run); this guard only lets a named job start.
-LANEJOB_GPU_STILLS_RE = re.compile(r"(?:\./)?scripts/(?:[\w-]*-stills?[\w-]*|[\w-]*-contact-sheet)\.mjs")
-LANEJOB_GPU_ARG_RE = re.compile(r"[\w.:=@/-]+")
+LANEJOB_GPU_STILLS_RE = re.compile(r"(?:\./)?scripts/(?:(?:[\w-]+-)?stills?(?:-[\w-]+)?|[\w-]+-contact-sheet)\.mjs")
+LANEJOB_GPU_ARG_RE = re.compile(r"[\w.:=@-][\w.:=@/-]*")   # no leading / (absolute path)
 LANEJOB_NODE_TEST_RE = re.compile(r"node --test(?: -[^\s*]+)*(?: [^-\s*][^\s*]*)+")
 LANEJOB_INNER_DENY_RE = re.compile(r"playwright|test:all|test:slow|test:browser|quality|release-check|build|blender|webkit|safari|iphone|simctl|meshopt|gltfpack", re.IGNORECASE)
 
@@ -286,10 +286,11 @@ def lanejob_dir_is_trunk(cwd: str) -> bool:
         return False   # fail closed
 
 
-def trunk_release_rows(cwd: str) -> set[str]:
+def trunk_release_rows(cwd: str) -> set[tuple[str, ...]]:
     try:
         out = subprocess.run(["git", "-C", cwd, "show", "refs/remotes/origin/HEAD:.quality-gate.json"], capture_output=True, text=True, timeout=10, check=True).stdout
-        return {" ".join(row) for row in json.loads(out).get("release_commands", []) if isinstance(row, list)}
+        rows = {tuple(row) for row in json.loads(out).get("release_commands", []) if isinstance(row, list) and all(isinstance(w, str) and w and not re.search(r"\s", w) for w in row)}
+        return {r for r in rows if not any("webkit" in w.lower() for w in r) and " ".join(r) not in MAC_ONLY_ROWS}   # WebKit and Mac-only rows never take the GPU slot
     except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
         return set()   # fail closed
 
@@ -299,7 +300,7 @@ def lanejob_gpu_job_ok(job: list[str], cwd: str) -> bool:
         return False
     if job[0] == "node" and len(job) >= 2 and LANEJOB_GPU_STILLS_RE.fullmatch(job[1]):
         return all(LANEJOB_GPU_ARG_RE.fullmatch(w) for w in job[2:])
-    return " ".join(job) in trunk_release_rows(cwd)
+    return tuple(job) in trunk_release_rows(cwd)
 
 
 def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
