@@ -26,7 +26,10 @@ import deploy_guard as g  # noqa: E402
     "npx play''wright test",
     'npx play""wright test',
     "npx pla\\ywright test",
-    "node --test tests",                                  # Auditor on #131: a directory without the trailing slash
+    "node --test tests",
+    "node --test ./tests",                                # Auditor on #131: path-prefixed directory
+    "node --test ./origins",
+    "node --test ../x/tests",                                  # Auditor on #131: a directory without the trailing slash
     "npx 'playwright' test",
     'npx "play"wright test',
     "FOO=1 'npx' 'playwright' test",

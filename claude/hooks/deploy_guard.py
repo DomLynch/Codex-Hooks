@@ -31,7 +31,7 @@ HEAVY_RE = re.compile(
     r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
-    r"|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*[*?\[$]\S*|\S*/|\"\")(?=\s|$)|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+[^-\s.*]+(?=(?:\s+\d*>&?\S*)*\s*$)|tsx\s+--test\b(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*"   # dir, glob, substitution, tsx (Auditor on #129)
+    r"|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*[*?\[$]\S*|\S*/|\"\")(?=\s|$)|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*/)?[^\s./*-][^\s./*]*(?=(?:\s+\d*>&?\S*)*\s*$)|tsx\s+--test\b(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*"   # dir, glob, substitution, tsx (Auditor on #129)
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test(?:\s+-[^\s]*)*\s+[^-\s][^\s]*\s+[^-\s][^\s]*"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
