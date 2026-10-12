@@ -216,7 +216,7 @@ def filter_void_findings(verdict_text: str) -> tuple[str, list[str]]:
 STATE_VERBS = (r"crash\w*|held|on hold|reinstall\w*|roll(?:ed|ing)?[\s-]*back|landed|down|stopped|broke\w*|"
                r"restor\w*|paused|blocked|stuck|cancel\w*|disabled|enabled|unmerged|restart\w*|revert\w*|reject\w*|"
                r"running|published|done|complete\w*|trunk|exists?|offline|launched")
-NUMBER_WORDS = r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|dozen"   # a count is a claim, but not a skip trigger
+NUMBER_WORDS = r"(?:(?<!no )(?<!any )(?<!every )(?<!some )one(?!\s+(?:of|else|another|who)\b))|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|dozen"   # a count is a claim, but not a skip trigger
 MATERIAL_CLAIM_RE = re.compile(
     r"\b(" + STATE_VERBS + r"|" + NUMBER_WORDS + r"|live|merged?|deployed?|installed?|pass(?:ed|es)?|green|fixed|pushed|shipped|released|deleted|removed|wiped|"
     r"reverted|killed|mergeable|PRs?|CI|checks?|commits?|open|gh|saved|written|wrote|created|updated|ran|"
