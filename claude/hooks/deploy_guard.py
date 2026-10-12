@@ -31,6 +31,7 @@ HEAVY_RE = re.compile(
     r"npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|gate|quality|battery|stills|record|build-|contact-sheet|herolook-|pixelmator-|textures-)[\w-]*\.mjs|node\s+artifacts/\S+browser\S*\.mjs"
     r"|npm\s+run\s+(?:test:all|test:slow|test:browser|quality(?::\w+)?|build|release-checks?)\b|npm\s+(?:run\s+)?test\b(?!:)"
     r"|node\s+scripts/release-checks\.mjs"
+    r"|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*[*?\[$]\S*|\S*/|\"\")(?=\s|$)|(?:node|tsx)\s+--test\b(?:\s+-\S+)*\s+(?:\S*/)?[^\s./*-][^\s./*]*(?=(?:\s+\d*>&?\S*)*\s*$)|tsx\s+--test\b(?:\s+-\S+)*\s+[^-\s]\S*\s+[^-\s]\S*"   # dir, glob, substitution, tsx (Auditor on #129)
     r"|node\s+--test\s+tests/\*|node\s+--test\s*$|node\s+--test(?:\s+-[^\s]*)*\s+[^-\s][^\s]*\s+[^-\s][^\s]*"
     r"|(?:\S*/)?[Bb]lender\b|vite\s+build\b|meshopt\S*|gltfpack\b"
     r")"
@@ -312,7 +313,27 @@ def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the h
     return Path.home() / ".claude" / "logs" / "deploy_guard.log"
 
 
+SPLICE_WORD_RE = re.compile(r"(?:[\w.:/@=-]|'[\w.:/@=-]*'|\"[\w.:/@=-]*\")+")
+TOKEN_RE = re.compile(r"(?:[^\s'\"]|'[^']*'|\"[^\"]*\")+")
+
+
+def _dequote_heads(command: str) -> str:
+    """play''wright, 'playwright', "play"wright, pla\\ywright and 'npx' all run playwright. Undo quoting only on the first three simple words of each
+    segment (the command, its runner and its first argument); quoted DATA (a commit message) has spaces or punctuation and is left alone."""
+    command = re.sub(r"\\(?=\w)", "", command)
+    parts = re.split(r"(&&|\|\||[;&|\n])", command)
+    for i in range(0, len(parts), 2):
+        seen = [0]
+        def fix(m: re.Match) -> str:
+            seen[0] += 1
+            tok = m.group(0)
+            return re.sub(r"['\"]", "", tok) if seen[0] <= 3 and SPLICE_WORD_RE.fullmatch(tok) else tok
+        parts[i] = TOKEN_RE.sub(fix, parts[i])
+    return "".join(parts)
+
+
 def _runs(command: str) -> str:
+    command = _dequote_heads(command or "")
     runs = executable_text(command) if command else ""
     return "\n".join(seg for seg in SEGMENT_SPLIT_RE.split(runs) if seg.strip() and not ALLOW_RE.search(seg) and not HF_JOBS_RE.search(seg)) if runs else ""
 
