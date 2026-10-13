@@ -315,6 +315,70 @@ def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list
     return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
 
 
+# Strategy via Dom, 2026-10-13: 8 of 9 Stop blocks that morning were wording or attribution retries. The reviewer tags such a finding
+# [NOTE]. A tag is only a request: the code makes a finding advisory ONLY when the tag is there AND its whole body (quote and advice
+# removed) matches the attribution ALLOW-LIST below AND no defect word is in it (Auditor, #140: a deny-list over the defect's wording could not
+# fail closed, 8 of 8 real defects tagged [NOTE] came out advisory). Anything else loses its tag and blocks.
+NOTE_TAG_RE = re.compile(r"^\s*\[NOTE\]\s*", re.IGNORECASE)
+NOTE_ATTRIBUTION = [re.compile(p, re.I) for p in (
+    r"^This (?:is|was|reads as|is presented as|is stated as) (?:your own|a verified|an established|a confirmed)[^.;]{0,100}$",
+    r"^(?:Not|Never) checked by (?:me|the lane|this lane)[^.;]{0,80}$",
+    r"^[^.;]{0,100} (?:is|are|was) restated from [^.;]{0,100}(?:message|report|reply|PASS)[^.;]{0,60}$",
+    r"^(?:The )?(?:figure|number|count|state|claim)[^.;]{0,60} (?:comes|came) from [^.;]{0,100}$",
+    r"^(?:It|This) (?:is|was) (?:a )?(?:peer|Lead|Deploy|Strategy|Auditor)[^.;]{0,100}$",
+    # the exact wordings the reviewer prompt teaches (lib.audit_prompt.NOTE_EXAMPLES)
+    r"^Stated as your own fact$", r"^Attribute it to " + _PEER + r"$", r"^Tense: say it was [a-z]+ by " + _PEER + r"$",
+    r"^Not checked by me$", r"^Say " + _PEER + r" (?:reported it|reports it)$", r"^Figure restated from " + _PEER + r"'s message$",
+    r"^Attribute it$", r"^Label: say " + _PEER + r" reports it$",
+)]
+NOTE_DEFECT_VETO = re.compile(
+    r"contradict|conflicts? with|does(?:n't| not) match|differs? from|\bnot\b[^.;]{0,20}\b(?:run|ran|execut\w*|call\w*|written|pushed|merged)\b|"
+    r"\boutput\b|\bprints?\b|\bfail\w*|\bred\b|pending|in[_ ]progress|queued|\bdidn'?t\b|\bdid not\b|\bnever\b|"
+    r"\bno (?:command|tool|run|call|test|check|receipt)\b|\bcode\b|security|\btests?\b|stub|defect|\bbug\b|\bsha\b|\b[0-9a-f]{7,40}\b|"
+    r"\bwrong\b|\bincorrect\b|\bmissing\b|\bbroken\b|\bnot\b[^.;]{0,20}\b(?:in|on)\b", re.IGNORECASE)
+
+
+def _split_findings(verdict_text: str) -> list[str]:
+    """The numbered findings of a verdict, each with its continuation lines (indented or plain text under it)."""
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    blocks: list[list[str]] = []
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if m:
+            blocks.append([m.group(1)])
+        elif blocks and line.strip():
+            blocks[-1].append(line.strip())
+    return [" \n".join(b) for b in blocks]
+
+
+def is_note_finding(body: str) -> bool:
+    if not NOTE_TAG_RE.match(body):
+        return False
+    text = re.sub(r"\s+", " ", NOTE_TAG_RE.sub("", body, count=1))
+    sentences = _body_sentences(text)
+    stripped = " ".join(sentences)
+    if not sentences or NOTE_DEFECT_VETO.search(stripped):
+        return False
+    return all(any(p.match(x) for p in NOTE_ATTRIBUTION + ATTRIBUTION_SENTENCES) for x in sentences)
+
+
+def filter_note_findings(verdict_text: str) -> tuple[str, list[str]]:
+    """Move allow-listed [NOTE] findings out of the block: (text, notes). Any other finding keeps blocking, without its tag."""
+    kept, notes, tagged = [], [], False
+    for body in _split_findings(verdict_text):
+        tagged = tagged or bool(NOTE_TAG_RE.match(body))
+        if is_note_finding(body):
+            notes.append(re.sub(r"\s+", " ", NOTE_TAG_RE.sub("", body, count=1)))
+            log(f"NOTE_FINDING (advisory, any turn): {body[:400]}")
+        else:
+            kept.append(NOTE_TAG_RE.sub("", body, count=1))   # a tagged finding that is not an attribution shape blocks, without its tag
+    if not tagged:
+        return verdict_text, []
+    if not kept:
+        return "VERDICT: PASS", notes
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), notes
+
+
 def filter_unanchored_findings(verdict_text: str, slice_text: str) -> tuple[str, list[str]]:
     """Drop numbered findings whose [quote: "..."] anchor is not in the slice the reviewer saw.
     Premise-wrong findings ('no receipt shown' when the receipt is in the slice, 'claims complete' when it did
@@ -523,6 +587,31 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
     return f"no edits, no claim, {len(text)} chars"
 
 
+# Strategy, 2026-10-13: on a text-only turn only a FIRST-PERSON claim is a possible fabricated receipt; a clause that attributes the figure or
+# state to a NAMED lane ("Lead reports 54 rows", "per Deploy") is not. Auditor, #140: any first-person word keeps the sentence reviewed,
+# each clause needs its own attribution, and the generic "the agent / the peer / a peer / another lane" never clears a claim.
+_SKIP_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels)"
+PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _SKIP_PEER + r"\b|\b" + _SKIP_PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
+PEER_LEAD_RE = re.compile(r"^(?:(?:per|according to)\s+)?" + _SKIP_PEER + r"$", re.IGNORECASE)   # "Per Deploy," or "Lead:" attributes the next clause
+FIRST_PERSON_RE = re.compile(r"\b(?:I|I'm|I've|I'll|I'd|we|we've|our|ours|my|me|mine|myself|us)\b", re.IGNORECASE)
+_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s*|:\s+|\s*[\u2014\u2013]\s*|\s+-\s+|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
+
+
+def unattributed_claim(text: str) -> bool:
+    """True when some sentence of a text-only turn claims a state or a run that is first-person or has no named-peer attribution."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if not STATUS_CLAIM_RE.search(sentence):
+            continue
+        if FIRST_PERSON_RE.search(sentence):
+            return True
+        lead = False   # "Per Deploy," / "According to Lead," attributes the clause after it, and only that one
+        for clause in (c for c in _CLAUSE_SPLIT_RE.split(sentence) if c.strip()):
+            if STATUS_CLAIM_RE.search(clause) and not (PEER_ATTRIBUTED_RE.search(clause) or lead):
+                return True
+            lead = bool(PEER_LEAD_RE.match(clause.strip()))
+    return False
+
+
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
     """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
     2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
@@ -533,9 +622,9 @@ def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> st
         return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
-    if STATUS_CLAIM_RE.search(text):
-        return ""   # Strategy, option B: a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
-    return f"no tool calls, {len(text)} chars"
+    if unattributed_claim(text):
+        return ""   # a first-person or unattributed run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
+    return f"no tool calls, {len(text)} chars"   # a figure or state attributed to a peer ("Lead reports", "per Deploy") is skipped (Strategy, 2026-10-13)
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -867,10 +956,12 @@ def main() -> None:
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
         dropped = unanchored + dropped
+        verdict_text, notes = filter_note_findings(verdict_text)
         verdict_text, wording = filter_wording_findings(
             verdict_text, not edited_paths(entries) and not (turn_commits(repo_cwd, since) or snapshot))
+        wording = notes + wording
         if wording:   # advisory only: shown in the lane's transcript, never re-prompts
-            _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nReviewer wording advisory (not blocking): "
+            _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nReviewer advisory (not blocking): "
                                 + " | ".join(w[:160] for w in wording[:3])).strip()
         if wording and verdict_status(verdict_text) == "PASS":
             log(f"WORDING_ONLY: all {len(wording)} finding(s) are wording; verdict -> PASS")
