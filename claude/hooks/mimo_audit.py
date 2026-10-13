@@ -592,9 +592,9 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
 # each clause needs its own attribution, and the generic "the agent / the peer / a peer / another lane" never clears a claim.
 _SKIP_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels)"
 PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _SKIP_PEER + r"\b|\b" + _SKIP_PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
-PEER_LEAD_RE = re.compile(r"^(?:per|according to)\s+" + _SKIP_PEER + r"$", re.IGNORECASE)
+PEER_LEAD_RE = re.compile(r"^(?:(?:per|according to)\s+)?" + _SKIP_PEER + r"$", re.IGNORECASE)   # "Per Deploy," or "Lead:" attributes the next clause
 FIRST_PERSON_RE = re.compile(r"\b(?:I|I'm|I've|I'll|I'd|we|we've|our|ours|my|me|mine|myself|us)\b", re.IGNORECASE)
-_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s*|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
+_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s*|:\s+|\s*[\u2014\u2013]\s*|\s+-\s+|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
 
 
 def unattributed_claim(text: str) -> bool:

@@ -232,5 +232,14 @@ def test_every_note_wording_the_prompt_teaches_is_advisory():
 def test_a_trailing_comma_clause_claim_after_a_peer_attribution_is_reviewed(tmp_path):
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("{}\n")
-    for msg in ("Lead reports DP is live, merged #2482 too.", "Lead reports 54 rows, deployed DN.", "Per Deploy, DA is live, published AB."):
+    for msg in ("Lead reports DP is live, merged #2482 too.", "Lead reports 54 rows, deployed DN.", "Per Deploy, DA is live, published AB.",
+                "Lead reports DQ is live \u2014 merged #2489.", "Lead reports DQ is live \u2013 merged #2489.", "Lead reports DQ is live - merged #2489.",
+                "Lead reports DQ is live: merged #2489 as well."):
         assert not m.no_tool_calls([], msg, str(transcript)), msg
+
+
+def test_a_name_colon_lead_in_attributes_the_next_clause(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n")
+    for msg in ("Lead: DQ is live.", "Per Deploy: DA is live.", "Deploy says DA is live - 10:24 Dubai."):
+        assert m.no_tool_calls([], msg, str(transcript)), msg
