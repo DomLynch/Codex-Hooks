@@ -326,6 +326,10 @@ NOTE_ATTRIBUTION = [re.compile(p, re.I) for p in (
     r"^[^.;]{0,100} (?:is|are|was) restated from [^.;]{0,100}(?:message|report|reply|PASS)[^.;]{0,60}$",
     r"^(?:The )?(?:figure|number|count|state|claim)[^.;]{0,60} (?:comes|came) from [^.;]{0,100}$",
     r"^(?:It|This) (?:is|was) (?:a )?(?:peer|Lead|Deploy|Strategy|Auditor)[^.;]{0,100}$",
+    # the exact wordings the reviewer prompt teaches (lib.audit_prompt.NOTE_EXAMPLES)
+    r"^Stated as your own fact$", r"^Attribute it to " + _PEER + r"$", r"^Tense: say it was [a-z]+ by " + _PEER + r"$",
+    r"^Not checked by me$", r"^Say " + _PEER + r" (?:reported it|reports it)$", r"^Figure restated from " + _PEER + r"'s message$",
+    r"^Attribute it$", r"^Label: say " + _PEER + r" reports it$",
 )]
 NOTE_DEFECT_VETO = re.compile(
     r"contradict|conflicts? with|does(?:n't| not) match|differs? from|\bnot\b[^.;]{0,20}\b(?:run|ran|execut\w*|call\w*|written|pushed|merged)\b|"
@@ -588,8 +592,9 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
 # each clause needs its own attribution, and the generic "the agent / the peer / a peer / another lane" never clears a claim.
 _SKIP_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels)"
 PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _SKIP_PEER + r"\b|\b" + _SKIP_PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
+PEER_LEAD_RE = re.compile(r"^(?:per|according to)\s+" + _SKIP_PEER + r"$", re.IGNORECASE)
 FIRST_PERSON_RE = re.compile(r"\b(?:I|I'm|I've|I'll|I'd|we|we've|our|ours|my|me|mine|myself|us)\b", re.IGNORECASE)
-_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s+(?:so|and|but|then)\s+|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
+_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s*|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
 
 
 def unattributed_claim(text: str) -> bool:
@@ -599,8 +604,11 @@ def unattributed_claim(text: str) -> bool:
             continue
         if FIRST_PERSON_RE.search(sentence):
             return True
-        if any(STATUS_CLAIM_RE.search(c) and not PEER_ATTRIBUTED_RE.search(c) for c in _CLAUSE_SPLIT_RE.split(sentence)):
-            return True
+        lead = False   # "Per Deploy," / "According to Lead," attributes the clause after it, and only that one
+        for clause in (c for c in _CLAUSE_SPLIT_RE.split(sentence) if c.strip()):
+            if STATUS_CLAIM_RE.search(clause) and not (PEER_ATTRIBUTED_RE.search(clause) or lead):
+                return True
+            lead = bool(PEER_LEAD_RE.match(clause.strip()))
     return False
 
 

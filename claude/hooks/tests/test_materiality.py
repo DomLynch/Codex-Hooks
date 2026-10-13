@@ -214,3 +214,23 @@ def test_spoofed_peer_attribution_on_a_text_only_turn_is_reviewed(tmp_path):
         assert not m.no_tool_calls([], msg, str(transcript)), msg
     for msg in ("Lead reports 54 rows are live.", "Per Deploy, DA is live.", "Auditor PASS per Lead, and Deploy says it is merged."):
         assert m.no_tool_calls([], msg, str(transcript)), msg                 # named-peer attribution alone is still skipped
+
+
+def test_every_note_wording_the_prompt_teaches_is_advisory():
+    from lib.audit_prompt import AUDIT_PROMPT, NOTE_EXAMPLES
+    for e in NOTE_EXAMPLES:
+        assert e in AUDIT_PROMPT, e
+        for lane, verb in (("Lead", "merged"), ("Deploy", "deployed")):
+            body = '[NOTE] [quote: "x y z"] ' + e.replace("<lane>", lane).replace("<verb>", verb)
+            assert m.is_note_finding(body), body
+    # Auditor, #140 re-probe: the normal shapes a reviewer writes
+    for body in ('[NOTE] [quote: "x"] Stated as your own fact; attribute it to Lead.', '[NOTE] [quote: "x"] Tense: say it was merged by Deploy.'):
+        assert m.is_note_finding(body), body
+    assert "AUDIT_PROMPT.format" or AUDIT_PROMPT.format(transcript="t")      # the examples do not break str.format
+
+
+def test_a_trailing_comma_clause_claim_after_a_peer_attribution_is_reviewed(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n")
+    for msg in ("Lead reports DP is live, merged #2482 too.", "Lead reports 54 rows, deployed DN.", "Per Deploy, DA is live, published AB."):
+        assert not m.no_tool_calls([], msg, str(transcript)), msg
