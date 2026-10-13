@@ -46,6 +46,12 @@ SESSION_BASELINE = """# V4/MCP Session Baseline
 """
 SESSION_BASELINE += RELEASE_POLICY + COMPLETION_POLICY + "\n"
 
+# Same words as claude/hooks/lib/policies.py DELEGATION_POLICY (Dom, 2026-10-13); the Codex copy is injected with the baseline.
+DELEGATION_POLICY = """# Delegation (the same paragraph as CLAUDE.md, RPG-game#2499)
+- **Dom's standing delegation (2026-10-13):** Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS. A written ruling from either is Dom's word; do not wait for Dom. Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds. Dom's direct word to a lane overrides a relayed plan. Waiting on Dom for anything else is a defect; flag it to Lead.
+"""
+SESSION_BASELINE += DELEGATION_POLICY
+
 BACKLOG_SKIP_PARTS = {
     ".git",
     ".venv",

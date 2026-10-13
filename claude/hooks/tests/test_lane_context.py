@@ -364,6 +364,31 @@ def test_session_start_emits_one_valid_json_object(monkeypatch, capsys):
     assert ctx.startswith("RECEIPT") and ss.SESSION_BASELINE.strip()[:40] in ctx
 
 
+DELEGATION_LINES = (
+    "Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS.",
+    "A written ruling from either is Dom's word; do not wait for Dom.",
+    'Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds.',
+    "Dom's direct word to a lane overrides a relayed plan.",
+    'Waiting on Dom for anything else is a defect; flag it to Lead.',
+)
+
+
+def test_session_start_injects_the_delegation_paragraph(monkeypatch, capsys):
+    """Dom, 2026-10-13: lanes waited on Dom after every /clear because the authority rule lived only in conversations."""
+    import session_start as ss
+    monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
+    monkeypatch.setattr(ss, "load_handoff", lambda: {})
+    monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
+    monkeypatch.setattr(ss, "remember_repo", lambda p: None)
+    monkeypatch.setattr(ss, "log", lambda *a: None)
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere", "prompt": "hi"})))
+    ss.main()
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    for line in DELEGATION_LINES:
+        assert line in ctx, line
+    assert ctx.startswith("RECEIPT")                        # still one object, receipt first
+
+
 def test_worktree_lane_comes_from_the_title_even_right_after_a_clear(tmp_path):
     """After /clear the new transcript has no title when SessionStart runs; the lane's earlier one in the same
     app-worktree folder does. Title words map to the ~/Developer/frankendom-<key> folder."""

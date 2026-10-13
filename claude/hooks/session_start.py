@@ -18,7 +18,7 @@ from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff
 from lib.handoff_check import STATE_DOC_ALIASES, project_slug
 from lib.context_size import session_title, title_lane
-from lib.policies import COMPLETION_POLICY, RELEASE_POLICY
+from lib.policies import COMPLETION_POLICY, DELEGATION_POLICY, RELEASE_POLICY
 
 
 COMPONENT = "session_start"
@@ -365,6 +365,7 @@ def main() -> None:
         if lane:
             additional_context(restart_note(cwd, lane))
         additional_context(memory_receipt(home if lane and home.is_dir() else cwd, session_id))
+        additional_context(DELEGATION_POLICY)
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])
