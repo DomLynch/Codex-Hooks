@@ -364,6 +364,31 @@ def test_session_start_emits_one_valid_json_object(monkeypatch, capsys):
     assert ctx.startswith("RECEIPT") and ss.SESSION_BASELINE.strip()[:40] in ctx
 
 
+DELEGATION_LINES = (
+    "Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS.",
+    "A written ruling from either is Dom's word; do not wait for Dom.",
+    'Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds.',
+    "Dom's direct word to a lane overrides a relayed plan.",
+    'Waiting on Dom for anything else is a defect; flag it to Lead.',
+)
+
+
+def test_session_start_injects_the_delegation_paragraph(monkeypatch, capsys):
+    """Dom, 2026-10-13: lanes waited on Dom after every /clear because the authority rule lived only in conversations."""
+    import session_start as ss
+    monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
+    monkeypatch.setattr(ss, "load_handoff", lambda: {})
+    monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
+    monkeypatch.setattr(ss, "remember_repo", lambda p: None)
+    monkeypatch.setattr(ss, "log", lambda *a: None)
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere/frankendom-lead", "prompt": "hi"})))
+    ss.main()
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    for line in DELEGATION_LINES:
+        assert line in ctx, line
+    assert ctx.startswith("RECEIPT")                        # still one object, receipt first
+
+
 def test_worktree_lane_comes_from_the_title_even_right_after_a_clear(tmp_path):
     """After /clear the new transcript has no title when SessionStart runs; the lane's earlier one in the same
     app-worktree folder does. Title words map to the ~/Developer/frankendom-<key> folder."""
@@ -538,3 +563,22 @@ def test_pointer_prompt_is_under_300_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(u, "active_lessons", lambda lane: [])
     u.context_for("fix src/a.ts", Path("/tmp/x"), "s1")
     assert len(u.context_for("fix src/a.ts", Path("/tmp/x"), "s1").encode()) < 300
+
+
+def test_a_non_frankendom_cwd_gets_no_delegation_paragraph(monkeypatch, capsys):
+    """Auditor, #141: ~/.claude/hooks serves every project; the paragraph is for Frankendom checkouts only."""
+    import tempfile
+    import session_start as ss
+    tmp = tempfile.TemporaryDirectory()      # not tmp_path: pytest puts this test's own name (which says frankendom) in that path
+    other = Path(tmp.name) / "Research-Agent-Bot"
+    other.mkdir()
+    monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
+    monkeypatch.setattr(ss, "load_handoff", lambda: {})
+    monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
+    monkeypatch.setattr(ss, "remember_repo", lambda p: None)
+    monkeypatch.setattr(ss, "log", lambda *a: None)
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": str(other), "prompt": "hi"})))
+    ss.main()
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "Dom's standing delegation" not in ctx and ctx.startswith("RECEIPT")
+    assert ss.is_frankendom_cwd(Path("/Users/x/Developer/frankendom-lead")) and not ss.is_frankendom_cwd(other)

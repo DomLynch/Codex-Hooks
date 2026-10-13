@@ -65,3 +65,20 @@ class SessionStartRoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+DELEGATION_LINES = (
+    "Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS.",
+    "A written ruling from either is Dom's word; do not wait for Dom.",
+    'Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds.',
+    "Dom's direct word to a lane overrides a relayed plan.",
+    'Waiting on Dom for anything else is a defect; flag it to Lead.',
+)
+
+
+class DelegationBaselineTests(unittest.TestCase):
+    def test_the_codex_baseline_carries_dom_s_delegation_paragraph(self) -> None:
+        # Dom, 2026-10-13: lanes waited on Dom after every /clear; the same words as claude/hooks/lib/policies.py DELEGATION_POLICY.
+        for line in DELEGATION_LINES:
+            self.assertIn(line, session_start.delegation_for(Path("/Users/x/Developer/frankendom-lead")), line)
+        self.assertEqual(session_start.delegation_for(Path(tempfile.gettempdir())), "")   # not a Frankendom checkout: none

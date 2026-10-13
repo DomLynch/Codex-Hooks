@@ -18,7 +18,7 @@ from lib.quality import mine_backlog
 from lib.state import load_handoff, now_iso, write_handoff
 from lib.handoff_check import STATE_DOC_ALIASES, project_slug
 from lib.context_size import session_title, title_lane
-from lib.policies import COMPLETION_POLICY, RELEASE_POLICY
+from lib.policies import COMPLETION_POLICY, DELEGATION_POLICY, RELEASE_POLICY
 
 
 COMPONENT = "session_start"
@@ -66,6 +66,23 @@ BACKLOG_SKIP_PARTS = {
 # rejected the concatenation as invalid JSON ("hook_non_blocking_error" in every lane transcript) and dropped all
 # of it, so no lane ever saw its memory receipt or state brief after a /clear.
 _CONTEXT: list[str] = []
+
+
+def is_frankendom_cwd(cwd: Path) -> bool:
+    """A Frankendom checkout (a lane folder or app worktree under a path naming it, or a clone of RPG-game). ~/.claude/hooks serves every
+    project, so the delegation paragraph must not reach the others (Auditor, #141)."""
+    if "frankendom" in str(cwd).lower():
+        return True
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return False
+    return "rpg-game" in out.lower()
+
+
+def delegation_for(cwd: Path) -> str:
+    return DELEGATION_POLICY if is_frankendom_cwd(cwd) else ""
 
 
 def additional_context(context: str) -> None:
@@ -365,6 +382,8 @@ def main() -> None:
         if lane:
             additional_context(restart_note(cwd, lane))
         additional_context(memory_receipt(home if lane and home.is_dir() else cwd, session_id))
+        if delegation_for(cwd):
+            additional_context(delegation_for(cwd))
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])

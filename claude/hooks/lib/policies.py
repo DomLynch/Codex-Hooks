@@ -74,3 +74,11 @@ def is_project_work(prompt: str) -> bool:
     if PROJECT_WORDS.search(prompt):
         return True
     return bool(re.search(r"[\w./ -]+\.(py|ts|tsx|js|go|rs|md|toml|json|yaml|yml)\b", prompt))
+
+
+# Dom, 2026-10-13 ("YES!!" to Hooks Dev in chat): lanes kept waiting on Dom after every /clear because the delegation lived only in conversations.
+# Injected by session_start for every session; Lead's CLAUDE.md paragraph carries the same rule in the repo. Edit the words in ONE place.
+DELEGATION_POLICY = """# Delegation (the same paragraph as CLAUDE.md, RPG-game#2499)
+- **Dom's standing delegation (2026-10-13):** Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS. A written ruling from either is Dom's word; do not wait for Dom. Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds. Dom's direct word to a lane overrides a relayed plan. Waiting on Dom for anything else is a defect; flag it to Lead.
+"""
+
