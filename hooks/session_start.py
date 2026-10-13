@@ -50,7 +50,6 @@ SESSION_BASELINE += RELEASE_POLICY + COMPLETION_POLICY + "\n"
 DELEGATION_POLICY = """# Delegation (the same paragraph as CLAUDE.md, RPG-game#2499)
 - **Dom's standing delegation (2026-10-13):** Lead Dev and Project Strategy carry Dom's authority for release, pipeline, CI, config, lane and order-of-work decisions in this repo, on the Mac and on the VPS. A written ruling from either is Dom's word; do not wait for Dom. Exceptions that still need Dom in chat: spending money, legal, wiping player data, parties/guilds. Dom's direct word to a lane overrides a relayed plan. Waiting on Dom for anything else is a defect; flag it to Lead.
 """
-SESSION_BASELINE += DELEGATION_POLICY
 
 BACKLOG_SKIP_PARTS = {
     ".git",
@@ -63,6 +62,23 @@ BACKLOG_SKIP_PARTS = {
     "agent_archived",
     "agent_legacy",
 }
+
+
+def is_frankendom_cwd(cwd: Path) -> bool:
+    """A Frankendom checkout (a lane folder or app worktree under a path naming it, or a clone of RPG-game). ~/.claude/hooks serves every
+    project, so the delegation paragraph must not reach the others (Auditor, #141)."""
+    if "frankendom" in str(cwd).lower():
+        return True
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return False
+    return "rpg-game" in out.lower()
+
+
+def delegation_for(cwd: Path) -> str:
+    return DELEGATION_POLICY if is_frankendom_cwd(cwd) else ""
 
 
 def additional_context(context: str) -> None:
@@ -157,10 +173,10 @@ def main() -> None:
         if handoff or mined:
             context = format_briefing(handoff, mined)
             log(COMPONENT, f"context injected; backlog={len(handoff.get('queued_backlog') or mined)}")
-            additional_context(context)
+            additional_context(context + ("\n" + delegation_for(cwd) if delegation_for(cwd) else ""))
         else:
             log(COMPONENT, "baseline context injected; no handoff/backlog")
-            additional_context(SESSION_BASELINE)
+            additional_context(SESSION_BASELINE + delegation_for(cwd))
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 

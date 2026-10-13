@@ -381,7 +381,7 @@ def test_session_start_injects_the_delegation_paragraph(monkeypatch, capsys):
     monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
     monkeypatch.setattr(ss, "remember_repo", lambda p: None)
     monkeypatch.setattr(ss, "log", lambda *a: None)
-    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere", "prompt": "hi"})))
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": "/nowhere/frankendom-lead", "prompt": "hi"})))
     ss.main()
     ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
     for line in DELEGATION_LINES:
@@ -563,3 +563,22 @@ def test_pointer_prompt_is_under_300_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(u, "active_lessons", lambda lane: [])
     u.context_for("fix src/a.ts", Path("/tmp/x"), "s1")
     assert len(u.context_for("fix src/a.ts", Path("/tmp/x"), "s1").encode()) < 300
+
+
+def test_a_non_frankendom_cwd_gets_no_delegation_paragraph(monkeypatch, capsys):
+    """Auditor, #141: ~/.claude/hooks serves every project; the paragraph is for Frankendom checkouts only."""
+    import tempfile
+    import session_start as ss
+    tmp = tempfile.TemporaryDirectory()      # not tmp_path: pytest puts this test's own name (which says frankendom) in that path
+    other = Path(tmp.name) / "Research-Agent-Bot"
+    other.mkdir()
+    monkeypatch.setattr(ss, "memory_receipt", lambda cwd, sid="": "RECEIPT")
+    monkeypatch.setattr(ss, "load_handoff", lambda: {})
+    monkeypatch.setattr(ss, "is_git_repo", lambda p: False)
+    monkeypatch.setattr(ss, "remember_repo", lambda p: None)
+    monkeypatch.setattr(ss, "log", lambda *a: None)
+    monkeypatch.setattr(ss.sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "cwd": str(other), "prompt": "hi"})))
+    ss.main()
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "Dom's standing delegation" not in ctx and ctx.startswith("RECEIPT")
+    assert ss.is_frankendom_cwd(Path("/Users/x/Developer/frankendom-lead")) and not ss.is_frankendom_cwd(other)

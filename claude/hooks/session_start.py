@@ -68,6 +68,23 @@ BACKLOG_SKIP_PARTS = {
 _CONTEXT: list[str] = []
 
 
+def is_frankendom_cwd(cwd: Path) -> bool:
+    """A Frankendom checkout (a lane folder or app worktree under a path naming it, or a clone of RPG-game). ~/.claude/hooks serves every
+    project, so the delegation paragraph must not reach the others (Auditor, #141)."""
+    if "frankendom" in str(cwd).lower():
+        return True
+    try:
+        import subprocess
+        out = subprocess.run(["git", "-C", str(cwd), "remote", "get-url", "origin"], capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return False
+    return "rpg-game" in out.lower()
+
+
+def delegation_for(cwd: Path) -> str:
+    return DELEGATION_POLICY if is_frankendom_cwd(cwd) else ""
+
+
 def additional_context(context: str) -> None:
     _CONTEXT.append(context)
 
@@ -365,7 +382,8 @@ def main() -> None:
         if lane:
             additional_context(restart_note(cwd, lane))
         additional_context(memory_receipt(home if lane and home.is_dir() else cwd, session_id))
-        additional_context(DELEGATION_POLICY)
+        if delegation_for(cwd):
+            additional_context(delegation_for(cwd))
         handoff = handoff_for_cwd(load_handoff(), cwd)
         if handoff.get("queued_backlog"):
             original_count = len(handoff.get("queued_backlog") or [])
