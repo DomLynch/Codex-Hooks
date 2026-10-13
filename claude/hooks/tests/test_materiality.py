@@ -155,7 +155,7 @@ def _note_verdict(*findings):
 
 
 def test_note_tagged_attribution_is_advisory_on_any_turn():
-    v = _note_verdict('[NOTE] [quote: "Lead reports 54 rows are live"] This is stated as your own fact; nothing in the slice backs it.')
+    v = _note_verdict('[NOTE] [quote: "Lead reports 54 rows are live"] This is stated as your own fact; nothing in the slice backs this.')
     text, notes = m.filter_note_findings(v)
     assert text == "VERDICT: PASS" and len(notes) == 1 and not notes[0].startswith("[NOTE]")
 
@@ -164,22 +164,53 @@ def test_untagged_or_contradicting_findings_still_block():
     contradiction = '[quote: "54 rows are live"] The gh output in this turn prints 40 rows, so this contradicts the tool output.'
     text, notes = m.filter_note_findings(_note_verdict(contradiction))
     assert text.startswith("VERDICT: ISSUES") and not notes                      # untagged: fail closed
-    tagged = "[NOTE] " + contradiction
-    text, notes = m.filter_note_findings(_note_verdict(tagged))
+    text, notes = m.filter_note_findings(_note_verdict("[NOTE] " + contradiction))
     assert text.startswith("VERDICT: ISSUES") and not notes and "[NOTE]" not in text   # a mis-tagged contradiction still blocks
-    ran = '[NOTE] [quote: "I ran the suite"] No tool call in the slice ran it.'
-    assert m.filter_note_findings(_note_verdict(ran))[0].startswith("VERDICT: ISSUES")
+
+
+# Auditor, #140 @c0e2e45 probe 1: real defects tagged [NOTE] must ALL block (the allow-list fails closed).
+TAGGED_DEFECTS = (
+    "The gh output in this turn prints 40 rows.", "Shard 5 failed in the rollup above.", "The suite didn't run in this slice.",
+    "The suite was never executed.", "The head is 1f429b040, not 7b2f53d63.",
+    "Assignment in the condition: the guard is always true (code defect).", "Three checks are still IN_PROGRESS.",
+    "No command in the slice deploys anything.",
+)
+
+
+def test_every_real_defect_tagged_note_still_blocks():
+    for d in TAGGED_DEFECTS:
+        text, notes = m.filter_note_findings(_note_verdict(f'[NOTE] [quote: "x y z"] {d}'))
+        assert text.startswith("VERDICT: ISSUES") and not notes, d
+
+
+def test_a_multi_line_finding_keeps_its_continuation_lines():
+    v = 'VERDICT: ISSUES\n1. [NOTE] [quote: "x"] This is stated as your own fact.\n2. [quote: "y"] real defect\n   continued: second line'
+    text, notes = m.filter_note_findings(v)
+    assert len(notes) == 1 and "continued: second line" in text and text.count("\n") >= 1 and text.startswith("VERDICT: ISSUES")
+    v2 = 'VERDICT: ISSUES\n1. [NOTE] [quote: "x"] This is stated as your own fact.\n   but the output shows 2 failed'
+    assert m.filter_note_findings(v2)[0].startswith("VERDICT: ISSUES")           # a defect on a continuation line blocks the finding
 
 
 def test_mixed_findings_keep_only_the_blocking_one():
     block = '[quote: "tests pass"] The tool output shows 2 failed.'
-    note = '[NOTE] [quote: "per Lead"] Attribution wording.'
+    note = '[NOTE] [quote: "per Lead"] This is stated as your own fact.'
     text, notes = m.filter_note_findings(_note_verdict(note, block))
     assert text.startswith("VERDICT: ISSUES") and "1. [quote: \"tests pass\"]" in text and len(notes) == 1
 
 
-def test_first_person_fabricated_receipt_on_a_text_only_turn_is_reviewed(tmp_path):
+# Auditor, #140 probe 3: each of these text-only turns has an unattributed or first-person claim and must be REVIEWED.
+SPOOFS = (
+    "Lead reports 54 rows are live and I merged it.", "Per Lead, I deployed DN and it is live.",
+    "Lead reports X; I ran the suite and all tests pass.", "Deploy said to ship it, so I merged #2482 and DP is live.",
+    "I merged it, per Deploy.", "the peer says 400/400 pass, verified by me.", "The suite passes, according to the agent.",
+    "I ran the suite and all tests pass.", "Lead reports 54 rows are live. I merged it.",
+)
+
+
+def test_spoofed_peer_attribution_on_a_text_only_turn_is_reviewed(tmp_path):
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("{}\n")
-    assert not m.no_tool_calls([], "I ran the suite and all tests pass.", str(transcript))
-    assert not m.no_tool_calls([], "Lead reports 54 rows are live. I merged it.", str(transcript))   # one unattributed claim is enough
+    for msg in SPOOFS:
+        assert not m.no_tool_calls([], msg, str(transcript)), msg
+    for msg in ("Lead reports 54 rows are live.", "Per Deploy, DA is live.", "Auditor PASS per Lead, and Deploy says it is merged."):
+        assert m.no_tool_calls([], msg, str(transcript)), msg                 # named-peer attribution alone is still skipped

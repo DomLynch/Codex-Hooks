@@ -315,30 +315,59 @@ def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list
     return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
 
 
-# Strategy via Dom, 2026-10-13: 8 of 9 Stop blocks that morning were wording or attribution retries. The reviewer now tags such a finding
-# [NOTE]; a tagged finding is a one-line advisory on ANY turn, never a re-prompt. Untagged means block (fail closed), and a tagged finding
-# that says the claim contradicts tool output, or that a run or call never happened, is a miscount or a fabricated receipt: it blocks anyway.
+# Strategy via Dom, 2026-10-13: 8 of 9 Stop blocks that morning were wording or attribution retries. The reviewer tags such a finding
+# [NOTE]. A tag is only a request: the code makes a finding advisory ONLY when the tag is there AND its whole body (quote and advice
+# removed) matches the attribution ALLOW-LIST below AND no defect word is in it (Auditor, #140: a deny-list over the defect's wording could not
+# fail closed, 8 of 8 real defects tagged [NOTE] came out advisory). Anything else loses its tag and blocks.
 NOTE_TAG_RE = re.compile(r"^\s*\[NOTE\]\s*", re.IGNORECASE)
-CONTRADICTION_RE = re.compile(
-    r"contradict|conflicts? with|does(?:n't| not) match|differs? from|(?:tool )?output (?:shows|says|prints|reads)|"
-    r"never (?:ran|run|called)|\bno (?:tool call|run)\b|\bwas not run\b|\bnot run\b", re.IGNORECASE)
+NOTE_ATTRIBUTION = [re.compile(p, re.I) for p in (
+    r"^This (?:is|was|reads as|is presented as|is stated as) (?:your own|a verified|an established|a confirmed)[^.;]{0,100}$",
+    r"^(?:Not|Never) checked by (?:me|the lane|this lane)[^.;]{0,80}$",
+    r"^[^.;]{0,100} (?:is|are|was) restated from [^.;]{0,100}(?:message|report|reply|PASS)[^.;]{0,60}$",
+    r"^(?:The )?(?:figure|number|count|state|claim)[^.;]{0,60} (?:comes|came) from [^.;]{0,100}$",
+    r"^(?:It|This) (?:is|was) (?:a )?(?:peer|Lead|Deploy|Strategy|Auditor)[^.;]{0,100}$",
+)]
+NOTE_DEFECT_VETO = re.compile(
+    r"contradict|conflicts? with|does(?:n't| not) match|differs? from|\bnot\b[^.;]{0,20}\b(?:run|ran|execut\w*|call\w*|written|pushed|merged)\b|"
+    r"\boutput\b|\bprints?\b|\bfail\w*|\bred\b|pending|in[_ ]progress|queued|\bdidn'?t\b|\bdid not\b|\bnever\b|"
+    r"\bno (?:command|tool|run|call|test|check|receipt)\b|\bcode\b|security|\btests?\b|stub|defect|\bbug\b|\bsha\b|\b[0-9a-f]{7,40}\b|"
+    r"\bwrong\b|\bincorrect\b|\bmissing\b|\bbroken\b|\bnot\b[^.;]{0,20}\b(?:in|on)\b", re.IGNORECASE)
+
+
+def _split_findings(verdict_text: str) -> list[str]:
+    """The numbered findings of a verdict, each with its continuation lines (indented or plain text under it)."""
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    blocks: list[list[str]] = []
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if m:
+            blocks.append([m.group(1)])
+        elif blocks and line.strip():
+            blocks[-1].append(line.strip())
+    return [" \n".join(b) for b in blocks]
+
+
+def is_note_finding(body: str) -> bool:
+    if not NOTE_TAG_RE.match(body):
+        return False
+    text = re.sub(r"\s+", " ", NOTE_TAG_RE.sub("", body, count=1))
+    sentences = _body_sentences(text)
+    stripped = " ".join(sentences)
+    if not sentences or NOTE_DEFECT_VETO.search(stripped):
+        return False
+    return all(any(p.match(x) for p in NOTE_ATTRIBUTION + ATTRIBUTION_SENTENCES) for x in sentences)
 
 
 def filter_note_findings(verdict_text: str) -> tuple[str, list[str]]:
-    """Move [NOTE]-tagged findings out of the block: (text, notes). A tagged finding that reads as a contradiction stays."""
-    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    """Move allow-listed [NOTE] findings out of the block: (text, notes). Any other finding keeps blocking, without its tag."""
     kept, notes, tagged = [], [], False
-    for line in verdict_text.splitlines()[1:]:
-        m = numbered.match(line)
-        if not m:
-            continue
-        body = m.group(1)
+    for body in _split_findings(verdict_text):
         tagged = tagged or bool(NOTE_TAG_RE.match(body))
-        if NOTE_TAG_RE.match(body) and not CONTRADICTION_RE.search(body):
-            notes.append(NOTE_TAG_RE.sub("", body, count=1))
+        if is_note_finding(body):
+            notes.append(re.sub(r"\s+", " ", NOTE_TAG_RE.sub("", body, count=1)))
             log(f"NOTE_FINDING (advisory, any turn): {body[:400]}")
         else:
-            kept.append(NOTE_TAG_RE.sub("", body, count=1))   # a mis-tagged contradiction blocks, without its tag
+            kept.append(NOTE_TAG_RE.sub("", body, count=1))   # a tagged finding that is not an attribution shape blocks, without its tag
     if not tagged:
         return verdict_text, []
     if not kept:
@@ -554,9 +583,25 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
     return f"no edits, no claim, {len(text)} chars"
 
 
-# Strategy, 2026-10-13: on a text-only turn only a FIRST-PERSON claim is a possible fabricated receipt; a sentence that attributes the figure
-# or state to a peer ("Lead reports 54 rows", "per Deploy", "Auditor PASS per Lead") is not.
-PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _PEER + r"\b|\b" + _PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
+# Strategy, 2026-10-13: on a text-only turn only a FIRST-PERSON claim is a possible fabricated receipt; a clause that attributes the figure or
+# state to a NAMED lane ("Lead reports 54 rows", "per Deploy") is not. Auditor, #140: any first-person word keeps the sentence reviewed,
+# each clause needs its own attribution, and the generic "the agent / the peer / a peer / another lane" never clears a claim.
+_SKIP_PEER = r"(?:Deploy|Web|Backend|Lead|Strategy|the COO|COO|the Auditor|Auditor|World|Combat|Characters|Hooks Dev|Duels)"
+PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _SKIP_PEER + r"\b|\b" + _SKIP_PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
+FIRST_PERSON_RE = re.compile(r"\b(?:I|I'm|I've|I'll|I'd|we|we've|our|ours|my|me|mine|myself|us)\b", re.IGNORECASE)
+_CLAUSE_SPLIT_RE = re.compile(r";\s*|,\s+(?:so|and|but|then)\s+|\s+(?:and|but|so|then)\s+", re.IGNORECASE)
+
+
+def unattributed_claim(text: str) -> bool:
+    """True when some sentence of a text-only turn claims a state or a run that is first-person or has no named-peer attribution."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if not STATUS_CLAIM_RE.search(sentence):
+            continue
+        if FIRST_PERSON_RE.search(sentence):
+            return True
+        if any(STATUS_CLAIM_RE.search(c) and not PEER_ATTRIBUTED_RE.search(c) for c in _CLAUSE_SPLIT_RE.split(sentence)):
+            return True
+    return False
 
 
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
@@ -569,7 +614,7 @@ def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> st
         return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
-    if any(STATUS_CLAIM_RE.search(x) and not PEER_ATTRIBUTED_RE.search(x) for x in re.split(r"(?<=[.!?])\s+|\n+", text)):
+    if unattributed_claim(text):
         return ""   # a first-person or unattributed run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
     return f"no tool calls, {len(text)} chars"   # a figure or state attributed to a peer ("Lead reports", "per Deploy") is skipped (Strategy, 2026-10-13)
 
