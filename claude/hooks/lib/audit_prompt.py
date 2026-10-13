@@ -223,7 +223,14 @@ Also flag avoidable engineering drag when it creates real risk:
 If there are issues, use:
 VERDICT: ISSUES
 1. [quote: "<6-25 words copied VERBATIM from the slice: the exact claim, code line or message the finding is about>"] <specific, actionable fix>
-2. [quote: "..."] <specific, actionable fix>
+2. [NOTE] [quote: "..."] <specific, actionable fix>
+
+Tag a finding [NOTE] (right after its number) when it is only about attribution or wording: a claim "stated as own
+fact" that a peer's message supports, "not checked by me", a figure restated from a peer message, a tense or label
+choice. A [NOTE] is shown to the lane as one advisory line and never blocks. Do NOT tag [NOTE] a finding where a
+sentence contradicts tool output in this slice (a number, state or sha that differs from what a tool printed), where
+a run, check, merge or call is claimed that no tool call in the slice made, where a failure is hidden, or any code
+defect, security, test, stub or premature-stop finding. Those stay untagged and block.
 
 The quote is mandatory and is checked mechanically against the slice: a finding whose quote does not appear
 verbatim in the slice is discarded. Copy, do not paraphrase. A finding that something is MISSING (no test run, no

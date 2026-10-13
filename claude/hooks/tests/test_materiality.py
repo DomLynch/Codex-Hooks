@@ -66,7 +66,8 @@ def test_a_no_tool_turn_is_skipped_only_when_it_claims_nothing(tmp_path):
     # Strategy, option B (2026-10-10): no run / verification / deploy / pass-count / live / merged claim, no offer, no diff.
     transcript = tmp_path / "t.jsonl"
     transcript.write_text("{}\n")
-    for msg in ("Sure, that works the way you described.", "Understood, I'll keep the wording plain.", "Yes, the two options differ in cost."):
+    for msg in ("Sure, that works the way you described.", "Understood, I'll keep the wording plain.", "Yes, the two options differ in cost.",
+                "Lead reports 54 rows are live.", "Auditor PASS per Lead, and Deploy says it is merged."):   # peer-attributed: skipped
         assert m.no_tool_calls([], msg, str(transcript)), msg
     for msg in ("I ran the test suite: 3310 pass. AG is live.", "Merged #116, all green.", "I verified it on GitHub.",
                 "Release AA crashed the writer, so it is held on Z.", "Deployed a6d408cb4.", "412 passed, 0 failed.",
@@ -147,3 +148,38 @@ def test_approval_wording_stays_wording():
     # Auditor LOW: approv* is a STATUS claim for the no-tool skip, never a material claim ("Approved, Web is starting now" must stay wording).
     assert not m.MATERIAL_CLAIM_RE.search("**Approved, Web is starting now:**")
     assert not m.MATERIAL_CLAIM_RE.search("approval came from Strategy")
+
+
+def _note_verdict(*findings):
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {f}" for i, f in enumerate(findings, 1))
+
+
+def test_note_tagged_attribution_is_advisory_on_any_turn():
+    v = _note_verdict('[NOTE] [quote: "Lead reports 54 rows are live"] This is stated as your own fact; nothing in the slice backs it.')
+    text, notes = m.filter_note_findings(v)
+    assert text == "VERDICT: PASS" and len(notes) == 1 and not notes[0].startswith("[NOTE]")
+
+
+def test_untagged_or_contradicting_findings_still_block():
+    contradiction = '[quote: "54 rows are live"] The gh output in this turn prints 40 rows, so this contradicts the tool output.'
+    text, notes = m.filter_note_findings(_note_verdict(contradiction))
+    assert text.startswith("VERDICT: ISSUES") and not notes                      # untagged: fail closed
+    tagged = "[NOTE] " + contradiction
+    text, notes = m.filter_note_findings(_note_verdict(tagged))
+    assert text.startswith("VERDICT: ISSUES") and not notes and "[NOTE]" not in text   # a mis-tagged contradiction still blocks
+    ran = '[NOTE] [quote: "I ran the suite"] No tool call in the slice ran it.'
+    assert m.filter_note_findings(_note_verdict(ran))[0].startswith("VERDICT: ISSUES")
+
+
+def test_mixed_findings_keep_only_the_blocking_one():
+    block = '[quote: "tests pass"] The tool output shows 2 failed.'
+    note = '[NOTE] [quote: "per Lead"] Attribution wording.'
+    text, notes = m.filter_note_findings(_note_verdict(note, block))
+    assert text.startswith("VERDICT: ISSUES") and "1. [quote: \"tests pass\"]" in text and len(notes) == 1
+
+
+def test_first_person_fabricated_receipt_on_a_text_only_turn_is_reviewed(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("{}\n")
+    assert not m.no_tool_calls([], "I ran the suite and all tests pass.", str(transcript))
+    assert not m.no_tool_calls([], "Lead reports 54 rows are live. I merged it.", str(transcript))   # one unattributed claim is enough

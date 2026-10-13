@@ -315,6 +315,37 @@ def filter_wording_findings(verdict_text: str, no_diff: bool) -> tuple[str, list
     return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), dropped
 
 
+# Strategy via Dom, 2026-10-13: 8 of 9 Stop blocks that morning were wording or attribution retries. The reviewer now tags such a finding
+# [NOTE]; a tagged finding is a one-line advisory on ANY turn, never a re-prompt. Untagged means block (fail closed), and a tagged finding
+# that says the claim contradicts tool output, or that a run or call never happened, is a miscount or a fabricated receipt: it blocks anyway.
+NOTE_TAG_RE = re.compile(r"^\s*\[NOTE\]\s*", re.IGNORECASE)
+CONTRADICTION_RE = re.compile(
+    r"contradict|conflicts? with|does(?:n't| not) match|differs? from|(?:tool )?output (?:shows|says|prints|reads)|"
+    r"never (?:ran|run|called)|\bno (?:tool call|run)\b|\bwas not run\b|\bnot run\b", re.IGNORECASE)
+
+
+def filter_note_findings(verdict_text: str) -> tuple[str, list[str]]:
+    """Move [NOTE]-tagged findings out of the block: (text, notes). A tagged finding that reads as a contradiction stays."""
+    numbered = re.compile(r"^\s*\d+[.)]\s+(\S.*)$")
+    kept, notes, tagged = [], [], False
+    for line in verdict_text.splitlines()[1:]:
+        m = numbered.match(line)
+        if not m:
+            continue
+        body = m.group(1)
+        tagged = tagged or bool(NOTE_TAG_RE.match(body))
+        if NOTE_TAG_RE.match(body) and not CONTRADICTION_RE.search(body):
+            notes.append(NOTE_TAG_RE.sub("", body, count=1))
+            log(f"NOTE_FINDING (advisory, any turn): {body[:400]}")
+        else:
+            kept.append(NOTE_TAG_RE.sub("", body, count=1))   # a mis-tagged contradiction blocks, without its tag
+    if not tagged:
+        return verdict_text, []
+    if not kept:
+        return "VERDICT: PASS", notes
+    return "VERDICT: ISSUES\n" + "\n".join(f"{i}. {b}" for i, b in enumerate(kept, 1)), notes
+
+
 def filter_unanchored_findings(verdict_text: str, slice_text: str) -> tuple[str, list[str]]:
     """Drop numbered findings whose [quote: "..."] anchor is not in the slice the reviewer saw.
     Premise-wrong findings ('no receipt shown' when the receipt is in the slice, 'claims complete' when it did
@@ -523,6 +554,11 @@ def contentless_turn(answer: str, edited: list, relay_only: bool = False) -> str
     return f"no edits, no claim, {len(text)} chars"
 
 
+# Strategy, 2026-10-13: on a text-only turn only a FIRST-PERSON claim is a possible fabricated receipt; a sentence that attributes the figure
+# or state to a peer ("Lead reports 54 rows", "per Deploy", "Auditor PASS per Lead") is not.
+PEER_ATTRIBUTED_RE = re.compile(r"\b(?:per|according to)\s+" + _PEER + r"\b|\b" + _PEER + r"(?:'s)?\s+(?:reports?|reported|said|says|confirm\w*|told)\b", re.IGNORECASE)
+
+
 def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> str:
     """Why the model call can be skipped for a turn with no tool call at all ('' if it cannot). Dom's ruling via Strategy,
     2026-10-10: a turn with no tool calls and no diff cannot hide a failed check or an unauthorized action, the two things the
@@ -533,9 +569,9 @@ def no_tool_calls(entries: list, last_msg: str, transcript_path: str = "") -> st
         return ""   # an unreadable transcript means "unknown", not "no tool calls": review it
     if PENDING_WORK_RE.search(text) or HANDOFF_RE.search(text):
         return ""   # stopping on an offer or unfinished work is premature stopping, the third thing the reviewer exists to catch
-    if STATUS_CLAIM_RE.search(text):
-        return ""   # Strategy, option B: a run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
-    return f"no tool calls, {len(text)} chars"
+    if any(STATUS_CLAIM_RE.search(x) and not PEER_ATTRIBUTED_RE.search(x) for x in re.split(r"(?<=[.!?])\s+|\n+", text)):
+        return ""   # a first-person or unattributed run / verification / deploy / pass-count / live / merged claim is a possible fabricated receipt
+    return f"no tool calls, {len(text)} chars"   # a figure or state attributed to a peer ("Lead reports", "per Deploy") is skipped (Strategy, 2026-10-13)
 
 
 def worktree_snapshot(repo_cwd: str, since: str = "", cap: int = DIFF_CAP) -> str:
@@ -867,10 +903,12 @@ def main() -> None:
         verdict_text, unanchored = filter_unanchored_findings(verdict_text, transcript)
         verdict_text, dropped = filter_void_findings(verdict_text)
         dropped = unanchored + dropped
+        verdict_text, notes = filter_note_findings(verdict_text)
         verdict_text, wording = filter_wording_findings(
             verdict_text, not edited_paths(entries) and not (turn_commits(repo_cwd, since) or snapshot))
+        wording = notes + wording
         if wording:   # advisory only: shown in the lane's transcript, never re-prompts
-            _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nReviewer wording advisory (not blocking): "
+            _HANDOFF["text"] = (f"{_HANDOFF.get('text') or ''}\nReviewer advisory (not blocking): "
                                 + " | ".join(w[:160] for w in wording[:3])).strip()
         if wording and verdict_status(verdict_text) == "PASS":
             log(f"WORDING_ONLY: all {len(wording)} finding(s) are wording; verdict -> PASS")
