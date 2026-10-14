@@ -498,6 +498,31 @@ def shell_c_reason(command: str) -> str:
     return ""
 
 
+# 2026-10-14 (Strategy + Dom): the app's own "Dangerous rm operation on possibly-empty variable path" card runs in every permission mode,
+# bypass included, and parks a lane until Dom is back. Deny the shape first (a recursive rm whose path holds a bare $VAR or ${VAR}) so the
+# model rewrites it as "${VAR:?}/..." or a literal path in one turn. ${VAR:?} and ${VAR:-x} do not match BARE_VAR_RE; single quotes expand nothing.
+BARE_VAR_RE = re.compile(r"\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)")
+RM_RE = re.compile(r"^\s*(?:(?:\w+=\S*|sudo|env|command|time|nohup|\\)\s+)*rm\s+(.*)$", re.DOTALL)
+RM_VAR_REASON = 'rm -r on an unguarded $VAR can delete the wrong tree if it is empty: rewrite as "${VAR:?}/..." or a literal path, then retry'
+
+
+def rm_var_reason(command: str) -> str:
+    command = command or ""
+    text = HEREDOC_RE.sub(lambda m: m.group(0) if SHELL_STDIN_RE.search(command[:m.start()].rstrip()) else "", command)
+    text = QUOTED_RE.sub(lambda m: "''" if m.group(0)[0] == "'" else re.sub(r"[;&|()`\n]", " ", m.group(0)), text)   # separators inside quotes are data
+    for seg in SEGMENT_SPLIT_RE.split(text):
+        m = RM_RE.match(seg)
+        if not m:
+            continue
+        args = m.group(1).split()
+        flags = [a for a in args if a.startswith("-") and a != "--"]
+        paths = [a for a in args if not a.startswith("-")]
+        recursive = any(f in ("--recursive",) or (not f.startswith("--") and set(f[1:]) & set("rR")) for f in flags)
+        if recursive and any(BARE_VAR_RE.search(a) for a in paths):
+            return RM_VAR_REASON
+    return ""
+
+
 def main() -> None:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -507,7 +532,7 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = (_is_mac() and shell_c_reason(command)) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+    reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command))) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:

@@ -255,6 +255,24 @@ class DeployGuardTests(unittest.TestCase):
         out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps(payload), capture_output=True, text=True).stdout
         self.assertIn("no shell -c wrapper", out)
 
+    def test_rm_recursive_on_an_unguarded_variable_is_refused(self):
+        """2026-10-14 (Strategy + Dom): the app's own "Dangerous rm operation on possibly-empty variable path" card parks a bypass lane for hours."""
+        for cmd in ("rm -rf $S/$d", "rm -rf \"$S/$d\"", "rm -r ${DIR}/x", "rm -fr \"${DIR}\"", "cd x && rm -Rf $TMP/out", "sudo rm -rf $HOME/.cache/x",
+                    "rm --recursive --force $S", "FOO=1 rm -rf $S", "ls; rm -f -r $S/a"):
+            self.assertIn("${VAR:?}", deploy_guard.rm_var_reason(cmd), cmd)
+
+    def test_rm_check_leaves_guarded_literal_and_non_recursive_alone(self):
+        for cmd in ("rm -rf \"${S:?}/${d:?}\"", "rm -rf ${S:-/tmp/x}/a", "rm -rf /tmp/literal", "rm -f $S/one.txt", "rm $S/one.txt", "rm -rf ./build",
+                    "echo 'rm -rf $S'", "git commit -m \"rm -rf $S is bad\"", "echo \"a; rm -rf $S\"", "grep -n 'rm -rf $S' x", "cat <<EOF\nrm -rf $S\nEOF",
+                    "ls $S", "rm -rf \"$(mktemp -d)\""):
+            self.assertEqual(deploy_guard.rm_var_reason(cmd), "", cmd)
+
+    def test_rm_var_deny_reaches_the_hook_output(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf $S/$d"}}
+        out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps(payload), capture_output=True, text=True).stdout
+        self.assertIn('"permissionDecision": "deny"', out)
+        self.assertIn("${VAR:?}", out)
+
 
 if __name__ == "__main__":
     unittest.main()
