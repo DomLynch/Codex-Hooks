@@ -625,6 +625,15 @@ if __name__ == "__main__":
 class ClaudeAuditTransportTests(unittest.TestCase):
     """Claude-side audit runs on the Claude CLI by default and can never recurse."""
 
+    def setUp(self) -> None:
+        # the judge gate (load line + one-at-a-time lock) must not depend on this machine's load or its real state file
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        for patcher in (mock.patch.object(api, "judge_load1", return_value=0.0),
+                        mock.patch.object(api, "JUDGE_LOCK_PATH", Path(self._tmp.name) / "judge.lock")):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def test_call_mimo_routes_to_claude_cli_when_transport_is_claude(self) -> None:
         import lib.api as api
 

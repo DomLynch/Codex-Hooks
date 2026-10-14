@@ -33,7 +33,7 @@ HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
 from lib.autonomy import forget_lesson, hook_env, lesson_lane, record_lesson  # noqa: E402
-from lib.api import AUDITOR_NAME, call_mimo, exit_if_audit_child  # noqa: E402
+from lib.api import AUDITOR_NAME, JudgeBusy, call_mimo, exit_if_audit_child  # noqa: E402
 from lib.policies import is_project_work  # noqa: E402
 from lib.audit_state import (  # noqa: E402
     increment_audit_errors, increment_consecutive_blocks, load_iterations, remember_blocked_turn, reset_audit_errors,
@@ -113,7 +113,12 @@ def compact(text: str, limit: int) -> str:
 _HANDOFF: dict[str, str] = {}
 
 
-def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
+def judge_skipped_notice(busy: Exception) -> str:
+    return (f"[{AUDITOR_NAME}] Review skipped: {busy}. This turn was released UNREVIEWED; that is not a PASS, "
+            "so check your own work before relying on it.")
+
+
+def allow_stop(reason: str = "", *, unresolved: bool = False, message: str = "") -> None:
     log(f"ALLOW: {reason}")
     notice = _HANDOFF.get("text")
     if notice:
@@ -122,8 +127,8 @@ def allow_stop(reason: str = "", *, unresolved: bool = False) -> None:
         log(f"HANDOFF_CHECK: {'ready' if 'Backup verified' in notice else 'not ready'}")
         print(notice, file=sys.stderr)
     if unresolved:
-        message = (f"[{AUDITOR_NAME}] Review limit reached without PASS. "
-                   "Outstanding work is unresolved; this is not completion.")
+        message = message or (f"[{AUDITOR_NAME}] Review limit reached without PASS. "
+                              "Outstanding work is unresolved; this is not completion.")
         print(message, file=sys.stderr)
         # Claude Code shows a successful hook's stderr only in the debug log; systemMessage is the visible channel.
         sys.stdout.write(json.dumps({"systemMessage": message}))
@@ -910,6 +915,12 @@ def main() -> None:
                 retry_transcript = compact(transcript, 3_000)
                 log(f"RETRY_EMPTY: {len(retry_transcript)} chars")
                 verdict_text = ask_mimo_with_retry(retry_transcript, max_tokens=800)
+        except JudgeBusy as busy:
+            # 2026-10-14 (Strategy + Lead): no judge on a saturated Mac and never two at once. Release at once: a block would make
+            # the lane retry, which is one more judge on the machine that is already too busy. Not an audit error: nothing is counted.
+            log(f"AUDIT_SKIPPED_BUSY: {busy}")
+            allow_stop(f"reviewer skipped, turn released unreviewed ({busy})", unresolved=True, message=judge_skipped_notice(busy))
+            return
         except Exception as e:
             block_audit_error(session_id, turn_id, iterations, f"audit API error: {e}", repo_cwd)
             return
@@ -932,6 +943,10 @@ def main() -> None:
                 verdict_text = repaired
             else:
                 log(f"FORMAT_REPAIR_FAILED: {repaired[:160].replace(chr(10), ' ')}")
+        except JudgeBusy as busy:   # the machine got busy between the review and its format repair: same release as above
+            log(f"AUDIT_SKIPPED_BUSY: {busy}")
+            allow_stop(f"reviewer skipped, turn released unreviewed ({busy})", unresolved=True, message=judge_skipped_notice(busy))
+            return
         except Exception as exc:
             log(f"FORMAT_REPAIR_ERROR: {exc}")
         if not valid_verdict(verdict_text):
