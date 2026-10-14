@@ -239,6 +239,22 @@ class DeployGuardTests(unittest.TestCase):
         out = subprocess.run([sys.executable, "-c", code], input=json.dumps(payload), capture_output=True, text=True)
         self.assertEqual(out.stdout, "", "linux: no deny output")
 
+    def test_shell_c_wrappers_are_refused(self):
+        """2026-10-14 (Strategy + Dom): the app prompts "This shell -c script runs rm and could not be checked" in every mode, bypass included."""
+        for cmd in ("bash -c 'git diff | git patch-id'", "sh -c \"echo hi\"", "zsh -lc 'ls'", "/bin/bash -c 'ls'", "cd x && bash -c 'ls'",
+                    "env FOO=1 bash -ec 'ls'", "timeout 5 bash -c 'ls'", "a | sh -c 'cat'"):
+            self.assertIn("no shell -c wrapper", deploy_guard.shell_c_reason(cmd), cmd)
+
+    def test_shell_c_check_leaves_data_and_remote_alone(self):
+        for cmd in ("git commit -m 'never use bash -c here'", "echo \"sh -c x\"", "bash script.sh", "bash -x scripts/deploy.sh", "grep -n 'bash -c' README.md",
+                    "ssh root@host bash -c 'ls'", "hf jobs run img bash -c 'make'", "cat <<EOF\nbash -c 'x'\nEOF", "bash -c true"):
+            self.assertEqual(deploy_guard.shell_c_reason(cmd), "", cmd)
+
+    def test_shell_c_deny_reaches_the_hook_output(self):
+        payload = {"tool_name": "Bash", "tool_input": {"command": "bash -c 'ls'"}}
+        out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps(payload), capture_output=True, text=True).stdout
+        self.assertIn("no shell -c wrapper", out)
+
 
 if __name__ == "__main__":
     unittest.main()

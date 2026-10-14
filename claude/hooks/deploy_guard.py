@@ -481,6 +481,23 @@ def cut_label_reason(command: str) -> str:
     return ""
 
 
+# 2026-10-14 (Strategy + Dom): the app's "This shell -c script runs rm and could not be checked" prompt fires in every permission mode,
+# bypass included, so a lane's harmless `bash -c '...'` still stops Dom at the keyboard. Refuse the wrapper itself (a quoted script after
+# bash/sh/zsh -c); ssh and hf jobs run the script elsewhere and the app does not prompt for them.
+SHELL_C_RE = re.compile(rf"{SHELL}\s+(?:-\w+\s+)*-\w*c\w*\s+\"\"")
+SHELL_C_REASON = "write the command directly, no shell -c wrapper; the app cannot check inside quotes and will prompt Dom"
+REMOTE_SEGMENT_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*ssh\b")
+
+
+def shell_c_reason(command: str) -> str:
+    command = command or ""
+    flat = QUOTED_RE.sub('""', HEREDOC_RE.sub(lambda m: "" if not SHELL_STDIN_RE.search(command[:m.start()].rstrip()) else m.group(0), command))   # executable_text keeps a -c payload; this wants the bare wrapper
+    for seg in SEGMENT_SPLIT_RE.split(flat):
+        if SHELL_C_RE.search(seg) and not HF_JOBS_RE.search(seg) and not REMOTE_SEGMENT_RE.search(seg):
+            return SHELL_C_REASON
+    return ""
+
+
 def main() -> None:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
@@ -490,7 +507,7 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+    reason = (_is_mac() and shell_c_reason(command)) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
