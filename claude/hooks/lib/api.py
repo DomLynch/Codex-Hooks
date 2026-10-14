@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import shlex
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from .autonomy import hook_env
@@ -102,6 +104,55 @@ def claude_binary() -> str:
     raise RuntimeError("Claude CLI is unavailable; set CLAUDE_AUDIT_BIN")
 
 
+# One judge at a time, and none on a saturated Mac (Strategy + Lead, Dom's authority, 2026-10-14 06:50 Dubai: Mac load 15-22 on 10 cores
+# all night while every lane's Stop spawned its own `claude -p`). The lock is a flock on a state file: the kernel drops it if the holder
+# dies, so it can never go stale. A skipped judge raises JudgeBusy; the Stop hook releases the turn unreviewed rather than blocking it,
+# because a block makes the lane retry, which is one more judge on the machine that is already too busy.
+JUDGE_LOCK_PATH = Path.home() / ".claude" / "state" / "judge.lock"
+
+
+def _max_load() -> float:
+    try:
+        return float(hook_env("CLAUDE_JUDGE_MAX_LOAD", "10"))
+    except ValueError:
+        return 10.0
+
+
+JUDGE_MAX_LOAD = _max_load()
+
+
+class JudgeBusy(RuntimeError):
+    """The judge was not started: the machine is over the load line or another judge is running."""
+
+
+def judge_load1() -> float:
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return 0.0   # no load figure: never block the reviewer on a missing measurement
+
+
+@contextmanager
+def judge_slot(lane: str):
+    load = judge_load1()
+    if load > JUDGE_MAX_LOAD:
+        log("claude_audit", f"JUDGE_SKIPPED lane={lane} reason=load load1={load:.1f} max={JUDGE_MAX_LOAD:g}")
+        raise JudgeBusy(f"machine busy: load1={load:.1f} is over {JUDGE_MAX_LOAD:g}")
+    JUDGE_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(JUDGE_LOCK_PATH, "a+")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        log("claude_audit", f"JUDGE_SKIPPED lane={lane} reason=lock another judge is running load1={load:.1f}")
+        raise JudgeBusy("another judge is already running on this machine") from None
+    try:
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
 def call_claude_cli(
     prompt: str,
     max_tokens: int = 1500,
@@ -130,7 +181,7 @@ def call_claude_cli(
         "--effort", CLAUDE_AUDIT_EFFORT,
         "--disallowedTools", "Bash Edit Write NotebookEdit",
     ]
-    with tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
+    with judge_slot(lane), tempfile.TemporaryDirectory(prefix="claude-audit-") as workdir:
         try:
             returncode, stdout, stderr = safe_run(command, cwd=workdir, timeout=timeout, env=env, input_text=instruction, raise_on_timeout=True)
         except TimeoutError as exc:
