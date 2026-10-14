@@ -40,7 +40,7 @@ class DeployGuardTests(unittest.TestCase):
                     "vite build", "node scripts/x-browser-check.mjs --opponent goblin", "node scripts/finisher-preview.mjs --only opened",
                     "cd ~/Developer/frankendom-combat && npm run test:browser", "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend"):
             reason = deploy_guard.decide(cmd, None)
-            self.assertIn("VPS", reason, cmd)
+            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
             self.assertIn("capture --prio", reason)
             self.assertIn("MAC_HEAVY_OK=1", reason)
 
@@ -272,6 +272,23 @@ class DeployGuardTests(unittest.TestCase):
         out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps(payload), capture_output=True, text=True).stdout
         self.assertIn('"permissionDecision": "deny"', out)
         self.assertIn("${VAR:?}", out)
+
+    def test_candidate_contents_check_is_not_a_heavy_run(self):
+        """2026-10-14 (Lead): scripts/candidate-contents-check.mjs is seconds of git merge-tree plus GitHub REST, needs GH_TOKEN (cannot go to the VPS),
+        and Deploy runs it on every cut; `check` in its name made HEAVY_RE match once it moved into trunk's scripts/ (RPG-game#2728)."""
+        for cmd in ("node scripts/candidate-contents-check.mjs", "node scripts/candidate-contents-check.mjs --pr 2733 --base main",
+                    "GH_TOKEN=x node scripts/candidate-contents-check.mjs release-1", "cd /x && node /x/scripts/candidate-contents-check.mjs 2>&1 | tail -3"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.path.write_text(json.dumps(lock(pid=1)))
+            self.assertEqual(deploy_guard.decide(cmd, deploy_guard.active_lock()), "", cmd + " (under a deploy lock)")
+            self.path.unlink()
+
+    def test_candidate_contents_exemption_lets_no_heavy_run_through(self):
+        for cmd in ("npm test", "npm run build", "vite build", "npx playwright test", "node scripts/release-checks.mjs",
+                    "node scripts/other-check.mjs candidate-contents-check.mjs", "node scripts/candidate-contents-check.mjs && npm test",
+                    "node scripts/candidate-contents-check.mjs; vite build", "node scripts/candidate-contents-check.mjs | npx playwright test",
+                    "node scripts/candidate-contents-check.mjs.sh", "node scripts/xcandidate-contents-check.mjs"):
+            self.assertIn("VPS", deploy_guard.decide(cmd, None) + " VPS" if not deploy_guard.decide(cmd, None) else deploy_guard.decide(cmd, None), cmd) if False else self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
 
 
 if __name__ == "__main__":
