@@ -5,9 +5,13 @@ on:
     branches: [main]
   pull_request:
 
+# 2026-10-15: GitHub-hosted runner only. The Mac self-hosted runner executed an injected workflow (incident 20261015) and was deregistered.
+permissions:
+  contents: read
+
 jobs:
   python-hooks:
-    runs-on: [self-hosted, codex-hooks-local]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
