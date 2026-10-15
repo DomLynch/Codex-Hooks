@@ -26,8 +26,9 @@ jobs:
           python3 -m pytest --version
 
       - name: Run Claude hook tests
+        timeout-minutes: 10
         # pytest, not unittest: unittest skips the plain test_ functions (a stale assertion slipped through that way)
-        run: python3 -m pytest claude/hooks/tests -q -p no:cacheprovider
+        run: python3 -m pytest claude/hooks/tests -v --durations=10 -p no:cacheprovider
 
       - name: Compile hook Python
         run: python3 -m py_compile $(find claude/hooks -name '*.py' -not -path '*/__pycache__/*')
