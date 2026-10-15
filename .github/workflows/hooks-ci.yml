@@ -25,15 +25,31 @@ jobs:
           python3 -m pytest --version >/dev/null 2>&1 || python3 -m pip install --user pytest
           python3 -m pytest --version
 
-      - name: Run Codex hook tests
-        run: python3 -m pytest hooks/tests -q -p no:cacheprovider
-
       - name: Run Claude hook tests
         # pytest, not unittest: unittest skips the plain test_ functions (a stale assertion slipped through that way)
         run: python3 -m pytest claude/hooks/tests -q -p no:cacheprovider
 
       - name: Compile hook Python
-        run: python3 -m py_compile $(find hooks claude/hooks -name '*.py' -not -path '*/__pycache__/*')
+        run: python3 -m py_compile $(find claude/hooks -name '*.py' -not -path '*/__pycache__/*')
 
       - name: Lint hooks
-        run: ruff check hooks claude/hooks
+        run: ruff check claude/hooks
+
+  # Codex tree, owned by the Codex dev. Its own job so a Codex-only failure never hides the Claude hook gate above (2026-10-15: the first
+  # Linux run failed two hooks/tests/test_enforcement.py cases and skipped every later step).
+  codex-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install check tools
+        run: |
+          python3 -m pip install --user ruff pytest
+
+      - name: Run Codex hook tests
+        run: python3 -m pytest hooks/tests -q -p no:cacheprovider
+
+      - name: Compile and lint Codex hooks
+        run: |
+          python3 -m py_compile $(find hooks -name '*.py' -not -path '*/__pycache__/*')
+          ruff check hooks
