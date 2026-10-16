@@ -22,6 +22,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from lib.autonomy import active_lessons, lesson_lane, note_lessons_shown
 from lib.json_state import update_json_locked
 from lib.context_size import context_notice
+from lib.disk_alert import disk_line
 from lib.handoff_check import prompt_handoff_notice
 from lib.inbox import claim_for, render as render_inbox
 from lib.api import exit_if_audit_child
@@ -136,6 +137,12 @@ def emit_context(context: str) -> None:
     )
 
 
+def with_disk_line(context: str, session_id: str) -> str:
+    """Append the Mac low-disk line (under 30 GB free, once an hour per session); fail-open, never blocks a prompt."""
+    line = disk_line(session_id or "unknown")
+    return f"{context}\n\n{line}" if line else context
+
+
 def with_inbox(context: str, cwd: Path) -> str:
     """Prepend any messages other agents (Codex) left for this session. Fail-open: an inbox problem never blocks a
     prompt, it just delivers nothing, and the message stays in the inbox for the next prompt."""
@@ -159,7 +166,8 @@ def main() -> None:
         mode = "project" if is_project_work(prompt) else "simple"
         log(COMPONENT, f"context injected mode={mode} prompt_chars={len(prompt)} cwd={cwd}")
         context = context_for(prompt, cwd, str(payload.get("session_id") or ""), str(payload.get("transcript_path") or ""))
-        emit_context(with_inbox(with_context_notice(context, str(payload.get("transcript_path") or ""), cwd), cwd))
+        context = with_context_notice(context, str(payload.get("transcript_path") or ""), cwd)
+        emit_context(with_inbox(with_disk_line(context, str(payload.get("session_id") or "")), cwd))
     except Exception as exc:
         log(COMPONENT, f"fail-open: {exc}")
 
