@@ -299,7 +299,10 @@ def main() -> None:
         deferred: list[str] = []
         for project in pending:
             target = Path(project)
-            owed = load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{target}")
+            if not target.is_dir():   # a deleted worktree has nothing left to gate (Auditor, 2026-10-16); `done=` below drops it
+                log(COMPONENT, f"quality gate skipped: pending project no longer exists {target}")
+                continue
+            owed =load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(f"not_run:{session_id}:{target}")
             if not (target / ".quality-gate.json").exists() and not owed:   # owed: deferred as not_run, re-check below
                 block(f"[Repository Quality Gate] Missing {target / '.quality-gate.json'}; declare the repository quality commands before completing code changes.")
             outcome = run_aaa_gate(target, transcript, timeout=quality_deadline - time.monotonic(), session_id=session_id, transcript_path=payload.get("transcript_path") or "")
