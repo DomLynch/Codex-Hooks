@@ -32,6 +32,9 @@ MAX_STORED_LESSONS = 240
 # 2026-10-03 (Dom): 14 -> 1. A one-off slip from 1 Oct was still on every prompt of that lane two days later;
 # a day covers the lane's next clear, after that the lesson is noise.
 DEFAULT_LESSON_TTL_DAYS = 1
+# 2026-10-16 (Dom: are the hooks noise?): a finding the lane had already fixed still rode every prompt until the day was up (the
+# "CI pending" flag, seen on 30+ prompts). A lesson is shown at most this many prompts, then retired; a repeat of the slip re-records it fresh.
+MAX_LESSON_SHOWS = 3
 SKIP_REPO_PARTS = {".claude", ".codex", ".git", "node_modules"}
 RISKY_TASK_RE = re.compile(
     r"\b("
@@ -211,7 +214,7 @@ def record_lesson(source: str, text: str, session_id: str = "", lane: str = "") 
     def updater(state: dict) -> dict:
         entries = _fresh_lesson_entries(_lesson_entries(state), now, cap=MAX_STORED_LESSONS)
         entries = [item for item in entries if item["lesson"] != clean]
-        entries.insert(0, {"lesson": clean, "source": source, "ts": now, "lane": lane})
+        entries.insert(0, {"lesson": clean, "source": source, "ts": now, "lane": lane, "shown": 0})
         kept, per_lane = [], {}
         for item in entries:  # each lane keeps its newest MAX_ACTIVE_LESSONS
             per_lane[item["lane"]] = per_lane.get(item["lane"], 0) + 1
@@ -265,11 +268,12 @@ def _lesson_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
                     "ts": float(item.get("ts") or updated_at or 0),
                     # before lanes, review lessons were everyone's; park them where no lane reads them
                     "lane": str(item.get("lane", "unscoped" if str(item.get("source", "")).startswith("mimo") else "")),
+                    "shown": int(item.get("shown") or 0),
                 })
         else:
             lesson = str(item).strip()
             if lesson:
-                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at, "lane": "unscoped"})
+                entries.append({"lesson": lesson, "source": "legacy", "ts": updated_at, "lane": "unscoped", "shown": 0})
     return entries
 
 
@@ -287,7 +291,24 @@ def active_lessons(lane: str, limit: int = MAX_ACTIVE_LESSONS) -> list[str]:
     if not isinstance(state, dict) or not isinstance(state.get("lessons"), list):
         return []
     return [item["lesson"] for item in _fresh_lesson_entries(_lesson_entries(state))
-            if item["lane"] in (lane, "")][:limit]
+            if item["lane"] in (lane, "") and item["shown"] < MAX_LESSON_SHOWS][:limit]
+
+
+def note_lessons_shown(lessons: list[str]) -> None:
+    """Count one more prompt for each of these lessons; MAX_LESSON_SHOWS retires it."""
+    wanted = set(lessons)
+    if not wanted:
+        return
+
+    def updater(state: dict) -> dict:
+        entries = _lesson_entries(state)
+        for item in entries:
+            if item["lesson"] in wanted:
+                item["shown"] += 1
+        state["lessons"] = entries
+        return state
+
+    update_json_locked(LESSONS_STATE, updater)
 
 
 def autonomy_level() -> str:

@@ -19,7 +19,7 @@ from pathlib import Path
 HOOKS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(HOOKS_DIR))
 
-from lib.autonomy import active_lessons, lesson_lane
+from lib.autonomy import active_lessons, lesson_lane, note_lessons_shown
 from lib.json_state import update_json_locked
 from lib.context_size import context_notice
 from lib.handoff_check import prompt_handoff_notice
@@ -85,6 +85,10 @@ def context_for(prompt: str, cwd: Path, session_id: str = "", transcript_path: s
     lessons_context = ""
     if lessons:
         lessons_context = "\n\n# Active Lessons\n" + "\n".join(f"- {lesson}" for lesson in lessons)
+        try:
+            note_lessons_shown(lessons)   # a lesson retires after MAX_LESSON_SHOWS prompts (2026-10-16)
+        except Exception as exc:   # counting must never cost the prompt its context
+            log(COMPONENT, f"lesson show count failed: {exc}")
     if not is_project_work(prompt):
         discipline = (
             "# Current-Prompt Discipline\n"
