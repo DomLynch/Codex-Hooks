@@ -2,7 +2,8 @@
 """PreToolUse: deny AskUserQuestion in every lane.
 
 2026-10-16 (Dom, via Strategy): PicoClaw froze overnight on a blocking "stop the Codex jobs? yes/no" pop-up that
-Dom could not click while away. A lane must pick the conservative default and say so in text instead.
+Dom could not click while away. A lane must pick the conservative default instead; ~00:4x Dom ruled that questions never go to him: a ruling
+comes from Lead (operations) or Strategy (scope) by message.
 """
 from __future__ import annotations
 
@@ -16,8 +17,9 @@ from lib.api import AUDIT_CHILD_ENV, exit_if_audit_child  # noqa: E402,F401
 from lib.log import log  # noqa: E402
 
 COMPONENT = "ask_guard"
-REASON = ("No blocking questions (Dom 10-16). Pick the conservative default, write the question and your default in "
-          "one line to Dom in your next message and in your state doc, and continue.")
+REASON = ("No blocking questions (Dom 10-16). Pick the conservative default and continue. If you need a ruling, send "
+          "one line to 'Frankendom - Lead Dev' (operations, order of work) or 'Project Strategy - Fable 5.1' (scope, "
+          "acceptance) by message and keep working on your next item; never wait on Dom.")
 
 
 def main() -> None:
