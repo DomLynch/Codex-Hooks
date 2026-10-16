@@ -473,7 +473,8 @@ class AuditTransportCleanupTests(unittest.TestCase):
             for name, transport in (('claude', 'claude'), ('codex', 'codex')):
                 pidfile = Path(tmp) / f'{name}.pid'
                 env = {'CLAUDE_AUDIT_BIN': str(fake), 'CODEX_AUDIT_BIN': str(fake), 'PIDFILE': str(pidfile)}
-                with patch.dict(os.environ, env), patch.object(api, 'AUDIT_TRANSPORT', transport):
+                # 2026-10-16: the judge throttle (#142) refuses to start above load 10, so a busy CI box raised JudgeBusy here (load1=21.9 on macOS CI)
+                with patch.dict(os.environ, env), patch.object(api, 'AUDIT_TRANSPORT', transport), patch.object(api, 'judge_load1', return_value=0.0):
                     with self.assertRaises(TimeoutError):
                         api.call_mimo('prompt', timeout=3)   # 2026-10-08: 0.5s lost the race to shell start-up on loaded CI/Mac (3 red runs)
                 self.assertTrue(pidfile.exists(), f'{name}: the fixture never started its descendant')

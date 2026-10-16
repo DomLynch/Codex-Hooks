@@ -5,31 +5,75 @@ on:
     branches: [main]
   pull_request:
 
+# 2026-10-15: GitHub-hosted runners only. The Mac self-hosted runner executed an injected workflow (incident 20261015) and was deregistered.
+permissions:
+  contents: read
+
 jobs:
   python-hooks:
-    runs-on: [self-hosted, codex-hooks-local]
+    # Compile and lint the Claude hooks on Linux. ruff is pinned to the version the hooks were written against (0.15.12): unpinned, CI picked
+    # up 0.17.1 on 2026-10-16 and failed with RUF100 on noqa comments the pinned ruff accepts.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify check tools
+      - name: Install ruff
+        run: python3 -m pip install --user ruff==0.15.12
+
+      - name: Compile hook Python
+        run: python3 -m py_compile $(find claude/hooks -name '*.py' -not -path '*/__pycache__/*')
+
+      - name: Lint hooks
+        run: ruff check claude/hooks
+
+  list-claude-tests:
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.list.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: echo "files=$(ls claude/hooks/tests/test_*.py | xargs -n1 basename | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  claude-tests:
+    # The Claude hooks are Mac-only by design (deploy_guard's heavy-run rules, path and process handling), so their tests run on GitHub-hosted
+    # macOS, never self-hosted (Strategy ruling 2026-10-16). One job per test file with a 90 s per-test timeout: a hang fails fast and is named
+    # (2026-10-15: the whole suite in one step hung a runner for 45 min with no log). pytest, not unittest: unittest skips the plain test_ functions.
+    needs: list-claude-tests
+    runs-on: macos-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJson(needs.list-claude-tests.outputs.files) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: python3 -m pip install pytest pytest-timeout
+
+      - name: Run ${{ matrix.file }}
+        run: python3 -m pytest claude/hooks/tests/${{ matrix.file }} -v --timeout=90 --timeout-method=thread --durations=5 -p no:cacheprovider
+
+  # Codex tree, owned by the Codex dev. Its own job so a Codex-only failure never hides the Claude hook gate above (2026-10-15: the first
+  # Linux run failed two hooks/tests/test_enforcement.py cases and skipped every later step).
+  codex-hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install check tools
         run: |
-          python3 --version
-          if ! command -v ruff >/dev/null 2>&1; then
-            python3 -m pip install --user ruff
-          fi
-          ruff --version
-          python3 -m pytest --version >/dev/null 2>&1 || python3 -m pip install --user pytest
-          python3 -m pytest --version
+          python3 -m pip install --user ruff==0.15.12 pytest
 
       - name: Run Codex hook tests
         run: python3 -m pytest hooks/tests -q -p no:cacheprovider
 
-      - name: Run Claude hook tests
-        # pytest, not unittest: unittest skips the plain test_ functions (a stale assertion slipped through that way)
-        run: python3 -m pytest claude/hooks/tests -q -p no:cacheprovider
-
-      - name: Compile hook Python
-        run: python3 -m py_compile $(find hooks claude/hooks -name '*.py' -not -path '*/__pycache__/*')
-
-      - name: Lint hooks
-        run: ruff check hooks claude/hooks
+      - name: Compile and lint Codex hooks
+        run: |
+          python3 -m py_compile $(find hooks -name '*.py' -not -path '*/__pycache__/*')
+          ruff check hooks
