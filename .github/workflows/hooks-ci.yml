@@ -11,30 +11,47 @@ permissions:
 
 jobs:
   python-hooks:
+    # Compile and lint the Claude hooks. The tests run one file per job in claude-tests below.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify check tools
-        run: |
-          python3 --version
-          if ! command -v ruff >/dev/null 2>&1; then
-            python3 -m pip install --user ruff
-          fi
-          ruff --version
-          python3 -m pytest --version >/dev/null 2>&1 || python3 -m pip install --user pytest
-          python3 -m pytest --version
-
-      - name: Run Claude hook tests
-        timeout-minutes: 10
-        # pytest, not unittest: unittest skips the plain test_ functions (a stale assertion slipped through that way)
-        run: python3 -m pytest claude/hooks/tests -v --durations=10 -p no:cacheprovider
+      - name: Install ruff
+        run: python3 -m pip install --user ruff
 
       - name: Compile hook Python
         run: python3 -m py_compile $(find claude/hooks -name '*.py' -not -path '*/__pycache__/*')
 
       - name: Lint hooks
         run: ruff check claude/hooks
+
+  list-claude-tests:
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.list.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: echo "files=$(ls claude/hooks/tests/test_*.py | xargs -n1 basename | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+
+  claude-tests:
+    # One job per test file (2026-10-15: the whole suite in one step hung a Linux runner for 45 min with no log). A per-test timeout turns a hang
+    # into a named failure; a runner that dies only loses its own file. pytest, not unittest: unittest skips the plain test_ functions.
+    needs: list-claude-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJson(needs.list-claude-tests.outputs.files) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pytest
+        run: python3 -m pip install --user pytest pytest-timeout
+
+      - name: Run ${{ matrix.file }}
+        run: python3 -m pytest claude/hooks/tests/${{ matrix.file }} -v --timeout=90 --timeout-method=thread --durations=5 -p no:cacheprovider
 
   # Codex tree, owned by the Codex dev. Its own job so a Codex-only failure never hides the Claude hook gate above (2026-10-15: the first
   # Linux run failed two hooks/tests/test_enforcement.py cases and skipped every later step).
