@@ -838,8 +838,9 @@ def main() -> None:
     snapshot = worktree_snapshot(repo_cwd, since) if any(role == "TOOL CALL" for role, _ in entries) else ""
     # Ledger: record the agent's [Fn] fixed/rejected lines; anything still open re-blocks with its own ID.
     unanswered = ledger.apply_decisions(session_id, last_msg)
-    # The lesson was saved when the finding blocked; once the lane rejects it, other lanes must not learn it.
-    for text in ledger.rejected_texts(session_id):
+    # The lesson was saved when the finding blocked; once the lane answers it (a rejected finding is not a lesson, and a fixed one
+    # no longer needs to ride every prompt), it retires. 2026-10-16: only rejected ones were dropped, fixed ones rode until the day was up.
+    for text in ledger.answered_texts(session_id):
         forget_lesson(text)
     pre = [f"[{f['id']}] {f['text']}" for f in ledger.open_findings(session_id) if f["id"] in unanswered]
     released = False

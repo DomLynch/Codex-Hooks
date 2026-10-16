@@ -1,7 +1,8 @@
 """2026-10-16 (Dom: are the hooks adding value or just noise?): two repeats the reviewer and the gate sent on every turn.
 
-1. A lesson (an old reviewer finding) rode every prompt for up to a day even after the lane fixed it; it is now shown at most MAX_LESSON_SHOWS
-   times, then retired. Rejected findings were already dropped at once (forget_lesson).
+1. A lesson (an old reviewer finding) rode every prompt for up to a day even after the lane fixed it. It now retires as soon as the lane
+   answers its finding ("[Fn] fixed:" or "rejected:"; only rejected ones were dropped before), else after MAX_LESSON_SHOWS prompts
+   (Strategy's ruling, 2026-10-16: answered ID first, not time-based).
 2. The "[Repository Quality Gate] deferred" notice remembered only the LAST reason per session, so two reasons that alternate (a deploy in
    flight, another gate already running) were each announced again every time; it now remembers the last few reasons.
 """
@@ -16,7 +17,7 @@ HOOKS_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HOOKS_DIR))
 
 import stop_orchestrator  # noqa: E402
-from lib import autonomy  # noqa: E402
+from lib import autonomy, ledger  # noqa: E402
 
 
 def _state(tmp: str):
@@ -34,6 +35,25 @@ def test_a_lesson_is_retired_after_it_has_been_shown_enough_times():
                 assert len(lessons) == 1, f"shown {shown} times so far, still active"
                 autonomy.note_lessons_shown(lessons)
             assert autonomy.active_lessons("hooks") == [], "retired after MAX_LESSON_SHOWS prompts"
+
+
+def test_answering_a_finding_retires_its_lesson_whether_fixed_or_rejected():
+    with tempfile.TemporaryDirectory() as tmp:
+        a, b = _state(tmp)
+        with a, b, mock.patch.object(ledger, "LEDGER_PATH", Path(tmp) / "ledger.json"):
+            verdict, _ = ledger.register_findings(
+                "s1", 'VERDICT: ISSUES\n1. [quote: "CI pending"] nothing checked it ' + "x" * 200 +
+                '\n2. [quote: "87%"] the figure has no source ' + "y" * 200 +
+                '\n3. [quote: "merged"] left unanswered ' + "z" * 200)
+            for line in verdict.splitlines()[1:]:
+                autonomy.record_lesson("mimo_stop", line, "s1", "hooks")
+            assert len(autonomy.active_lessons("hooks")) == 3
+            ledger.apply_decisions("s1", "[F1] fixed: checked, green\n[F2] rejected: limit is the script's third column")
+            for text in ledger.answered_texts("s1"):
+                autonomy.forget_lesson(text)
+            left = autonomy.active_lessons("hooks")
+            assert len(left) == 1 and "left unanswered" in left[0], left
+            assert [t[:40] for t in ledger.rejected_texts("s1")] == ['[quote: "87%"] the figure has no source '[:40]]
 
 
 def test_a_new_occurrence_of_the_same_finding_teaches_again():
