@@ -72,6 +72,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/domininclynch/.claude/hooks/ask_guard.py",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }
