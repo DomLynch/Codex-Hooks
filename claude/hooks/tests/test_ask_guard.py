@@ -32,7 +32,11 @@ def test_ask_user_question_is_denied_in_every_lane():
         decision = out["hookSpecificOutput"]
         assert decision["hookEventName"] == "PreToolUse" and decision["permissionDecision"] == "deny", cwd
         assert "No blocking questions (Dom 10-16)" in decision["permissionDecisionReason"]
-        assert "conservative default" in decision["permissionDecisionReason"]
+        # Dom 2026-10-16 ~00:4x via Strategy: questions never go to Dom; a ruling goes to Lead or Strategy by message
+        reason = decision["permissionDecisionReason"]
+        assert "Pick the conservative default and continue." in reason
+        assert "'Frankendom - Lead Dev'" in reason and "'Project Strategy - Fable 5.1'" in reason
+        assert "never wait on Dom" in reason
 
 
 def test_other_tools_and_odd_payloads_pass():
