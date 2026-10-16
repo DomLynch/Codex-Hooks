@@ -2,8 +2,11 @@ import io
 import json
 import sys
 import time
+from pathlib import Path
 
-from lib import rehome
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # runnable alone from the repo root (CI runs one file per job)
+
+from lib import rehome  # noqa: E402
 
 
 def _transcript(tmp_path, last_tool):

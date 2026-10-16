@@ -1,6 +1,10 @@
+import sys
 import unittest
+from pathlib import Path
 
-from lib.handoff_check import project_slug
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # runnable alone from the repo root (CI runs one file per job)
+
+from lib.handoff_check import project_slug  # noqa: E402
 
 
 class ProjectSlugTest(unittest.TestCase):

@@ -19,6 +19,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lib.bash_write_guard import bash_write_reason
+
 LOCK_PATH = Path(os.environ.get("DEPLOY_LOCK") or Path.home() / ".claude" / "state" / "deploy_in_flight.json")
 STALE_S = 45 * 60
 # What competes with a deploy for the Mac: real browsers, whole test suites, builds and bakes.
@@ -541,7 +543,7 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command))) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+    reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command))) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
