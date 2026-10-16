@@ -83,6 +83,40 @@ def test_owed_not_run_repo_gets_the_note_again_not_the_missing_contract_block(tm
     assert pend == [str(tmp_path.resolve())]
 
 
+def _stop_with_pending(tmp_path, monkeypatch, pending_paths):
+    monkeypatch.setattr(so, "session_made_edits", lambda entries: False)
+    monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
+    for name in ("exit_if_audit_child", "remember_repo"):
+        monkeypatch.setattr(so, name, lambda *a, **k: None)
+    monkeypatch.setattr(so, "log", lambda *a, **k: None)
+    pend = list(pending_paths)
+    def pending(s, cwd=None, done=None, **k):
+        if done is not None:
+            pend[:] = [p for p in pend if p not in done]
+        return list(pend)
+    monkeypatch.setattr(so, "pending_quality", pending)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s1", "cwd": str(tmp_path)})))
+    so.main()
+    return pend
+
+
+def test_pending_project_that_was_deleted_does_not_block_stop_and_is_dropped(tmp_path, monkeypatch, capsys):
+    """Auditor, 2026-10-16: a deleted worktree stayed pending and blocked every Stop with 'Missing .../.quality-gate.json'."""
+    gone = str(tmp_path / "deleted-worktree")
+    assert _stop_with_pending(tmp_path, monkeypatch, [gone]) == []
+    assert "Missing" not in capsys.readouterr().out
+
+
+def test_pending_project_that_exists_without_a_gate_still_blocks_stop(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    try:
+        _stop_with_pending(tmp_path, monkeypatch, [str(repo)])
+    except SystemExit:
+        pass
+    assert "Missing" in capsys.readouterr().out
+
+
 def test_plain_stop_between_two_milestone_stops_does_not_clear_the_owed_repo(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(so, "session_made_edits", lambda entries: True)   # these test the owed/not_run state, not edit detection
     monkeypatch.setattr(so, "DEFERRAL_NOTICE_PATH", tmp_path / "notified.json")
