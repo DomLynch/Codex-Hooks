@@ -41,6 +41,9 @@ AAA_PROTOCOL_PATH = Path.home() / ".claude" / "specs" / "aaa_protocol.md"
 # session_id -> deploy revision already announced. Stop additionalContext continues the turn, so repeating the
 # deferral on every Stop re-woke an idle lane until Claude Code's consecutive-block cap ended it (2026-09-23).
 DEFERRAL_NOTICE_PATH = Path.home() / ".claude" / "state" / "deploy_deferral_notified.json"
+# 2026-10-16 (Dom: noise?): only the LAST reason was remembered, so two reasons that alternate (a deploy in flight, another gate already
+# running) were each announced again every time. Remember the last few per session (a plain string, the old format, counts as one).
+DEFERRAL_NOTICE_MEMORY = 8
 
 
 # The Stop output is ONE JSON value. Helpers record notices here; block() and flush_notices() are the only writers,
@@ -105,9 +108,14 @@ def defer_gate(deploying: dict, session_id: str, mid_gate: bool = False) -> str:
     why = deploying.get("reason") or f"deploy {revision} is in flight on this Mac (one-deployer rule)"
     log(COMPONENT, f"repository quality gate deferred ({when}): {why}")
     key = revision or why.split(" (")[0]
-    if load_json_locked(DEFERRAL_NOTICE_PATH, {}).get(session_id) == key:
+    def seen_keys(data: dict) -> list:
+        value = data.get(session_id)
+        return [value] if isinstance(value, str) else list(value or [])
+
+    if key in seen_keys(load_json_locked(DEFERRAL_NOTICE_PATH, {})):
         return DEFERRED
-    update_json_locked(DEFERRAL_NOTICE_PATH, lambda data: {**data, session_id: key})
+    update_json_locked(DEFERRAL_NOTICE_PATH,
+                       lambda data: {**data, session_id: (seen_keys(data) + [key])[-DEFERRAL_NOTICE_MEMORY:]})
     _CONTEXT_NOTES.append(f"[Repository Quality Gate] deferred: {why}; "
                           "the gate runs on a later Stop, and the PR's CI still covers this change.")
     return DEFERRED
