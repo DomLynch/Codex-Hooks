@@ -1,8 +1,9 @@
-"""Two side copies per lane, no more (Lead + Dom, 2026-10-16: "a universal fix so this wastage doesn't happen again").
+"""One side worktree per lane (Lead + Dom, 2026-10-16: "a universal fix so this wastage doesn't happen again"; cap set to 1 by Strategy).
 
 The Mac reached 94% disk with 65 finished side copies (~70 GB) of ~/Developer/frankendom-main. `worktree_add_reason` refuses
 `git worktree add <path>` when <path> is ~/Developer/frankendom-<lane>-<x> and that lane (named by the cwd's ~/Developer/frankendom-<lane>
-folder) already has two side worktrees of frankendom-main. Rule text: RPG-game AGENTS.md, PR #2874.
+folder) already has a side worktree of frankendom-main. Dom's two sandboxes and frankendom-main are not lanes for this count.
+Rule text: RPG-game AGENTS.md, PR #2874.
 
 Fail-open everywhere it cannot be sure: an unknown cwd, a path it cannot resolve (an unexpanded variable), another lane's prefix, a
 missing or slow git. Quoted text (commit messages, echo) is data, not a command.
@@ -20,9 +21,10 @@ from .bash_write_guard import _split as split_segments
 
 DEVELOPER = Path.home() / "Developer"
 MAIN_REPO = DEVELOPER / "frankendom-main"
-MAX_SIDE_COPIES = 2
+MAX_SIDE_COPIES = 1    # Strategy, 2026-10-16: the lane folder plus at most one per-task side copy, removed with the PR (Lead first asked for two)
 LISTED = 5     # the deny names this many of the lane's copies (combat had 36 on 2026-10-16)
-MESSAGE = "two side copies max: remove a finished one first (git worktree remove <path>), AGENTS.md"
+MESSAGE = "remove your previous side worktree first (one per lane, Strategy 2026-10-16)"
+NOT_LANES = {"sandbox", "zone-sandbox", "main"}   # Dom's two sandboxes and frankendom-main are not lanes for this count
 
 WORKTREE_ADD_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*git\s+(?:(?:-C|-c)\s+\S+\s+)*worktree\s+add\b(.*)$", re.DOTALL)
 OPTIONS_WITH_VALUE = {"-b", "-B", "--reason"}     # git worktree add [-f] [--detach] [-b <branch>] <path> [<commit-ish>]
@@ -70,7 +72,7 @@ def _target(args: str, cwd: str) -> str:
 
 def worktree_add_reason(command: str, cwd: str = "", listing: Callable[[str], list[str]] | None = None) -> str:
     lane = lane_of(cwd or "")
-    if not lane or "worktree" not in (command or ""):
+    if not lane or lane in NOT_LANES or "worktree" not in (command or ""):
         return ""
     prefix = f"frankendom-{lane}-"
     for seg in split_segments(command):
