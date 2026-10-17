@@ -27,7 +27,31 @@ class DeployGuardTests(unittest.TestCase):
         mac = mock.patch.object(deploy_guard, "_is_mac", return_value=True)   # the guard is Mac-only (2026-10-10); the tests below run as the Mac
         mac.start()
         self.addCleanup(mac.stop)
+        busy = mock.patch.object(deploy_guard, "_mac_load1", return_value=99.0)   # a busy Mac unless a test says otherwise (2026-10-17 GPU waterfall)
+        busy.start()
+        self.addCleanup(busy.stop)
         self.addCleanup(self.tmp.cleanup)
+
+    def test_gpu_browser_runs_are_allowed_on_a_quiet_mac(self):
+        """2026-10-17 (Dom, GPU waterfall in CLAUDE.md; Lead: Characters was blocked): browser/WebGL rows, stills and clips run on the Mac
+        FIRST, the VPS only when the Mac is busy. Builds, suites and Blender stay on the VPS whatever the load."""
+        gpu = ("npx playwright test --project=chromium", "node scripts/herolook-game-stills.mjs --frames 28", "node scripts/x-browser-check.mjs --opponent goblin",
+               "node scripts/finisher-preview.mjs --only opened", "node scripts/herolook-kill-record.mjs", "node artifacts/arena-browser.mjs",
+               "cd ~/Developer/frankendom-characters && npx playwright test")
+        cpu = ("npm test", "npm run test:all", "npm run build", "vite build", "node --test tests/*.test.ts", "npm run test:browser",
+               "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend", "node scripts/release-checks.mjs", "npx playwright test && npm run build")
+        with mock.patch.object(deploy_guard, "_mac_load1", return_value=4.0):
+            for cmd in gpu:
+                self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+            for cmd in cpu:
+                self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+        with mock.patch.object(deploy_guard, "_mac_load1", return_value=45.0):
+            for cmd in gpu:
+                reason = deploy_guard.decide(cmd, None)
+                self.assertIn("VPS", reason, cmd)
+                self.assertIn("load 45", reason)
+        with mock.patch.object(deploy_guard, "_mac_load1", return_value=4.0):   # a deploy in flight still wins: one-deployer rule
+            self.assertIn("in flight", deploy_guard.decide("npx playwright test", {**lock(pid=1), "age_s": 120}))
 
     def test_no_lock_allows_light_commands(self):
         self.assertIsNone(deploy_guard.active_lock())

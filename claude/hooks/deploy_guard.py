@@ -312,8 +312,30 @@ def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
     return lanejob_dir_is_trunk(cwd)
 
 
+# 2026-10-17 (Dom, "GPU waterfall" in ~/.claude/CLAUDE.md; Lead: Characters could not run stills): browser/WebGL rows, stills and clips run on the
+# M5 Mac FIRST and spill to the VPS only when the Mac is busy. Builds, suites and Blender stay on the VPS at any load. Load threshold chosen by the
+# hooks lane (Lead asked for "the shared-mac threshold"; the skill only says >60 is hopeless and the 2026-10-08 outage sat at 29-57): 30, one name to change.
+MAC_GPU_LOAD_MAX = 30.0
+GPU_BROWSER_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|stills|record|contact-sheet|herolook-)[\w-]*\.mjs"
+    r"|node\s+artifacts/\S+browser\S*\.mjs)")
+NOT_GPU_RE = re.compile(r"[Bb]lender|vite\s+build|meshopt|gltfpack|npm\s|--test\b|release-checks?|build-|pixelmator-|textures-|gate|quality|battery")
+
+
+def gpu_browser_run(seg: str) -> bool:
+    return bool(GPU_BROWSER_RE.search(seg)) and not NOT_GPU_RE.search(seg)
+
+
+def _mac_load1() -> float:
+    try:
+        return os.getloadavg()[0]
+    except OSError:
+        return 99.0   # unknown load: treat the Mac as busy
+
+
 VPS_REASON = (
-    "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08): "
+    "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08), except browser/WebGL rows, stills and clips, "
+    "which run on the Mac while its 1-min load is under 30 (Dom, 2026-10-17): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
     "Safari/WebKit, real-iPhone and sparring rows are exempt; if the VPS is down, prefix the command with MAC_HEAVY_OK=1."
 )
@@ -381,7 +403,14 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
         return ""
     if not lock:
         heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        return "" if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command) or lanejob_mac_wrapper(seg, cwd, command) for seg in heavy) else VPS_REASON
+        load = _mac_load1()
+        quiet = load < MAC_GPU_LOAD_MAX
+        if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command)
+               or lanejob_mac_wrapper(seg, cwd, command) or (quiet and gpu_browser_run(seg)) for seg in heavy):
+            return ""
+        if not quiet and all(gpu_browser_run(seg) for seg in heavy):
+            return f"Mac load {load:.0f} is over {MAC_GPU_LOAD_MAX:.0f}, so this browser run goes to the VPS. {VPS_REASON}"
+        return VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
