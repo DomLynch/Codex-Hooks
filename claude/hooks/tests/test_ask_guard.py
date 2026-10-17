@@ -45,11 +45,3 @@ def test_other_tools_and_odd_payloads_pass():
         assert run(payload) == "", payload
 
 
-def test_audit_child_never_runs_it():
-    with mock.patch.dict("os.environ", {g.AUDIT_CHILD_ENV: "1"}):
-        try:
-            run({"tool_name": "AskUserQuestion", "tool_input": QUESTION})
-        except SystemExit as exc:
-            assert exc.code == 0
-        else:
-            raise AssertionError("audit child should exit")

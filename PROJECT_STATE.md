@@ -1,5 +1,8 @@
 # Project state — Codex Hooks
 
+## 2026-10-17: Claude hooks slimmed to the three guards (Dom)
+- Dom ruled the Stop reviewer, prompt-time contracts, session handoff, post-edit checks and autonomy daemon were bloat ("remove it completely"). Deleted them with their tests and the reviewer-only scripts: `claude/hooks` went from ~7.8k lines (plus ~16k test lines) to 1.8k including tests. Kept `deploy_guard`, `live_hooks_guard`, `ask_guard`, their `lib` helpers, `lib/context_size.py` (the lane table imports it) and the Mac load sampler. Last full version: `309583a`. The Codex tree (`hooks/`) is untouched.
+
 ## 2026-10-08: removed CodeGraph, Sentry telemetry and the knowledge MCP from the Codex tree (Dom)
 - Dom ordered it ("remove these for codex please"), mirroring the Claude-side PRs #95 and #97. Deleted `hooks/codegraph_freshness.py`, `hooks/lib/telemetry.py`, `scripts/codegraph_fleet_status.py`, `scripts/install-telemetry.sh`, `requirements-telemetry.txt`, `docs/SENTRY.md` and their tests. Dropped the post-edit/session-start CodeGraph sync and notice, the Sentry reporting calls and policy text, the knowledge MCP `get_playbook()` wording, the codegraph entries in `config/hooks.example.toml`, and the telemetry install step and `HOOK_SENTRY_DSN` setting in CI and `.quality-gate.json`. Code discovery is now "find code with Semble, say why if skipped". Semble stays. Older dated entries below are history and unchanged. Live `~/.codex` is not touched by this change; install separately.
 

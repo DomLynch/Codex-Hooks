@@ -15,7 +15,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib.api import exit_if_audit_child  # noqa: E402
 from lib.log import log  # noqa: E402
 
 COMPONENT = "live_hooks_guard"
@@ -64,7 +63,6 @@ def warning(target: str) -> str:
 
 
 def main() -> None:
-    exit_if_audit_child()
     try:   # a reminder, never a failure: any odd payload means say nothing
         payload = json.loads(sys.stdin.read() or "{}")
         if "Codex Hooks" in str(payload.get("cwd") or ""):   # the hooks lane installs from the repo: not drift
