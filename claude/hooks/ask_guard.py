@@ -24,7 +24,8 @@ REASON = ("No blocking questions (Dom 10-16). Pick the conservative default and 
 # 2026-10-17 (Strategy, Dom's screenshot): the app's wrap_up tool renders `ask` + `actions` as a question card with buttons, the same
 # pop-up by another tool name. Deny only that shape; a recap alone passes.
 WRAP_UP = "mcp__ccd_turn__wrap_up"
-WRAP_UP_REASON = ("No blocking questions (Dom 10-16): call wrap_up again with the recap only, no `ask` and no `actions`. Pick the "
+WRAP_UP_REASON = ("No blocking questions (Dom 10-16): this covers any tool that renders a question or buttons to Dom (AskUserQuestion, "
+                  "wrap_up ask/actions, and any future one). Call wrap_up again with the recap only, no `ask` and no `actions`. Pick the "
                   "conservative default and continue; if you need a ruling, send one line to 'Frankendom - Lead Dev' or "
                   "'Project Strategy - Fable 5.1' by message; never wait on Dom.")
 

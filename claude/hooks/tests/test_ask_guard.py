@@ -50,7 +50,8 @@ def test_wrap_up_with_a_question_or_buttons_is_denied():
                        {"recap": "done", "actions": [{"label": "Ship", "message": "ship"}]}):
         out = json.loads(run({"tool_name": WRAP_UP, "tool_input": tool_input}))
         assert out["hookSpecificOutput"]["permissionDecision"] == "deny", tool_input
-        assert "recap" in out["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "recap" in reason and "any future one" in reason and "No blocking questions (Dom 10-16)" in reason
 
 
 def test_a_plain_wrap_up_recap_still_passes():
