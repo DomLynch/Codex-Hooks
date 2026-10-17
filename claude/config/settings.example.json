@@ -23,7 +23,7 @@
         ]
       },
       {
-        "matcher": "AskUserQuestion",
+        "matcher": "AskUserQuestion|mcp__ccd_turn__wrap_up",
         "hooks": [
           {
             "type": "command",

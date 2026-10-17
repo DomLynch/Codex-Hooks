@@ -39,6 +39,26 @@ def test_ask_user_question_is_denied_in_every_lane():
         assert "never wait on Dom" in reason
 
 
+WRAP_UP = "mcp__ccd_turn__wrap_up"
+
+
+def test_wrap_up_with_a_question_or_buttons_is_denied():
+    """2026-10-17 (Strategy, from Dom's screenshot): "Combat/character sessions v2" showed "Which spell should I rebuild first?" with
+    Nyx/Ash Fall buttons. That card is not AskUserQuestion: it is the app's wrap_up tool carrying `ask` and `actions`."""
+    for tool_input in ({"recap": "done", "ask": "Which spell first?", "actions": [{"label": "Nyx first", "message": "go"}]},
+                       {"recap": "done", "ask": "Which spell first?"},
+                       {"recap": "done", "actions": [{"label": "Ship", "message": "ship"}]}):
+        out = json.loads(run({"tool_name": WRAP_UP, "tool_input": tool_input}))
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny", tool_input
+        reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "recap" in reason and "any future one" in reason and "No blocking questions (Dom 10-16)" in reason
+
+
+def test_a_plain_wrap_up_recap_still_passes():
+    for tool_input in ({"recap": "All merged."}, {"recap": "x", "ask": "", "actions": []}, {"recap": "x", "ask": None}, {}):
+        assert run({"tool_name": WRAP_UP, "tool_input": tool_input}) == "", tool_input
+
+
 def test_other_tools_and_odd_payloads_pass():
     for payload in ({"tool_name": "Bash", "tool_input": {"command": "ls"}}, {"tool_name": "Read", "tool_input": {}},
                     {"tool_name": "AskUserQuestionX"}, {}, "not json", ""):

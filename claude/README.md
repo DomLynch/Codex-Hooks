@@ -8,7 +8,7 @@ The old code is in git history (last full version: commit `309583a`).
 |---|---|---|
 | `PreToolUse` Bash | `deploy_guard.py` | One-deployer rule (heavy commands wait while `deploy.sh` runs), no file writes through Bash (use Edit/Write), no deleting or moving the Playwright cache, one worktree per lane |
 | `PreToolUse` Bash/Edit/Write | `live_hooks_guard.py` | Warns when changing the installed `~/.claude/hooks` directly instead of through a PR to this repo |
-| `PreToolUse` AskUserQuestion | `ask_guard.py` | Denies blocking questions to Dom; rulings go by message to Lead Dev / Strategy |
+| `PreToolUse` AskUserQuestion + `mcp__ccd_turn__wrap_up` | `ask_guard.py` | Denies blocking questions to Dom (also a wrap_up that carries `ask`/`actions`); rulings go by message to Lead Dev / Strategy |
 
 `hooks/lib/context_size.py` is kept only because `~/.claude/state/lane_table.py` and `scripts/context_table.py` import it.
 `scripts/mac_load_sampler.py` is the Mac load sampler (launchd `com.dom.mac-load-sampler`).
