@@ -13,7 +13,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib.api import AUDIT_CHILD_ENV, exit_if_audit_child  # noqa: E402,F401
 from lib.log import log  # noqa: E402
 
 COMPONENT = "ask_guard"
@@ -23,7 +22,6 @@ REASON = ("No blocking questions (Dom 10-16). Pick the conservative default and 
 
 
 def main() -> None:
-    exit_if_audit_child()
     try:   # any odd payload means allow: a guard must never be the thing that breaks a lane
         payload = json.loads(sys.stdin.read() or "{}")
         if payload.get("tool_name") != "AskUserQuestion":

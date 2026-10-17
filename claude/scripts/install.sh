@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install Claude Code hooks: GPT-5.6-Terra audit, autonomy contract, quality floor,
-# auto-checkpoint, and stop orchestrator.
+# Install the Claude Code PreToolUse guards (deploy, live-hooks, ask). Slimmed 2026-10-17 (Dom).
 #
 # Idempotent: safe to re-run. Backs up settings.json before merging.
 # Preserves any existing hooks you already have in ~/.claude/settings.json.
@@ -31,23 +30,7 @@ cp -f "$SRC_DIR/hooks/lib/"*.py "$HOOKS_DIR/lib/"
 cp -f "$SRC_DIR/hooks/tests/"*.py "$HOOKS_DIR/tests/"
 chmod +x "$HOOKS_DIR/"*.py 2>/dev/null || true
 
-# 3. Initialize hook env file with safe defaults if absent
-HOOK_ENV="$SECRETS_DIR/hook_env"
-if [ ! -f "$HOOK_ENV" ]; then
-  cat > "$HOOK_ENV" <<'EOF'
-# Claude hook runtime flags
-# CODEX_HOOK_AUTO_PR: 1 = enable post_tool checkpoint commits (the only thing it still governs)
-# CLAUDE_AUDIT_MODEL / CLAUDE_AUDIT_EFFORT: the per-Stop reviewer (Opus 5.5 low; Opus 5 low won the 2026-09 scorecard)
-# CLAUDE_STOP_REVIEW: 0 = turn the per-Stop reviewer off
-CODEX_HOOK_AUTO_PR=0
-CLAUDE_AUDIT_MODEL=claude-opus-5-5
-CLAUDE_AUDIT_EFFORT=low
-EOF
-  chmod 600 "$HOOK_ENV"
-  echo "==> Created default hook_env (checkpoints off). Edit $HOOK_ENV to enable."
-fi
-
-# 4. Merge hooks into settings.json (preserving existing config)
+# 3. Merge hooks into settings.json (preserving existing config)
 echo "==> Merging settings into $SETTINGS"
 if [ -f "$SETTINGS" ]; then
   cp -f "$SETTINGS" "$BACKUP"
@@ -109,7 +92,6 @@ echo ""
 echo "Next steps:"
 echo "  1. Restart Claude Code (so the hooks load)"
 echo "  2. Watch logs:    tail -f $LOGS_DIR/*.log"
-echo "  3. Enable post_tool checkpoints by editing $HOOK_ENV"
-echo "  4. Disable any hook: comment its block in $SETTINGS"
+echo "  3. Disable any hook: remove its block in $SETTINGS"
 echo ""
 echo "  To uninstall: re-run this script and delete $HOOKS_DIR + restore $BACKUP"
