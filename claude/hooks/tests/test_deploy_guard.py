@@ -50,6 +50,14 @@ class DeployGuardTests(unittest.TestCase):
                 reason = deploy_guard.decide(cmd, None)
                 self.assertIn("VPS", reason, cmd)
                 self.assertIn("load 45", reason)
+        # 2026-10-17 (Lead): release rows failed their timing limits at load 10-13, so above ~12 a GPU row stutters and its numbers are junk
+        with mock.patch.object(deploy_guard, "_mac_load1", return_value=11.9):
+            self.assertEqual(deploy_guard.decide("npx playwright test", None), "")
+        with mock.patch.object(deploy_guard, "_mac_load1", return_value=13.0):
+            reason = deploy_guard.decide("npx playwright test", None)
+            self.assertIn("load 13", reason)
+            self.assertIn("HF T4", reason)
+            self.assertIn("put the load in the receipt", reason)
         with mock.patch.object(deploy_guard, "_mac_load1", return_value=4.0):   # a deploy in flight still wins: one-deployer rule
             self.assertIn("in flight", deploy_guard.decide("npx playwright test", {**lock(pid=1), "age_s": 120}))
 

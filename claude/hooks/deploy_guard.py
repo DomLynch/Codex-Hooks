@@ -315,7 +315,7 @@ def lanejob_mac_wrapper(segment: str, cwd: str = "", command: str = "") -> bool:
 # 2026-10-17 (Dom, "GPU waterfall" in ~/.claude/CLAUDE.md; Lead: Characters could not run stills): browser/WebGL rows, stills and clips run on the
 # M5 Mac FIRST and spill to the VPS only when the Mac is busy. Builds, suites and Blender stay on the VPS at any load. Load threshold chosen by the
 # hooks lane (Lead asked for "the shared-mac threshold"; the skill only says >60 is hopeless and the 2026-10-08 outage sat at 29-57): 30, one name to change.
-MAC_GPU_LOAD_MAX = 30.0
+MAC_GPU_LOAD_MAX = 12.0   # Lead, same day: Web's release rows failed timing limits at load 10-13, so above ~12 a GPU row's numbers are junk (30 was the first pick)
 GPU_BROWSER_RE = re.compile(
     r"(?:^|[\s;&|(])(?:npx\s+playwright\b|node\s+scripts/[\w-]*(?:check|preview|stills|record|contact-sheet|herolook-)[\w-]*\.mjs"
     r"|node\s+artifacts/\S+browser\S*\.mjs)")
@@ -335,7 +335,7 @@ def _mac_load1() -> float:
 
 VPS_REASON = (
     "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08), except browser/WebGL rows, stills and clips, "
-    "which run on the Mac while its 1-min load is under 30 (Dom, 2026-10-17): "
+    "which run on the Mac while its 1-min load is under 12 (Dom, 2026-10-17): "
     "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
     "Safari/WebKit, real-iPhone and sparring rows are exempt; if the VPS is down, prefix the command with MAC_HEAVY_OK=1."
 )
@@ -409,7 +409,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
                or lanejob_mac_wrapper(seg, cwd, command) or (quiet and gpu_browser_run(seg)) for seg in heavy):
             return ""
         if not quiet and all(gpu_browser_run(seg) for seg in heavy):
-            return f"Mac load {load:.0f} is over {MAC_GPU_LOAD_MAX:.0f}, so this browser run goes to the VPS. {VPS_REASON}"
+            return f"Mac load {load:.0f} is over {MAC_GPU_LOAD_MAX:.0f}, so the Mac is stuttering: fall back to the VPS, or the HF T4 if it needs a GPU (put the load in the receipt). {VPS_REASON}"
         return VPS_REASON
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
