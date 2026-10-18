@@ -89,12 +89,12 @@ def scratchpad_of(path: str) -> str:
 
 
 def scratch_worktrees(root: str) -> list[str]:
-    """Child dirs of root that hold a .git file, i.e. the git worktrees checked out there."""
+    """Child dirs of root that hold a .git file, i.e. the git worktrees checked out there, oldest first (by .git mtime)."""
     try:
-        names = sorted(os.listdir(root))
+        found = [n for n in sorted(os.listdir(root)) if os.path.isfile(os.path.join(root, n, ".git"))]
+        return sorted(found, key=lambda n: os.path.getmtime(os.path.join(root, n, ".git")))
     except OSError:
         return []
-    return [n for n in names if os.path.isfile(os.path.join(root, n, ".git"))]
 
 
 def scratch_worktree_reason(command: str, cwd: str = "", listing: Callable[[str], list[str]] | None = None) -> str:
@@ -115,7 +115,8 @@ def scratch_worktree_reason(command: str, cwd: str = "", listing: Callable[[str]
         if len(existing) >= MAX_SCRATCH_WORKTREES:
             more = f" (+{len(existing) - LISTED} more)" if len(existing) > LISTED else ""
             return (f"this scratchpad already has {len(existing)} worktrees ({', '.join(existing[:LISTED])}{more}), about 1.1 GB each. "
-                    f"Remove finished ones first with `git worktree remove <path>` (cap {MAX_SCRATCH_WORKTREES}, Dom 2026-10-18: the Mac hit 23 GB free)")
+                    f"The oldest is {existing[0]}: if it is finished, remove it with `git worktree remove {pad}/{existing[0]}`, then retry. "
+                    f"This guard only refuses and never deletes anything (cap {MAX_SCRATCH_WORKTREES}, Dom 2026-10-18: the Mac hit 23 GB free; Lead go #163)")
     return ""
 
 

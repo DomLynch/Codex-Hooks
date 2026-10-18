@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
 from pathlib import Path
 from unittest import mock
@@ -147,6 +148,11 @@ def test_a_fourth_scratch_worktree_is_denied():
         assert "3 worktrees" in out and "git worktree remove" in out and "wt-a" in out, cmd
 
 
+def test_the_denial_names_the_oldest_worktree_and_removes_nothing():
+    out = scratch(f"git worktree add {SCRATCH}/wt-d origin/main", existing=["wt-oldest", "wt-b", "wt-c"])
+    assert f"git worktree remove {SCRATCH}/wt-oldest" in out and "oldest" in out and "never deletes" in out   # Lead, 2026-10-18
+
+
 def test_under_the_cap_other_places_and_other_commands_pass():
     assert scratch(f"git worktree add {SCRATCH}/wt-c origin/main", existing=["wt-a", "wt-b"]) == ""
     for cmd in (f"git worktree add {DEV}/frankendom-combat-new origin/main", "git worktree add /tmp/other/wt-d origin/main",
@@ -171,6 +177,9 @@ def test_the_real_listing_counts_child_dirs_that_hold_a_git_file(tmp_path):
     (pad / "plain").mkdir()
     (pad / "file.txt").write_text("x")
     assert g.scratch_worktrees(str(pad)) == ["wt-a", "wt-b"]
+    os.utime(pad / "wt-a" / ".git", (2000, 2000))
+    os.utime(pad / "wt-b" / ".git", (1000, 1000))
+    assert g.scratch_worktrees(str(pad)) == ["wt-b", "wt-a"]    # oldest first
     assert g.scratch_worktrees(str(pad / "missing")) == []
     with mock.patch.object(g, "SCRATCH_ROOTS", (str(tmp_path) + "/",)):
         assert g.scratchpad_of(f"{pad}/wt-new") == str(pad)
