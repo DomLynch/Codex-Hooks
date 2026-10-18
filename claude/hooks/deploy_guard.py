@@ -21,7 +21,7 @@ from pathlib import Path
 
 from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
-from lib.worktree_guard import worktree_add_reason
+from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
 
 LOCK_PATH = Path(os.environ.get("DEPLOY_LOCK") or Path.home() / ".claude" / "state" / "deploy_in_flight.json")
 STALE_S = 45 * 60
@@ -576,6 +576,7 @@ def main() -> None:
     lock = active_lock()
     reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command)
                               or worktree_add_reason(command, str(payload.get("cwd") or ""))
+                              or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or cache_delete_reason(command, str(payload.get("cwd") or "")))) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:

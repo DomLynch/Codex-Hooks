@@ -70,6 +70,55 @@ def _target(args: str, cwd: str) -> str:
     return ""
 
 
+# 2026-10-18 (Dom, Mac down to 23 GB free twice in a day): lanes also make ~1.1 GB worktrees in their session scratchpad,
+# /private/tmp/claude-501/<lane>/<session>/scratchpad/wt-*, which the ~/Developer cap never saw (52 of them, 83 GB). Cap: 3 per scratchpad,
+# the hooks lane's pick (the ~/Developer cap is 1); one constant to change. Same fail-open rule as above.
+SCRATCH_ROOTS = ("/private/tmp/claude-501/", "/tmp/claude-501/")
+MAX_SCRATCH_WORKTREES = 3
+
+
+def scratchpad_of(path: str) -> str:
+    """The scratchpad dir a path under claude-501 belongs to (<lane>/<session>/scratchpad, else the lane dir), '' elsewhere."""
+    for root in SCRATCH_ROOTS:
+        if path.startswith(root):
+            parts = path[len(root):].split("/")
+            if "scratchpad" in parts:
+                return root + "/".join(parts[:parts.index("scratchpad") + 1])
+            return root + parts[0] if len(parts) >= 2 else ""
+    return ""
+
+
+def scratch_worktrees(root: str) -> list[str]:
+    """Child dirs of root that hold a .git file, i.e. the git worktrees checked out there."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [n for n in names if os.path.isfile(os.path.join(root, n, ".git"))]
+
+
+def scratch_worktree_reason(command: str, cwd: str = "", listing: Callable[[str], list[str]] | None = None) -> str:
+    if not cwd or "worktree" not in (command or ""):
+        return ""
+    for seg in split_segments(command):
+        m = WORKTREE_ADD_RE.match(seg)
+        if not m:
+            continue
+        raw = _target(m.group(1), cwd)
+        pad = scratchpad_of(raw) if raw else ""
+        if not pad:
+            continue
+        try:
+            existing = (listing or scratch_worktrees)(pad)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        if len(existing) >= MAX_SCRATCH_WORKTREES:
+            more = f" (+{len(existing) - LISTED} more)" if len(existing) > LISTED else ""
+            return (f"this scratchpad already has {len(existing)} worktrees ({', '.join(existing[:LISTED])}{more}), about 1.1 GB each. "
+                    f"Remove finished ones first with `git worktree remove <path>` (cap {MAX_SCRATCH_WORKTREES}, Dom 2026-10-18: the Mac hit 23 GB free)")
+    return ""
+
+
 def worktree_add_reason(command: str, cwd: str = "", listing: Callable[[str], list[str]] | None = None) -> str:
     lane = lane_of(cwd or "")
     if not lane or lane in NOT_LANES or "worktree" not in (command or ""):

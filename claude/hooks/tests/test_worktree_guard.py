@@ -127,3 +127,62 @@ def test_deny_reaches_the_hook_output_on_the_mac():
             mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), mock.patch("sys.stdout", out):
         deploy_guard.main()
     assert json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"].startswith(MESSAGE)
+
+
+# 2026-10-18 (Dom, Mac down to 23 GB free twice in a day): lanes make ~1.1 GB worktrees in their session scratchpad,
+# /private/tmp/claude-501/<lane>/<session>/scratchpad/wt-*, which the ~/Developer cap above never saw (52 of them, 83 GB).
+SCRATCH = "/private/tmp/claude-501/-Users-x-Developer-frankendom-web/7cd4c0d3/scratchpad"
+
+
+def scratch(command, cwd=SCRATCH, existing=()):
+    return g.scratch_worktree_reason(command, cwd, lambda root: list(existing))
+
+
+def test_a_fourth_scratch_worktree_is_denied():
+    three = ["wt-a", "wt-b", "wt-c"]
+    for cmd in (f"git worktree add {SCRATCH}/wt-d -b x origin/main", "git worktree add wt-d origin/main",
+                f"cd {SCRATCH} && git -C /Users/x/Developer/frankendom-main worktree add {SCRATCH}/wt-d --detach origin/main",
+                "git worktree add /tmp/claude-501/-Users-x-Developer-frankendom-web/7cd4c0d3/scratchpad/wt-d origin/main"):
+        out = scratch(cmd, existing=three)
+        assert "3 worktrees" in out and "git worktree remove" in out and "wt-a" in out, cmd
+
+
+def test_under_the_cap_other_places_and_other_commands_pass():
+    assert scratch(f"git worktree add {SCRATCH}/wt-c origin/main", existing=["wt-a", "wt-b"]) == ""
+    for cmd in (f"git worktree add {DEV}/frankendom-combat-new origin/main", "git worktree add /tmp/other/wt-d origin/main",
+                "git worktree list", f"git worktree remove {SCRATCH}/wt-a", "git status",
+                "git commit -m 'git worktree add wt-d'", "echo git worktree add wt-d"):
+        assert scratch(cmd, existing=["wt-a", "wt-b", "wt-c"]) == "", cmd
+
+
+def test_scratch_cap_fails_open():
+    def boom(root):
+        raise OSError("gone")
+    assert g.scratch_worktree_reason(f"git worktree add {SCRATCH}/wt-d x", SCRATCH, boom) == ""
+    assert scratch("git worktree add $UNKNOWN/wt-d x", existing=["a", "b", "c"]) == ""
+    assert scratch("git worktree add wt-d x", cwd="", existing=["a", "b", "c"]) == ""
+
+
+def test_the_real_listing_counts_child_dirs_that_hold_a_git_file(tmp_path):
+    pad = tmp_path / "lane" / "sess" / "scratchpad"
+    for name in ("wt-a", "wt-b"):
+        (pad / name).mkdir(parents=True)
+        (pad / name / ".git").write_text("gitdir: /x")
+    (pad / "plain").mkdir()
+    (pad / "file.txt").write_text("x")
+    assert g.scratch_worktrees(str(pad)) == ["wt-a", "wt-b"]
+    assert g.scratch_worktrees(str(pad / "missing")) == []
+    with mock.patch.object(g, "SCRATCH_ROOTS", (str(tmp_path) + "/",)):
+        assert g.scratchpad_of(f"{pad}/wt-new") == str(pad)
+        assert g.scratchpad_of(f"{tmp_path}/lane/loose/wt-z") == f"{tmp_path}/lane"
+        assert g.scratchpad_of("/Users/x/Developer/frankendom-combat-new") == ""
+
+
+def test_deploy_guard_wires_the_scratch_cap_in():
+    payload = {"tool_name": "Bash", "cwd": SCRATCH, "tool_input": {"command": f"git worktree add {SCRATCH}/wt-d origin/main"}}
+    out = io.StringIO()
+    with mock.patch.object(deploy_guard, "_is_mac", return_value=True), \
+            mock.patch.object(g, "scratch_worktrees", lambda root: ["wt-a", "wt-b", "wt-c"]), \
+            mock.patch("sys.stdin", io.StringIO(json.dumps(payload))), mock.patch("sys.stdout", out):
+        deploy_guard.main()
+    assert "3 worktrees" in json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"]
