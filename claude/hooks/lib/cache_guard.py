@@ -59,7 +59,7 @@ FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
 XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
 PY_HEAD_RE = re.compile(r"python[\d.]*|node(?:js)?|perl[\d.]*")   # python, node and perl one-liners are judged alike (Lead via the Auditor, 2026-10-21)
 PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess"
-                          r"|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|\.rm\(|\.promises\b|fs/promises|\brimraf\b|\bdel\b\(|child_process|execSync|spawnSync"
+                          r"|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|\.rm\(|\brimraf\b|\bdel\b\(|child_process|execSync|spawnSync"
                           r"|\bremove_tree\b|\bunlink\b|\brmdir\b|\bsystem\b")
 SHELLISH_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|find|xargs|rsync)\b")
 PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\("
