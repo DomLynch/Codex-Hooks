@@ -548,7 +548,7 @@ def shell_c_reason(command: str) -> str:
 # model rewrites it as "${VAR:?}/..." or a literal path in one turn. ${VAR:?} and ${VAR:-x} do not match BARE_VAR_RE; single quotes expand nothing.
 BARE_VAR_RE = re.compile(r"\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)")
 RM_RE = re.compile(r"^\s*(?:(?:\w+=\S*|sudo|env|command|time|nohup|\\)\s+)*rm\s+(.*)$", re.DOTALL)
-RM_VAR_REASON = 'rm -r on an unguarded $VAR can delete the wrong tree if it is empty: rewrite as "${VAR:?}/..." or a literal path, then retry'
+RM_VAR_REASON = "rm -r on a $VAR path can delete the wrong tree if it is empty: write the literal path, then retry (a :?-guarded expansion is also refused, Dom 2026-10-21)"
 
 
 def rm_var_reason(command: str) -> str:

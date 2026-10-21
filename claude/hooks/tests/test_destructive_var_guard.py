@@ -89,6 +89,7 @@ def test_allows_literal_paths_and_non_destructive_uses_of_variables():
 def test_reason_is_one_line_and_tells_the_model_what_to_do():
     reason = g.variable_delete_reason("rm -rf $D")
     assert "\n" not in reason and "literal" in reason
+    assert "mv" in reason and "${VAR:?}" not in reason   # the Auditor's noisy case (mv "$OUT" x.json) is named, and no guarded-variable advice
 
 
 def test_deny_reaches_the_hook_output_on_the_mac_and_skips_literal_paths():

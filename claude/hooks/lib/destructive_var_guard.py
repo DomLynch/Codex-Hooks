@@ -17,8 +17,8 @@ import shlex
 from .bash_write_guard import _split as split_segments
 from .cache_guard import DELETERS, KEYWORDS, SHELLS, WRAPPERS, _skip_wrapper_args, _targets
 
-REASON = ("destructive_var_guard: rm/mv/rsync --delete/git clean/find -delete on a variable, $(...) or `...` path cannot be checked and raises a "
-          "permission popup for Dom. Rewrite it with the literal path (Dom 2026-10-21).")
+REASON = ("destructive_var_guard: rm/mv (even mv \"$OUT\" x.json)/rsync --delete/git clean/find -delete on a variable, $(...) or `...` path cannot be "
+          "checked and raises a permission popup for Dom; a :?-guarded expansion does not help. Write the literal path (Dom 2026-10-21).")
 HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)", re.DOTALL)
 HOME_RE = re.compile(r"\$\{HOME\}|\$HOME\b")
 SHELL_STDIN_RE = re.compile(r"(?:^|[\s;&|(])(?:ba|z|da|k)?sh(?:\s+-\w+)*\s*$")   # `bash <<EOF`: a shell reads the body

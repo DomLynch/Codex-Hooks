@@ -291,7 +291,9 @@ class DeployGuardTests(unittest.TestCase):
         """2026-10-14 (Strategy + Dom): the app's own "Dangerous rm operation on possibly-empty variable path" card parks a bypass lane for hours."""
         for cmd in ("rm -rf $S/$d", "rm -rf \"$S/$d\"", "rm -r ${DIR}/x", "rm -fr \"${DIR}\"", "cd x && rm -Rf $TMP/out", "sudo rm -rf $HOME/.cache/x",
                     "rm --recursive --force $S", "FOO=1 rm -rf $S", "ls; rm -f -r $S/a"):
-            self.assertIn("${VAR:?}", deploy_guard.rm_var_reason(cmd), cmd)
+            reason = deploy_guard.rm_var_reason(cmd)
+            self.assertIn("literal path", reason, cmd)
+            self.assertNotIn("${VAR:?}", reason, cmd)   # destructive_var_guard denies the :?-guarded form too (Auditor 2026-10-21): one advice, not two walls
 
     def test_rm_check_leaves_guarded_literal_and_non_recursive_alone(self):
         for cmd in ("rm -rf \"${S:?}/${d:?}\"", "rm -rf ${S:-/tmp/x}/a", "rm -rf /tmp/literal", "rm -f $S/one.txt", "rm $S/one.txt", "rm -rf ./build",
@@ -303,7 +305,8 @@ class DeployGuardTests(unittest.TestCase):
         payload = {"tool_name": "Bash", "tool_input": {"command": "rm -rf $S/$d"}}
         out = subprocess.run([sys.executable, str(Path(deploy_guard.__file__))], input=json.dumps(payload), capture_output=True, text=True).stdout
         self.assertIn('"permissionDecision": "deny"', out)
-        self.assertIn("${VAR:?}", out)
+        self.assertIn("literal path", out)
+        self.assertNotIn("${VAR:?}", out)
 
     def test_candidate_contents_check_is_not_a_heavy_run(self):
         """2026-10-14 (Lead): scripts/candidate-contents-check.mjs is seconds of git merge-tree plus GitHub REST, needs GH_TOKEN (cannot go to the VPS),
