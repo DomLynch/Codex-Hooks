@@ -46,6 +46,10 @@ DENY = [
     "echo \"find ~/Library/Caches -delete\" | zsh",
     "osascript -e 'do shell script \"rm -rf ~/Library/Caches/ms-playwright\"'",
     "osascript -e 'do shell script \"find ~/.cache -delete\"'",
+    # Auditor 2026-10-21: a subprocess call is judged by what it runs, so these stay denied
+    f"python3 -c \"import subprocess; subprocess.run(['rm','-rf','{HOME}/Library/Caches/ms-playwright'])\"",
+    "python3 -I - <<'EOF'\nimport subprocess, os\nsubprocess.run(['rm', '-rf', os.path.expanduser('~/.cache')])\nEOF",
+    "node -e \"require('child_process').execSync('rm -rf ' + process.env.HOME + '/.cache')\"",
 ]
 ALLOW = [
     "eval echo hello",
@@ -74,6 +78,12 @@ ALLOW = [
     "osascript -e 'do shell script \"rm -rf /tmp/scratch\"'",
     "bash -c 'rm -rf ~/Library/Caches/semble'",
     "bash -c 'ls ~/Library/Caches'",
+    # Auditor 2026-10-21: read-only subprocess calls (git show, git log, npx tsc) are not deleters
+    "python3 -I - <<'EOF'\nimport subprocess, json\nrev = 'abc123'\nr = subprocess.run([\"git\", \"show\", f\"{rev}:tests/fixtures/rng-fingerprint.json\"], capture_output=True, text=True)\nprint(json.loads(r.stdout))\nEOF",
+    "python3 -c \"import subprocess; subprocess.run(['git','log','-1','--oneline'])\"",
+    "python3 -c \"import subprocess; subprocess.run(['npx','tsc','--noEmit'], check=True)\"",
+    "node -e \"require('child_process').execSync('git status --short')\"",
+    "python3 -c \"import os; os.system('ls /tmp')\"",
 ]
 
 

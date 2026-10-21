@@ -69,10 +69,11 @@ FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
 XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
 PY_HEAD_RE = re.compile(r"python[\d.]*|node(?:js)?|perl[\d.]*|ruby[\d.]*")   # python, node and perl one-liners are judged alike (Lead via the Auditor, 2026-10-21)
-PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess"
-                          r"|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|\.rm\(|\brimraf\b|\bdel\b\(|child_process|execSync|spawnSync"
-                          r"|\bremove_tree\b|\bunlink\b|\brmdir\b|\bsystem\b"
+PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\("
+                          r"|send2trash|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|\.rm\(|\brimraf\b|\bdel\b\("
+                          r"|\bremove_tree\b|\bunlink\b|\brmdir\b"
                           r"|\bFileUtils\b|\brm_rf?\b|File\.(?:delete|rename)\b|Dir\.(?:rmdir|delete)\b")   # ruby (Hooks Dev 2026-10-21)
+PY_LAUNCH_RE = re.compile(r"os\.(?:system|popen|exec\w*)|subprocess|child_process|execSync|spawnSync|\bsystem\b")   # runs another program: a deleter only when what it runs deletes (Auditor 2026-10-21)
 SHELLISH_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|find|xargs|rsync)\b")
 PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\("
                            r"|homedir|process\.env|\bENV\b|path\.join|path\.resolve|joinpath|readdirSync|readdir|opendir|File::Find|File::Spec|expand_path|Dir\.home|Dir\[|Dir\.glob"
@@ -226,7 +227,8 @@ def _python_reason(command: str, words: list[str], cwd: str, here: str) -> str:
     """`words` are the shlex words of the python segments, so a `-c "..."` source is seen without the shell's quotes around it (Auditor 2026-10-21);
     `command` adds a heredoc body. A string that looks like a shell command (os.system, subprocess) is judged as one."""
     sources = [command, *words]
-    if not any(PY_DELETE_RE.search(src) for src in sources):
+    launches_deleter = any(PY_LAUNCH_RE.search(src) for src in sources) and any(DELETE_TEXT_RE.search(src) for src in sources)
+    if not launches_deleter and not any(PY_DELETE_RE.search(src) for src in sources):
         return ""
     if "playwright" in command.lower() or any(PY_DYNAMIC_RE.search(src) for src in sources):
         return INDIRECT
@@ -290,7 +292,7 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
         elif head == "ssh" or head in SHELLS:   # `ssh host '<command>'` and `bash -c '<command>'`: judge the inner command (Auditor, 2026-10-21)
             for arg in rest:
                 if REMOTE_RE.search(arg):
-                    reason = _scan(arg, "" if head == "ssh" else cwd, "/root" if head == "ssh" else here, dict(env))
+                    reason = _scan(arg, "/root" if head == "ssh" else cwd, "/root" if head == "ssh" else here, dict(env))   # a remote command starts in the remote home
                     if reason:
                         return reason
             if head in SHELLS and not _shell_script(rest) and prev[:1] in (["echo"], ["printf"]) and _piped(command or "", segment):
