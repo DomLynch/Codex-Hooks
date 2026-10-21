@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from lib import cache_guard as g  # noqa: E402
 
 CWD = "/Users/x/Developer/frankendom-deploy"
+HOME = str(Path.home())
 
 DENY = [
     "find ~/Library/Caches -name '*' -delete",
@@ -29,6 +30,19 @@ DENY = [
     "python3 -c \"import shutil,pathlib; shutil.rmtree(pathlib.Path.home()/'.cache')\"",
     "python3 - <<'EOF'\nimport shutil, os\nfor d in os.listdir(os.path.expanduser('~/Library/Caches')):\n    shutil.rmtree(os.path.join(os.path.expanduser('~/Library/Caches'), d))\nEOF",
     "python -c \"import os; os.remove('/Users/x/Developer/.ms-playwright/a')\"",
+    # Auditor 2026-10-21: the shell quotes around the -c argument hid the inner literal path
+    f"python3 -c \"import shutil; shutil.rmtree('{HOME}/Library/Caches')\"",
+    f"python3 -c 'import shutil; shutil.rmtree(\"{HOME}/Library/Caches\")'",
+    f"python3 -c \"import shutil; shutil.rmtree('{HOME}/.cache')\"",
+    f"python3 -c \"from shutil import rmtree as r; r('{HOME}/Library/Caches')\"",
+    f"python3 -c \"import os; os.system('rm -rf {HOME}/Library/Caches')\"",
+    f"python3 -c \"import subprocess; subprocess.run(['rm','-rf','{HOME}/Library/Caches'])\"",
+    f"python3 -c \"import subprocess; subprocess.run('find {HOME}/.cache -delete', shell=True)\"",
+    # Auditor: xargs is pipe-fed only after a `|`; a separator or a stdin redirect leaves the input unknown
+    "echo /tmp/x; xargs rm -rf < list.txt",
+    "xargs rm -rf < list.txt",
+    "echo /tmp/x && xargs rm -rf",
+    "echo /tmp/x | xargs rm -rf < list.txt",
 ]
 ALLOW = [
     "find ~/Library/Caches/semble -type f -delete",
@@ -42,6 +56,9 @@ ALLOW = [
     "ls ~/Library/Caches | xargs echo",
     "python3 -c \"import shutil; shutil.rmtree('/tmp/scratch')\"",
     "python3 -c \"print('hello')\"",
+    "python3 -c \"import subprocess; subprocess.run(['rm','-rf','/tmp/scratch'])\"",
+    "python3 -c \"import os; os.system('rm -rf /tmp/scratch')\"",
+    "echo /tmp/x | xargs rm -rf",
     "python3 -m pytest tests -q",
     "echo \"shutil.rmtree('/root/.cache/ms-playwright')\"",
     "git commit -m 'close find -delete and xargs rm in cache_guard'",

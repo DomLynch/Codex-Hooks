@@ -16,7 +16,10 @@ and a variable or command substitution that stays unknown becomes `*`: denied wh
 the pipe's producer is a find/ls/echo/printf whose paths are resolved and clear of the cache (anything else, e.g. `cat list | xargs rm`, is
 unknowable and fails closed); an inline Python command (`python -c`, `python - <<EOF`) that calls rmtree/os.remove/unlink/... is denied when
 a string literal reaches the cache, the code mentions playwright, or it builds paths dynamically (expanduser, Path.home, listdir, glob ...).
-A script run as a FILE is not inspected: its own paths are the lane's to check.
+A script run as a FILE is not inspected: its own paths are the lane's to check. Python source is read from the shlex words (a `-c "..."`
+argument without the shell's quotes) and the heredoc body; a string that looks like a shell command (os.system, subprocess) is judged as one.
+xargs counts as pipe-fed only straight after a single `|`; after `;`/`&&` or with a `<` redirect its stdin is unknown and it fails closed.
+Not covered (Lead's scope call): node -e, perl -e, ruby -e.
 """
 from __future__ import annotations
 
@@ -54,7 +57,8 @@ FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
 XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
 PY_HEAD_RE = re.compile(r"python[\d.]*")
-PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash")
+PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess")
+SHELLISH_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|find|xargs|rsync)\b")
 PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\(")
 PY_LITERAL_RE = re.compile(r"""(['"])(.+?)\1""")
 
@@ -155,21 +159,40 @@ def _xargs_reason(rest: list[str], prev: list[str], cwd: str, here: str, env: di
     return _paths_hit(_find_starts(args) if producer == "find" else _targets(args) or ["."], cwd, here, env)
 
 
-def _python_reason(command: str, cwd: str, here: str) -> str:
-    if not PY_DELETE_RE.search(command):
+def _piped(command: str, segment: str) -> bool:
+    """True when every occurrence of the segment follows a single `|` (its stdin is the previous command's output)."""
+    start, found = 0, False
+    while (idx := command.find(segment, start)) >= 0:
+        before = command[:idx].rstrip()
+        if not before.endswith("|") or before.endswith("||"):
+            return False
+        found, start = True, idx + 1
+    return found
+
+
+def _python_reason(command: str, words: list[str], cwd: str, here: str) -> str:
+    """`words` are the shlex words of the python segments, so a `-c "..."` source is seen without the shell's quotes around it (Auditor 2026-10-21);
+    `command` adds a heredoc body. A string that looks like a shell command (os.system, subprocess) is judged as one."""
+    sources = [command, *words]
+    if not any(PY_DELETE_RE.search(src) for src in sources):
         return ""
-    if "playwright" in command.lower() or PY_DYNAMIC_RE.search(command):
+    if "playwright" in command.lower() or any(PY_DYNAMIC_RE.search(src) for src in sources):
         return INDIRECT
-    for _, literal in PY_LITERAL_RE.findall(command):
-        for path, _unknown in _resolve(literal, here, cwd, {}):
-            if _hits(path):
-                return MESSAGE
+    for src in sources:
+        for _, literal in PY_LITERAL_RE.findall(src):
+            for path, _unknown in _resolve(literal, here, cwd, {}):
+                if _hits(path):
+                    return MESSAGE
+            if " " in literal and SHELLISH_RE.search(literal):
+                reason = _scan(literal, cwd, here, {})
+                if reason:
+                    return reason
     return ""
 
 
 def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
     prev: list[str] = []
-    python = False
+    python: list[str] | None = None
     for segment in split_segments(command or ""):
         try:
             words = shlex.split(segment.rstrip().removesuffix("\\"))   # `find ... -exec rm {} \;` splits at `;` and leaves a lone backslash
@@ -211,11 +234,12 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
             if reason:
                 return reason
         elif head == "xargs":
-            reason = _xargs_reason(rest, prev, cwd, here, env)
+            fed = prev if _piped(command or "", segment) and not any(w.startswith("<") for w in words) else []   # a `;`/`&&` before it or a `<` redirect makes stdin unknown
+            reason = _xargs_reason(rest, fed, cwd, here, env)
             if reason:
                 return reason
         elif PY_HEAD_RE.fullmatch(head):
-            python = True
+            python = (python or []) + words
         elif head in DELETERS or head == "mv" or (head == "rsync" and any(w.startswith("--delete") for w in rest)):
             targets = _targets(rest)
             if head == "mv":
@@ -230,7 +254,7 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                     if _hits(path):
                         return UNRESOLVED if unknown else MESSAGE
         prev = [head] + rest
-    return _python_reason(command, cwd, here) if python else ""
+    return _python_reason(command or "", python, cwd, here) if python is not None else ""
 
 
 def cache_delete_reason(command: str, cwd: str = "", home: str | None = None) -> str:
