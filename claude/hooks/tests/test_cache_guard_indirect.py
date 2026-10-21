@@ -48,6 +48,11 @@ DENY = [
     "perl -e 'unlink glob \"$ENV{HOME}/.cache/*\"'",
     f"perl -e 'system(\"rm -rf {HOME}/Library/Caches\")'",
     "python3 -c \"import shutil,os; shutil.rmtree(os.path.join('/root', '.cache'))\"",
+    # Auditor @dc2e6b7: node's async deletes with a literal cache path
+    f"node -e \"require('fs').rm('{HOME}/.cache',{{recursive:true}},()=>{{}})\"",
+    f"node -e \"require('fs').promises.rm('{HOME}/Library/Caches',{{recursive:true}})\"",
+    f"node -e \"const fsp=require('fs/promises'); fsp.rm('{HOME}/.cache',{{recursive:true}})\"",
+    f"node -e \"require('rimraf').sync('{HOME}/.cache')\"",
     # Auditor, same rule: a path built from pieces cannot be shown clear of the cache, so a delete with it is denied
     f"python3 -c \"import shutil; shutil.rmtree('{HOME}/Libr'+'ary/Caches')\"",
     "python3 -c \"import shutil; d='/root'; shutil.rmtree(f'{d}/.cache')\"",
