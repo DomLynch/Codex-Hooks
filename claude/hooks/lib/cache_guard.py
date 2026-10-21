@@ -19,7 +19,8 @@ a string literal reaches the cache, the code mentions playwright, or it builds p
 A script run as a FILE is not inspected: its own paths are the lane's to check. Python source is read from the shlex words (a `-c "..."`
 argument without the shell's quotes) and the heredoc body; a string that looks like a shell command (os.system, subprocess) is judged as one.
 xargs counts as pipe-fed only straight after a single `|`; after `;`/`&&` or with a `<` redirect its stdin is unknown and it fails closed.
-Not covered (Lead's scope call): node -e, perl -e, ruby -e.
+node -e and perl -e are judged the same way (Lead's ruling via the Auditor); a delete whose path is built from pieces (+, f-string, .format, %,
+join, ${}) is denied because it cannot be shown clear of the cache. Not covered: ruby -e and other interpreters.
 """
 from __future__ import annotations
 
@@ -56,10 +57,14 @@ INDIRECT = ("cache_guard: this delete names its targets indirectly (xargs, find 
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
 XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
-PY_HEAD_RE = re.compile(r"python[\d.]*")
-PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess")
+PY_HEAD_RE = re.compile(r"python[\d.]*|node(?:js)?|perl[\d.]*")   # python, node and perl one-liners are judged alike (Lead via the Auditor, 2026-10-21)
+PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess"
+                          r"|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|child_process|execSync|spawnSync"
+                          r"|\bremove_tree\b|\bunlink\b|\brmdir\b|\bsystem\b")
 SHELLISH_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|find|xargs|rsync)\b")
-PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\(")
+PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\("
+                           r"|homedir|process\.env|\bENV\b|path\.join|path\.resolve|joinpath|readdirSync|readdir|opendir|File::Find|File::Spec"
+                           r"""|['"`]\s*[+.%]\s*[\w$(\['"`]|[\w)\]]\s*[+.]\s*['"`]|\bf['"]|\.format\(|\.join\(|\$\{|\$\w""")   # a path built from pieces
 PY_LITERAL_RE = re.compile(r"""(['"])(.+?)\1""")
 
 
