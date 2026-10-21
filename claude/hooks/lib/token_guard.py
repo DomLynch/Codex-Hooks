@@ -37,7 +37,9 @@ SAFE_HEADS = {"ls", "stat", "test", "[", "[["}
 SHELL_HEADS = {"ssh", "bash", "sh", "zsh"}
 CODE_HEADS = {"node", "perl", "ruby", "php", "deno", "bun", "awk", "gawk", "lua"}
 COPIERS = {"tar", "zip", "7z", "7za", "scp", "rsync", "cp", "mv", "ditto", "cpio", "pax", "gzip", "bzip2", "xz", "zstd"}
-MESSAGE_FLAGS = {"-m", "--message", "--body", "-b", "--title", "-t", "--notes", "--subject"}
+TREE_SEARCHERS = {"rg", "ag", "ack"}   # recursive by default
+GREPS = {"grep", "egrep", "fgrep", "zgrep"}
+MESSAGE_FLAGS ={"-m", "--message", "--body", "-b", "--title", "-t", "--notes", "--subject"}
 MESSAGE_PREFIXES = tuple(f"{flag}=" for flag in MESSAGE_FLAGS if flag.startswith("--"))
 MESSAGE = ("A Hugging Face token never goes on a command line, in a commit, PR body or message, and nothing outside a job script touches "
            "/root/.hf (Dom 2026-10-21). Only a job script reads it: HF_TOKEN=$(cat /root/.hf/token) inside the script, never echoed or "
@@ -50,8 +52,12 @@ def _component_match(pattern: str, target: str) -> bool:
     return fnmatch.fnmatchcase(target, pattern)
 
 
-def _touches(path: str, copier: bool) -> bool:
+def _touches(path: str, copier: bool, anywhere: bool = True) -> bool:
     parts = [""] if path == "/" else path.rstrip("/").split("/")
+    # a ".hf" folder under ANY prefix: a symlink to /root read as /tmp/rr/.hf/token (Auditor, 2026-10-21). Not for a word with spaces:
+    # that is a command string or a sentence, not a path (ssh and bash -c strings are judged by the recursion).
+    if anywhere and any(part == ".hf" or (part.startswith(".h") and any(c in part for c in "*?[") and _component_match(part, ".hf")) for part in parts):
+        return True
     for root in HF_ROOTS:
         target = root.split("/")
         paired = list(zip(parts, target))
@@ -59,6 +65,19 @@ def _touches(path: str, copier: bool) -> bool:
             continue
         if len(parts) >= len(target) or copier:   # the folder itself or inside it; a parent only when the command copies or archives
             return True
+    return False
+
+
+def _reads_trees(head: str, rest: list[str], command: str) -> bool:
+    """True when the command reads or copies everything under the folders it is given (so a parent of /root/.hf counts):
+    archivers and copiers, rg/ag/ack, grep -r, and find that runs something on what it finds (-exec ... or piped to xargs)."""
+    if head in COPIERS or head in TREE_SEARCHERS:
+        return True
+    if head in GREPS:
+        return any((w.startswith("-") and not w.startswith("--") and ("r" in w[1:] or "R" in w[1:])) or w in {"--recursive", "--dereference-recursive"}
+                   for w in rest)
+    if head == "find":
+        return any(w in {"-exec", "-execdir", "-ok", "-okdir"} for w in rest) or "xargs" in command
     return False
 
 
@@ -70,7 +89,7 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
     env = {} if _env is None else _env
     for segment in split_segments(command):
         try:
-            words = shlex.split(segment)
+            words = shlex.split(segment.rstrip("\\ \t"))   # a find -exec ... \; leaves a trailing backslash after the split on ;
         except ValueError:   # cannot be read: close it only when the segment names the folder or the variable
             if ".hf" in segment or any(var in segment for var in TOKEN_VARS):
                 return MESSAGE
@@ -108,7 +127,7 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
             for arg in rest:
                 if " " in arg and hf_token_reason(arg, "", "/root", _depth + 1, dict(env)):
                     return MESSAGE
-        copier = head in COPIERS
+        copier = _reads_trees(head, rest, command)
         code = head.startswith("python") or head in CODE_HEADS
         skip = False
         for word in rest:
@@ -126,6 +145,7 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
             if head in {"scp", "rsync"}:
                 candidates.append(re.sub(r"^[^/\s:]+:", "", word))      # host:/path names a path on the remote
             for candidate in candidates:
-                if any(_touches(path, copier) for path, _unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env)):
+                spaced = bool(re.search(r"\s", candidate))
+                if any(_touches(path, copier, not spaced) for path, _unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env)):
                     return MESSAGE
     return ""
