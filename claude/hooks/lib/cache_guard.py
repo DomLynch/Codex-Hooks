@@ -20,7 +20,14 @@ A script run as a FILE is not inspected: its own paths are the lane's to check. 
 argument without the shell's quotes) and the heredoc body; a string that looks like a shell command (os.system, subprocess) is judged as one.
 xargs counts as pipe-fed only straight after a single `|`; after `;`/`&&` or with a `<` redirect its stdin is unknown and it fails closed.
 node -e and perl -e are judged the same way (Lead's ruling via the Auditor); a delete whose path is built from pieces (+, f-string, .format, %,
-join, ${}) is denied because it cannot be shown clear of the cache. Not covered: ruby -e and other interpreters.
+join, ${}) is denied because it cannot be shown clear of the cache. Not covered: interpreters other than python/node/perl/ruby.
+
+2026-10-21 (Hooks Dev, follow-up card to #171): wrappers no longer hide the deleter. `timeout 5`, `nice -n 10`, `ionice`, `exec`, `stdbuf`,
+`caffeinate`, `setsid`, `env -i`/`env -u X` and `sudo -u x` are skipped with their own options; `eval <words>` and `osascript -e 'do shell script
+"..."'` are judged as the shell command they carry; `echo|printf '<command>' | sh` is judged as that command; `find -exec sh -c '<script>'` and
+`xargs sh -c '<script>'` judge the script (positional $0/$1/$@ stand for what find or the producer supplies, so the start path or the producer
+decides, as for `-exec rm`); ruby -e joins python/node/perl. Still not covered: `cat file | sh`, scripts run as files, a command word built
+by substitution (`$(echo rm) -rf ...`).
 """
 from __future__ import annotations
 
@@ -38,7 +45,11 @@ PLAYWRIGHT = [Path.home() / "Library" / "Caches" / "ms-playwright", Path.home() 
 ANCESTORS = {str(parent) for pw in PLAYWRIGHT for parent in pw.parents}
 PROTECTED = {str(pw) for pw in PLAYWRIGHT}
 DELETERS = {"rm", "rmdir", "unlink", "trash"}
-WRAPPERS = {"sudo", "command", "env", "nohup", "time"}
+WRAPPERS = {"sudo", "command", "env", "nohup", "time", "timeout", "nice", "ionice", "exec", "stdbuf", "caffeinate", "setsid", "builtin"}
+WRAPPER_VALUED = {"sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"}, "env": {"-u", "-C", "-S", "-P"}, "timeout": {"-s", "-k"},
+                  "nice": {"-n"}, "ionice": {"-c", "-n", "-p"}, "stdbuf": {"-i", "-o", "-e"}, "caffeinate": {"-t", "-w"}}   # options that take a value
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+DELETE_TEXT_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv)\b|\bfind\b[^|;&]*-delete|\brsync\b[^|;&]*--delete")
 KEYWORDS = {"do", "then", "if", "else", "elif", "while", "until", "!", "{"}   # shell words that can start a segment before the command
 REMOTE_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|rsync|find|xargs|python[\d.]*)\b")
 VAR_RE = re.compile(r"\$\{(\w+)[^}]*\}|\$(\w+)")
@@ -57,13 +68,14 @@ INDIRECT = ("cache_guard: this delete names its targets indirectly (xargs, find 
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
 XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
-PY_HEAD_RE = re.compile(r"python[\d.]*|node(?:js)?|perl[\d.]*")   # python, node and perl one-liners are judged alike (Lead via the Auditor, 2026-10-21)
+PY_HEAD_RE = re.compile(r"python[\d.]*|node(?:js)?|perl[\d.]*|ruby[\d.]*")   # python, node and perl one-liners are judged alike (Lead via the Auditor, 2026-10-21)
 PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash|os\.(?:system|popen|exec\w*)|subprocess"
                           r"|\b(?:rmSync|rmdirSync|unlinkSync|renameSync)\b|fs\.(?:rm|rmdir|unlink|rename)\b|\.rm\(|\brimraf\b|\bdel\b\(|child_process|execSync|spawnSync"
-                          r"|\bremove_tree\b|\bunlink\b|\brmdir\b|\bsystem\b")
+                          r"|\bremove_tree\b|\bunlink\b|\brmdir\b|\bsystem\b"
+                          r"|\bFileUtils\b|\brm_rf?\b|File\.(?:delete|rename)\b|Dir\.(?:rmdir|delete)\b")   # ruby (Hooks Dev 2026-10-21)
 SHELLISH_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|find|xargs|rsync)\b")
 PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\("
-                           r"|homedir|process\.env|\bENV\b|path\.join|path\.resolve|joinpath|readdirSync|readdir|opendir|File::Find|File::Spec"
+                           r"|homedir|process\.env|\bENV\b|path\.join|path\.resolve|joinpath|readdirSync|readdir|opendir|File::Find|File::Spec|expand_path|Dir\.home|Dir\[|Dir\.glob"
                            r"""|['"`]\s*[+.%]\s*[\w$(\['"`]|[\w)\]]\s*[+.]\s*['"`]|\bf['"]|\.format\(|\.join\(|\$\{|\$\w""")   # a path built from pieces
 PY_LITERAL_RE = re.compile(r"""(['"])(.+?)\1""")
 
@@ -143,9 +155,36 @@ def _paths_hit(words: list[str], cwd: str, here: str, env: dict[str, list[str]])
     return ""
 
 
+def _skip_wrapper_args(wrapper: str, words: list[str]) -> list[str]:
+    """Drop a wrapper's own options (and `timeout`'s duration) so the next word is the command it runs."""
+    valued = WRAPPER_VALUED.get(wrapper, set())
+    i = 0
+    while i < len(words) and words[i].startswith("-") and words[i] != "--":
+        i += 2 if words[i] in valued else 1
+    if wrapper == "timeout" and i < len(words) and re.fullmatch(r"[\d.]+[smhd]?", words[i]):
+        i += 1
+    return words[i:]
+
+
+def _shell_script(words: list[str]) -> str:
+    """The `-c` script of a shell invocation's words (`-c`, `-lc`, ...), or ''."""
+    for i, word in enumerate(words[:-1]):
+        if re.fullmatch(r"-\w*c", word):
+            return re.sub(r"\$\{?[0-9@*#]+\}?|\$@|\$\*", "/ARG", words[i + 1])   # find/xargs positional parameters are decided by the producer, not the script
+    return ""
+
+
 def _find_reason(rest: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
     deletes = "-delete" in rest or any(
         w in FIND_EXEC and i + 1 < len(rest) and os.path.basename(rest[i + 1]) in DELETERS | {"mv"} for i, w in enumerate(rest))
+    for i, w in enumerate(rest):   # `-exec sh -c '<script>'`: judge the script (Hooks Dev follow-up to #171)
+        if w in FIND_EXEC and i + 1 < len(rest) and os.path.basename(rest[i + 1]) in SHELLS:
+            script = _shell_script(rest[i + 2:])
+            if script and DELETE_TEXT_RE.search(script):
+                reason = _scan(script, cwd, here, dict(env))
+                if reason:
+                    return reason
+                deletes = True
     return _paths_hit(_find_starts(rest), cwd, here, env) if deletes else ""
 
 
@@ -153,9 +192,17 @@ def _xargs_reason(rest: list[str], prev: list[str], cwd: str, here: str, env: di
     i = 0
     while i < len(rest) and rest[i].startswith("-"):
         i += 2 if rest[i] in XARGS_VALUED else 1
-    if i >= len(rest) or os.path.basename(rest[i]) not in DELETERS | {"mv"}:
+    if i >= len(rest):
         return ""
-    reason = _paths_hit(_targets(rest[i + 1:]), cwd, here, env)   # operands given on the xargs line itself
+    if os.path.basename(rest[i]) in SHELLS:   # `xargs sh -c '<script>'`: the script deletes what stdin feeds it
+        script = _shell_script(rest[i + 1:])
+        if not script or not DELETE_TEXT_RE.search(script):
+            return ""
+        reason = _scan(script, cwd, here, dict(env))
+    elif os.path.basename(rest[i]) in DELETERS | {"mv"}:
+        reason = _paths_hit(_targets(rest[i + 1:]), cwd, here, env)   # operands given on the xargs line itself
+    else:
+        return ""
     if reason:
         return reason
     producer, args = (os.path.basename(prev[0]), prev[1:]) if prev else ("", [])
@@ -205,9 +252,11 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
             continue
         assigns = []
         while words and (words[0] in KEYWORDS or words[0] in WRAPPERS or re.fullmatch(r"\w+=\S*", words[0])):
-            if words[0] not in KEYWORDS and words[0] not in WRAPPERS:
-                assigns.append(words[0])
-            words = words[1:]
+            word, words = words[0], words[1:]
+            if word in WRAPPERS:
+                words = _skip_wrapper_args(word, words)   # timeout 5 / nice -n 10 / env -i / exec ...
+            elif word not in KEYWORDS:
+                assigns.append(word)
         if not words:
             for assign in assigns:   # a bare `name=value` sets it for the rest of the command
                 name, value = ASSIGN_RE.fullmatch(assign).groups()
@@ -228,12 +277,26 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
             placed = _resolve(rest[0], here, cwd, env)
             if placed and not placed[0][1]:
                 cwd = placed[0][0]
-        elif head in {"ssh", "bash", "sh", "zsh"}:   # `ssh host '<command>'` and `bash -c '<command>'`: judge the inner command (Auditor, 2026-10-21)
+        elif head == "eval":   # eval runs its words as a command line
+            reason = _scan(" ".join(rest), cwd, here, dict(env))
+            if reason:
+                return reason
+        elif head == "osascript":   # `do shell script "<command>"`
+            for arg in rest:
+                if "do shell script" in arg:
+                    reason = _scan(arg.split("do shell script", 1)[1].replace("\\", " ").replace('"', " "), cwd, here, dict(env))
+                    if reason:
+                        return reason
+        elif head == "ssh" or head in SHELLS:   # `ssh host '<command>'` and `bash -c '<command>'`: judge the inner command (Auditor, 2026-10-21)
             for arg in rest:
                 if REMOTE_RE.search(arg):
                     reason = _scan(arg, "" if head == "ssh" else cwd, "/root" if head == "ssh" else here, dict(env))
                     if reason:
                         return reason
+            if head in SHELLS and not _shell_script(rest) and prev[:1] in (["echo"], ["printf"]) and _piped(command or "", segment):
+                reason = _scan(" ".join(prev[1:]).replace("\\n", "\n"), cwd, here, dict(env))   # `echo '<command>' | sh`
+                if reason:
+                    return reason
         elif head == "find":
             reason = _find_reason(rest, cwd, here, env)
             if reason:
