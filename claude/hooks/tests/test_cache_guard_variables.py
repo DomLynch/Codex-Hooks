@@ -50,6 +50,30 @@ ALLOW = [
 ]
 
 
+SHELL_C_DENY = [
+    "bash -c 'rm -rf ~/Library/Caches/ms-playwright'",
+    'sh -c "rm -rf ~/Library/Caches"',
+    "zsh -c 'for s in ~/Library/Caches/ms-playwright; do rm -rf \"$s\"; done'",
+    "bash -c 'rm -rf \"${s:?}\"'",
+    "rm -rf ~/Developer/.ms-playwright",           # Deploy's second browser cache (Lead, 2026-10-21)
+    "bash -c 'rm -rf ~/Developer/.ms-playwright'",
+    "rm -rf ~/Developer",
+]
+SHELL_C_ALLOW = [
+    "bash -c 'rm -rf ~/Library/Caches/semble'",
+    "bash scripts/deploy.sh",
+    "rm -rf artifacts/origins-preview",            # Deploy's normal cleanup
+    "bash -c 'rm -rf artifacts/origins-preview'",
+    "rm -rf ~/Developer/frankendom-sweep3270",
+]
+
+
+def test_bash_dash_c_and_the_second_playwright_cache_are_judged_too():
+    missed = [c for c in SHELL_C_DENY if not g.cache_delete_reason(c, CWD)]
+    wrongly = [c for c in SHELL_C_ALLOW if g.cache_delete_reason(c, CWD)]
+    assert not missed and not wrongly, (missed, wrongly)
+
+
 def test_denies_variable_targets_that_could_be_the_cache_or_a_parent():
     missed = [c for c in DENY if not g.cache_delete_reason(c, CWD)]
     assert not missed, missed

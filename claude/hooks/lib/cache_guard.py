@@ -22,6 +22,7 @@ from pathlib import Path
 from .bash_write_guard import _split as split_segments
 
 PLAYWRIGHT = [Path.home() / "Library" / "Caches" / "ms-playwright", Path.home() / ".cache" / "ms-playwright",
+              Path.home() / "Developer" / ".ms-playwright",   # Deploy's second browser cache, never-touch since 2026-10-21 (Lead)
               Path("/root/.cache/ms-playwright")]
 ANCESTORS = {str(parent) for pw in PLAYWRIGHT for parent in pw.parents}
 PROTECTED = {str(pw) for pw in PLAYWRIGHT}
@@ -126,10 +127,10 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
             placed = _resolve(rest[0], here, cwd, env)
             if placed and not placed[0][1]:
                 cwd = placed[0][0]
-        elif head == "ssh":
+        elif head in {"ssh", "bash", "sh", "zsh"}:   # `ssh host '<command>'` and `bash -c '<command>'`: judge the inner command (Auditor, 2026-10-21)
             for arg in rest:
                 if REMOTE_RE.search(arg):
-                    reason = _scan(arg, "", "/root", dict(env))
+                    reason = _scan(arg, "" if head == "ssh" else cwd, "/root" if head == "ssh" else here, dict(env))
                     if reason:
                         return reason
         elif head in DELETERS or head == "mv" or (head == "rsync" and any(w.startswith("--delete") for w in rest)):
