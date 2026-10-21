@@ -39,6 +39,7 @@ CODE_HEADS = {"node", "perl", "ruby", "php", "deno", "bun", "awk", "gawk", "lua"
 COPIERS = {"tar", "zip", "7z", "7za", "scp", "rsync", "cp", "mv", "ditto", "cpio", "pax", "gzip", "bzip2", "xz", "zstd"}
 TREE_SEARCHERS = {"rg", "ag", "ack"}   # recursive by default
 GREPS = {"grep", "egrep", "fgrep", "zgrep"}
+PLACEHOLDER = "${_SUBST_}"
 MESSAGE_FLAGS ={"-m", "--message", "--body", "-b", "--title", "-t", "--notes", "--subject"}
 MESSAGE_PREFIXES = tuple(f"{flag}=" for flag in MESSAGE_FLAGS if flag.startswith("--"))
 MESSAGE = ("A Hugging Face token never goes on a command line, in a commit, PR body or message, and nothing outside a job script touches "
@@ -52,7 +53,16 @@ def _component_match(pattern: str, target: str) -> bool:
     return fnmatch.fnmatchcase(target, pattern)
 
 
-def _touches(path: str, copier: bool, anywhere: bool = True) -> bool:
+def _could_be(path: str) -> bool:
+    """A path with a `*` from an unresolved substitution can hold slashes (`$(printf /roo)t` is /root): match it against the whole
+    path of the token folder, its file, and every parent, not component by component."""
+    pool = {str(p) for root in HF_ROOTS for p in Path(root).parents} | set(HF_ROOTS) | {f"{root}/token" for root in HF_ROOTS}
+    return any(fnmatch.fnmatchcase(target, path) for target in pool)
+
+
+def _touches(path: str, copier: bool, anywhere: bool = True, unknown: bool = False) -> bool:
+    if unknown and copier and _could_be(path):
+        return True
     parts = [""] if path == "/" else path.rstrip("/").split("/")
     # a ".hf" folder under ANY prefix: a symlink to /root read as /tmp/rr/.hf/token (Auditor, 2026-10-21). Not for a word with spaces:
     # that is a command string or a sentence, not a path (ssh and bash -c strings are judged by the recursion).
@@ -81,9 +91,48 @@ def _reads_trees(head: str, rest: list[str], command: str) -> bool:
     return False
 
 
+def _mask_substitutions(command: str) -> tuple[str, list[str]]:
+    """Replace each live `$(...)` / backtick substitution by the placeholder `${_SUBST_}` (an unknown variable: it has no parens for the
+    segment splitter to cut at, and resolves to `*`) and return the bodies, so the word around it stays whole
+    (`$(readlink -f X)/origins/y.json` keeps its literal suffix instead of being cut at the paren) and each body is judged as a command of its
+    own. Single-quoted text is literal and untouched. Unbalanced text is returned as it came."""
+    out, bodies, i, n = [], [], 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "'":
+            j = command.find("'", i + 1)
+            j = n - 1 if j == -1 else j
+            out.append(command[i:j + 1])
+            i = j + 1
+        elif command.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += (command[j] == "(") - (command[j] == ")")
+                j += 1
+            if depth:
+                return command, []
+            bodies.append(command[i + 2:j - 1])
+            out.append(PLACEHOLDER)
+            i = j
+        elif ch == "`":
+            j = command.find("`", i + 1)
+            if j == -1:
+                return command, []
+            bodies.append(command[i + 1:j])
+            out.append(PLACEHOLDER)
+            i = j + 1
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out), bodies
+
+
 def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth: int = 0, _env: dict | None = None) -> str:
     command = command or ""
     if TOKEN_RE.search(command):
+        return MESSAGE
+    command, bodies = _mask_substitutions(command)
+    if _depth < 4 and any(hf_token_reason(body, cwd, home, _depth + 1, dict(_env or {})) for body in bodies):
         return MESSAGE
     here = home or str(Path.home())
     env = {} if _env is None else _env
@@ -146,6 +195,6 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
                 candidates.append(re.sub(r"^[^/\s:]+:", "", word))      # host:/path names a path on the remote
             for candidate in candidates:
                 spaced = bool(re.search(r"\s", candidate))
-                if any(_touches(path, copier, not spaced) for path, _unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env)):
+                if any(_touches(path, copier, not spaced, unknown) for path, unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env)):
                     return MESSAGE
     return ""
