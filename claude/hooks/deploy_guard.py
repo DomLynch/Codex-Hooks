@@ -580,7 +580,7 @@ def main() -> None:
                               or worktree_add_reason(command, str(payload.get("cwd") or ""))
                               or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or archive_reason(command, str(payload.get("cwd") or ""))
-                              or cache_delete_reason(command, str(payload.get("cwd") or "")))) or hf_token_reason(command) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+                              or cache_delete_reason(command, str(payload.get("cwd") or "")))) or hf_token_reason(command, str(payload.get("cwd") or "")) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
