@@ -105,6 +105,33 @@ ALLOW = [
 ]
 
 
+# Auditor, 2026-10-21: a FALSE BLOCK. `grep -r ... $(readlink -f /opt/x/current)/origins/y.json` never touches /root/.hf, but the old splitter cut the word at
+# `$(` so the guard saw a bare `*` (any folder, even /root) as the target of a recursive reader. The literal suffix rules /root out.
+SUBST_ALLOW = [
+    "ssh root@49.12.7.18 'grep -o \"presence\" -r $(readlink -f /opt/frankendom-presence/current)/origins/presence/presence-rules-defs.json'",
+    "grep -r presence $(readlink -f /opt/frankendom-presence/current)/origins/presence/presence-rules-defs.json",
+    "grep -rn foo `readlink -f /opt/x/current`/src",
+    "cp -r $(dirname $0)/assets /tmp/assets",
+    "git commit -m 'the guard blocks $(cat /root/.hf/token) in a message'",
+]
+SUBST_DENY = [
+    "grep -r hf_ $(echo /root)",
+    "grep -r hf_ $(echo /root)/",
+    "tar czf /tmp/x.tgz $(printf /roo)t",
+    "cat $(echo /root/.hf)/token",
+    "cat $(printf /roo)t/.hf/token",
+    "git commit -m \"note $(cat /root/.hf/token)\"",
+    "echo $(cat $(echo /root/.hf/token))",
+    "ssh root@49.12.7.18 'grep -r hf_ $(echo /root)'",
+]
+
+
+def test_command_substitution_with_a_literal_suffix_is_not_a_false_block_but_a_bare_one_is_denied():
+    wrongly = [c for c in SUBST_ALLOW if g.hf_token_reason(c, "/tmp")]
+    missed = [c for c in SUBST_DENY if not g.hf_token_reason(c, "/tmp")]
+    assert not wrongly and not missed, (wrongly, missed)
+
+
 def test_denies_every_way_to_read_or_print_the_token():
     missed = [c for c in DENY if not g.hf_token_reason(c, "/tmp")]
     assert not missed, missed
