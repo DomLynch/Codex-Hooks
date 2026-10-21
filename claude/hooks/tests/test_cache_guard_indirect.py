@@ -1,0 +1,58 @@
+"""cache_guard: the delete forms that never name the path to `rm` (Auditor + Strategy, 2026-10-21 follow-up to #168).
+`xargs rm`, `find -exec rm`, `find -delete` and Python `shutil.rmtree` all passed because the target is not a word after `rm`."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from lib import cache_guard as g  # noqa: E402
+
+CWD = "/Users/x/Developer/frankendom-deploy"
+
+DENY = [
+    "find ~/Library/Caches -name '*' -delete",
+    "find ~/Library/Caches/ms-playwright -type f -delete",
+    "find ~/.cache -mindepth 1 -maxdepth 1 -exec rm -rf {} +",
+    "find ~/.cache -mtime +7 -exec rm -rf {} \\;",
+    "find / -name ms-playwright -exec rm -rf {} +",
+    "find ~ -name 'chromium-*' -execdir rm -rf {} +",
+    "ssh root@49.12.7.18 'find /root/.cache -maxdepth 1 -delete'",
+    "ls ~/Library/Caches | xargs rm -rf",
+    "ls -d ~/Library/Caches/* | xargs -I{} rm -rf {}",
+    "find ~/Library/Caches -maxdepth 1 | xargs rm -rf",
+    "cat list.txt | xargs rm -rf",
+    "echo ~/Library/Caches/ms-playwright | xargs trash",
+    "python3 -c \"import shutil,os; shutil.rmtree(os.path.expanduser('~/Library/Caches/ms-playwright'))\"",
+    "python3 -c \"import shutil; shutil.rmtree('/root/.cache/ms-playwright')\"",
+    "python3 -c \"import shutil,pathlib; shutil.rmtree(pathlib.Path.home()/'.cache')\"",
+    "python3 - <<'EOF'\nimport shutil, os\nfor d in os.listdir(os.path.expanduser('~/Library/Caches')):\n    shutil.rmtree(os.path.join(os.path.expanduser('~/Library/Caches'), d))\nEOF",
+    "python -c \"import os; os.remove('/Users/x/Developer/.ms-playwright/a')\"",
+]
+ALLOW = [
+    "find ~/Library/Caches/semble -type f -delete",
+    "find ~/.cache/uv -mtime +7 -exec rm -rf {} +",
+    "find /tmp/scratch -name '*.log' -delete",
+    "find ~/Library/Caches -name '*.log' -print",
+    "find ~/.cache -maxdepth 1 -type d",
+    "ls /tmp/scratch | xargs rm -rf",
+    "find /tmp/scratch -name '*.tmp' | xargs rm",
+    "git ls-files -z | xargs -0 grep foo",
+    "ls ~/Library/Caches | xargs echo",
+    "python3 -c \"import shutil; shutil.rmtree('/tmp/scratch')\"",
+    "python3 -c \"print('hello')\"",
+    "python3 -m pytest tests -q",
+    "echo \"shutil.rmtree('/root/.cache/ms-playwright')\"",
+    "git commit -m 'close find -delete and xargs rm in cache_guard'",
+]
+
+
+def test_denies_indirect_deletes_of_the_cache_or_its_parents():
+    for command in DENY:
+        assert g.cache_delete_reason(command, CWD), command
+
+
+def test_allows_indirect_deletes_that_cannot_reach_the_cache():
+    for command in ALLOW:
+        assert g.cache_delete_reason(command, CWD) == "", command

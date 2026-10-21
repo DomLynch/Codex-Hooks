@@ -10,6 +10,13 @@ is checked with /root as home.
 guard skipped every target containing `$`. Now an inline literal assignment (`s=~/x`) or `for s in a b c` in the same command is resolved,
 and a variable or command substitution that stays unknown becomes `*`: denied when `*` could be the cache or a folder holding it
 (`"${s:?}"`, `$(mktemp -d)`), allowed when a literal part rules it out (`"$DIR/node_modules"`). Still fail-open only on an odd quote.
+
+2026-10-21 (Auditor + Strategy follow-up): the delete forms that never name the path to `rm` are judged too. `find <paths> -delete` and
+`find <paths> -exec rm ...` are denied when a start path is the cache, inside it, or a folder holding it; `... | xargs rm` is denied unless
+the pipe's producer is a find/ls/echo/printf whose paths are resolved and clear of the cache (anything else, e.g. `cat list | xargs rm`, is
+unknowable and fails closed); an inline Python command (`python -c`, `python - <<EOF`) that calls rmtree/os.remove/unlink/... is denied when
+a string literal reaches the cache, the code mentions playwright, or it builds paths dynamically (expanduser, Path.home, listdir, glob ...).
+A script run as a FILE is not inspected: its own paths are the lane's to check.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ PROTECTED = {str(pw) for pw in PLAYWRIGHT}
 DELETERS = {"rm", "rmdir", "unlink", "trash"}
 WRAPPERS = {"sudo", "command", "env", "nohup", "time"}
 KEYWORDS = {"do", "then", "if", "else", "elif", "while", "until", "!", "{"}   # shell words that can start a segment before the command
-REMOTE_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|rsync)\b")
+REMOTE_RE = re.compile(r"\b(?:rm|rmdir|unlink|trash|mv|rsync|find|xargs|python[\d.]*)\b")
 VAR_RE = re.compile(r"\$\{(\w+)[^}]*\}|\$(\w+)")
 SUBST_RE = re.compile(r"\$\([^)]*\)?|`[^`]*`?|\$")
 ASSIGN_RE = re.compile(r"(\w+)=(.*)", re.DOTALL)
@@ -38,6 +45,18 @@ MESSAGE = ("Never delete or move ms-playwright, or a folder that contains it (Le
 UNRESOLVED = ("cache_guard: unresolvable path, use the literal path. A variable or command substitution here could name ms-playwright or a "
               "folder that holds it (Strategy + Dom 2026-10-21: a loop deleted it through $s). Write the literal path, or assign it in the "
               "same command (s=~/Library/Caches/semble).")
+
+
+INDIRECT = ("cache_guard: this delete names its targets indirectly (xargs, find -delete/-exec, python) and could reach ms-playwright or a "
+            "folder that holds it. Pass the literal paths to rm, or give find/ls a literal start path outside ~/Library/Caches, ~/.cache and "
+            "their parents (Auditor + Strategy 2026-10-21).")
+FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
+FIND_PRODUCERS = {"find", "ls", "echo", "printf"}
+XARGS_VALUED = {"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a", "-J"}
+PY_HEAD_RE = re.compile(r"python[\d.]*")
+PY_DELETE_RE = re.compile(r"\brmtree\b|shutil\.move|\bos\.(?:remove|unlink|rmdir|removedirs|rename|replace)\b|\.(?:unlink|rmdir|rename)\(|send2trash")
+PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdir|rglob|glob|walk|scandir|argv|input\(|__import__|eval\(|exec\(")
+PY_LITERAL_RE = re.compile(r"""(['"])(.+?)\1""")
 
 
 def _resolve(arg: str, home: str, cwd: str, env: dict[str, list[str]]) -> list[tuple[str, bool]]:
@@ -96,10 +115,64 @@ def _known(resolved: list[tuple[str, bool]]) -> list[str]:
     return [path for path, unknown in resolved if not unknown]
 
 
+def _find_starts(rest: list[str]) -> list[str]:
+    i = 0
+    while i < len(rest) and rest[i] in {"-H", "-L", "-P"}:
+        i += 1
+    out = []
+    while i < len(rest) and not rest[i].startswith(("-", "(", "!")):
+        out.append(rest[i])
+        i += 1
+    return out or ["."]
+
+
+def _paths_hit(words: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    for word in words:
+        for path, unknown in _resolve(word, here, cwd, env):
+            if _hits(path):
+                return UNRESOLVED if unknown else MESSAGE
+    return ""
+
+
+def _find_reason(rest: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    deletes = "-delete" in rest or any(
+        w in FIND_EXEC and i + 1 < len(rest) and os.path.basename(rest[i + 1]) in DELETERS | {"mv"} for i, w in enumerate(rest))
+    return _paths_hit(_find_starts(rest), cwd, here, env) if deletes else ""
+
+
+def _xargs_reason(rest: list[str], prev: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    i = 0
+    while i < len(rest) and rest[i].startswith("-"):
+        i += 2 if rest[i] in XARGS_VALUED else 1
+    if i >= len(rest) or os.path.basename(rest[i]) not in DELETERS | {"mv"}:
+        return ""
+    reason = _paths_hit(_targets(rest[i + 1:]), cwd, here, env)   # operands given on the xargs line itself
+    if reason:
+        return reason
+    producer, args = (os.path.basename(prev[0]), prev[1:]) if prev else ("", [])
+    if producer not in FIND_PRODUCERS:
+        return INDIRECT   # stdin of unknown origin: fail closed
+    return _paths_hit(_find_starts(args) if producer == "find" else _targets(args) or ["."], cwd, here, env)
+
+
+def _python_reason(command: str, cwd: str, here: str) -> str:
+    if not PY_DELETE_RE.search(command):
+        return ""
+    if "playwright" in command.lower() or PY_DYNAMIC_RE.search(command):
+        return INDIRECT
+    for _, literal in PY_LITERAL_RE.findall(command):
+        for path, _unknown in _resolve(literal, here, cwd, {}):
+            if _hits(path):
+                return MESSAGE
+    return ""
+
+
 def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    prev: list[str] = []
+    python = False
     for segment in split_segments(command or ""):
         try:
-            words = shlex.split(segment)
+            words = shlex.split(segment.rstrip().removesuffix("\\"))   # `find ... -exec rm {} \;` splits at `;` and leaves a lone backslash
         except ValueError:
             continue
         assigns = []
@@ -133,6 +206,16 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                     reason = _scan(arg, "" if head == "ssh" else cwd, "/root" if head == "ssh" else here, dict(env))
                     if reason:
                         return reason
+        elif head == "find":
+            reason = _find_reason(rest, cwd, here, env)
+            if reason:
+                return reason
+        elif head == "xargs":
+            reason = _xargs_reason(rest, prev, cwd, here, env)
+            if reason:
+                return reason
+        elif PY_HEAD_RE.fullmatch(head):
+            python = True
         elif head in DELETERS or head == "mv" or (head == "rsync" and any(w.startswith("--delete") for w in rest)):
             targets = _targets(rest)
             if head == "mv":
@@ -146,7 +229,8 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                 for path, unknown in _resolve(target, home, cwd, env):
                     if _hits(path):
                         return UNRESOLVED if unknown else MESSAGE
-    return ""
+        prev = [head] + rest
+    return _python_reason(command, cwd, here) if python else ""
 
 
 def cache_delete_reason(command: str, cwd: str = "", home: str | None = None) -> str:
