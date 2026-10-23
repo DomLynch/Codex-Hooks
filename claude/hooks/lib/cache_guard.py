@@ -26,8 +26,13 @@ join, ${}) is denied because it cannot be shown clear of the cache. Not covered:
 `caffeinate`, `setsid`, `env -i`/`env -u X` and `sudo -u x` are skipped with their own options; `eval <words>` and `osascript -e 'do shell script
 "..."'` are judged as the shell command they carry; `echo|printf '<command>' | sh` is judged as that command; `find -exec sh -c '<script>'` and
 `xargs sh -c '<script>'` judge the script (positional $0/$1/$@ stand for what find or the producer supplies, so the start path or the producer
-decides, as for `-exec rm`); ruby -e joins python/node/perl. Still not covered: `cat file | sh`, scripts run as files, a command word built
-by substitution (`$(echo rm) -rf ...`).
+decides, as for `-exec rm`); ruby -e joins python/node/perl.
+
+2026-10-22 (Hooks Dev): the three forms left open are closed. A file fed to a shell (`sh file`, `sh < file`, `cat file | sh`, `source file`) is
+read and judged as the command it holds; `./script.sh` is read when it has a shell shebang or a .sh/.bash/.zsh name (other executables are not
+opened); script arguments become $1..$9 and an unset `$1`/`$@` fails closed. A missing, binary or over-256 KB file is not judged, and
+`curl ... | sh` stays allowed (its text cannot be read). A command word that is a substitution or an unresolved variable (`$(echo rm) -rf x`,
+`$RM -rf x`) is treated as a possible rm/mv: every operand is judged, so it is denied only when an operand can reach the cache.
 """
 from __future__ import annotations
 
@@ -175,6 +180,124 @@ def _shell_script(words: list[str]) -> str:
     return ""
 
 
+def _strip_prefix(words: list[str]) -> tuple[list[str], list[str]]:
+    """Drop leading shell keywords, wrappers (with their options) and `name=value` words; return the command's words and those assignments."""
+    assigns = []
+    while words and (words[0] in KEYWORDS or words[0] in WRAPPERS or re.fullmatch(r"\w+=\S*", words[0])):
+        word, words = words[0], words[1:]
+        if word in WRAPPERS:
+            words = _skip_wrapper_args(word, words)   # timeout 5 / nice -n 10 / env -i / exec ...
+        elif word not in KEYWORDS:
+            assigns.append(word)
+    return words, assigns
+
+
+def _mask_substitutions(text: str) -> str:
+    """Replace each `$(...)` (nesting allowed) and backtick group with the single word `$__S`, so shlex keeps it whole."""
+    out, depth, i, tick = [], 0, 0, False
+    while i < len(text):
+        ch = text[i]
+        if depth == 0 and not tick and text.startswith("$(", i):
+            depth, i = 1, i + 2
+            out.append("$__S")
+            continue
+        if depth:
+            depth += (ch == "(") - (ch == ")")
+        elif ch == "`":
+            if not tick:
+                out.append("$__S")
+            tick = not tick
+        elif not tick:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _unknown_head_reason(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    """`$(echo rm) -rf x`, `` `echo rm` -rf x ``, `$RM -rf x`: a command word we cannot resolve could be rm or mv, so every operand is
+    judged as a delete target. A variable resolved earlier in the command (`x=rm; $x ...`) is not unknown: _scan reads its value.
+    Runs on the command with each substitution masked, because the segment splitter cuts `$(...)` apart (Hooks Dev 2026-10-22)."""
+    env = dict(env)
+    for segment in split_segments(_mask_substitutions(command)):
+        try:
+            words, assigns = _strip_prefix(shlex.split(segment.rstrip().removesuffix("\\")))
+        except ValueError:
+            continue
+        if not words:
+            for assign in assigns:
+                name, value = ASSIGN_RE.fullmatch(assign).groups()
+                resolved = _resolve(value, here, cwd, env)
+                if resolved and len(_known(resolved)) == len(resolved):
+                    env[name] = _known(resolved)
+                else:
+                    env.pop(name, None)
+            continue
+        m = re.fullmatch(r"\$\{?(\w+)\}?", words[0])
+        if m and m.group(1) not in env:
+            reason = _paths_hit([w for w in words[1:] if not w.startswith("-")], cwd, here, env)
+            if reason:
+                return reason
+    return ""
+
+
+SCRIPT_MAX = 256 * 1024
+SHELL_SHEBANG_RE = re.compile(r"^#!\s*\S*?(?:/env\s+)?(?:-\S+\s+)*(?:sh|bash|zsh|dash|ksh)\b")
+_FILE_DEPTH = [0]
+
+
+def _file_reason(name: str, args: list[str], cwd: str, here: str, env: dict[str, list[str]], *, force: bool) -> str:
+    """Judge a shell script (or a file fed to a shell) as the command it holds. `args` become $1..$9. An unreadable, missing,
+    binary or oversized file, and (unless `force`) a file that is not a shell script, is not judged. Hooks Dev 2026-10-22."""
+    if _FILE_DEPTH[0] >= 3:
+        return ""
+    for path, unknown in _resolve(name, here, cwd, env):
+        if unknown:
+            continue
+        try:
+            p = Path(path)
+            if not p.is_file() or p.stat().st_size > SCRIPT_MAX:
+                continue
+            text = p.read_text(errors="replace")
+        except OSError:
+            continue
+        if "\0" in text or not DELETE_TEXT_RE.search(text):
+            continue
+        if not force and p.suffix not in {".sh", ".bash", ".zsh"} and not (text.startswith("#!") and SHELL_SHEBANG_RE.match(text)):
+            continue
+        inner = dict(env)
+        for i, arg in enumerate(args[:9], 1):
+            resolved = _resolve(arg, here, cwd, env)
+            if resolved and len(_known(resolved)) == len(resolved):
+                inner[str(i)] = _known(resolved)
+        _FILE_DEPTH[0] += 1
+        try:
+            reason = _scan(text, cwd, here, inner)
+        finally:
+            _FILE_DEPTH[0] -= 1
+        if reason:
+            return reason
+    return ""
+
+
+def _shell_file_reason(rest: list[str], words: list[str], prev: list[str], piped: bool, cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    """`sh file [args]`, `sh < file`, `cat file | sh`: the file is the script the shell runs."""
+    i = 0
+    while i < len(rest) and rest[i].startswith(("-", "+")) and rest[i] != "--":
+        i += 2 if rest[i] in {"-o", "+o", "-O", "+O"} else 1
+    if i < len(rest) and rest[i] == "--":
+        i += 1
+    if i < len(rest) and not rest[i].startswith("<"):
+        return _file_reason(rest[i], rest[i + 1:], cwd, here, env, force=True)
+    redirects = [words[j + 1] for j, w in enumerate(words[:-1]) if w == "<"] + [w[1:] for w in words if w.startswith("<") and not w.startswith("<<") and len(w) > 1]
+    if not redirects and piped and prev[:1] in (["cat"], ["tac"]):
+        redirects = _targets(prev[1:])   # `cat a b | sh`
+    for name in redirects:
+        reason = _file_reason(name, [], cwd, here, env, force=True)
+        if reason:
+            return reason
+    return ""
+
+
 def _find_reason(rest: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
     deletes = "-delete" in rest or any(
         w in FIND_EXEC and i + 1 < len(rest) and os.path.basename(rest[i + 1]) in DELETERS | {"mv"} for i, w in enumerate(rest))
@@ -245,6 +368,9 @@ def _python_reason(command: str, words: list[str], cwd: str, here: str) -> str:
 
 
 def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    reason = _unknown_head_reason(command or "", cwd, here, env)
+    if reason:
+        return reason
     prev: list[str] = []
     python: list[str] | None = None
     for segment in split_segments(command or ""):
@@ -252,13 +378,7 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
             words = shlex.split(segment.rstrip().removesuffix("\\"))   # `find ... -exec rm {} \;` splits at `;` and leaves a lone backslash
         except ValueError:
             continue
-        assigns = []
-        while words and (words[0] in KEYWORDS or words[0] in WRAPPERS or re.fullmatch(r"\w+=\S*", words[0])):
-            word, words = words[0], words[1:]
-            if word in WRAPPERS:
-                words = _skip_wrapper_args(word, words)   # timeout 5 / nice -n 10 / env -i / exec ...
-            elif word not in KEYWORDS:
-                assigns.append(word)
+        words, assigns = _strip_prefix(words)
         if not words:
             for assign in assigns:   # a bare `name=value` sets it for the rest of the command
                 name, value = ASSIGN_RE.fullmatch(assign).groups()
@@ -268,6 +388,9 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                 else:
                     env.pop(name, None)
             continue
+        named = re.fullmatch(r"\$\{?(\w+)\}?", words[0])
+        if named and env.get(named.group(1)):
+            words = [env[named.group(1)][0], *words[1:]]   # `x=rm; $x -rf ...`
         head, rest = os.path.basename(words[0]), words[1:]
         if head == "for" and len(rest) >= 3 and rest[1] == "in":
             values = [r for value in rest[2:] for r in _resolve(value, here, cwd, env)]
@@ -299,6 +422,10 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                 reason = _scan(" ".join(prev[1:]).replace("\\n", "\n"), cwd, here, dict(env))   # `echo '<command>' | sh`
                 if reason:
                     return reason
+            if head in SHELLS and not _shell_script(rest):
+                reason = _shell_file_reason(rest, words, prev, _piped(command or "", segment), cwd, here, env)   # `sh file`, `sh < file`, `cat file | sh`
+                if reason:
+                    return reason
         elif head == "find":
             reason = _find_reason(rest, cwd, here, env)
             if reason:
@@ -323,6 +450,14 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                 for path, unknown in _resolve(target, home, cwd, env):
                     if _hits(path):
                         return UNRESOLVED if unknown else MESSAGE
+        elif words[0] in {"source", "."} and rest:   # `source file`, `. file`
+            reason = _file_reason(rest[0], rest[1:], cwd, here, env, force=True)
+            if reason:
+                return reason
+        elif "/" in words[0]:   # `./clean.sh`, `/path/clean.sh`: a shell script run as a file
+            reason = _file_reason(words[0], rest, cwd, here, env, force=False)
+            if reason:
+                return reason
         prev = [head] + rest
     return _python_reason(command or "", python, cwd, here) if python is not None else ""
 
