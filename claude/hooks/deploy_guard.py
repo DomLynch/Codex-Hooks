@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -23,7 +24,6 @@ from lib.archive_guard import archive_reason
 from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
 from lib.destructive_var_guard import variable_delete_reason
-from lib.token_guard import TOKEN_RE as HF_TOKEN_RE
 from lib.token_guard import hf_token_reason
 from lib.root_clone_guard import root_clone_reason
 from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
@@ -359,20 +359,43 @@ def _block_log() -> Path:
     return Path(override) if override else Path.home() / ".claude" / "logs" / "hook_blocks.log"
 
 
-SECRET_ASSIGN_RE = re.compile(r"\b(\w*(?:TOKEN|KEY|SECRET|PASSWORD)\w*)=\S+", re.IGNORECASE)
+LINE_BREAKS_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85  ]")   # every boundary str.splitlines knows: one refusal is one line
+# Secret shapes masked before the cut (Auditor, 2026-10-23). Order matters: the specific shapes first, the generic assignment last.
+SECRET_RES = (
+    (re.compile(r"hf_[A-Za-z0-9]{20,}"), "hf_***"),                                       # any length, no word-boundary trick (`Xhf_...`, `_hf_...`)
+    (re.compile(r"gh[pousr]_\w+"), "gh_***"),
+    (re.compile(r"sk-[\w-]{20,}"), "sk-***"),
+    (re.compile(r"Bearer\s+\S+", re.IGNORECASE), "Bearer ***"),
+    (re.compile(r"://[^/\s:@]+:[^@\s]+@"), "://***@"),                                    # https://user:password@host
+    (re.compile(r"(--?(?:pass(?:word)?|token|key|secret)[= ])\S+", re.IGNORECASE), r"\1***"),
+    (re.compile(r"(\"(?:token|key|secret|password)\"\s*:\s*)\"[^\"]*\"", re.IGNORECASE), r"\1\"***\""),
+    (re.compile(r"\b(\w*(?:TOKEN|KEY|SECRET|PASSWORD)\w*)=(\"[^\"]*\"|'[^']*'|\S+)", re.IGNORECASE), r"\1=***"),   # a quoted value to its closing quote
+)
+
+
+def _masked(text: str) -> str:
+    for pattern, replacement in SECRET_RES:
+        text = pattern.sub(replacement, text)
+    return LINE_BREAKS_RE.sub(" ", text)
 
 
 def note_block(command: str, reason: str) -> None:
     """One line per refusal: UTC time | rule (first 50 characters of the reason) | first 80 characters of the command (Dom + Strategy, 2026-10-23: the
-    token and cache checks kept no log of their blocks, so "is the guard worth it?" could only be guessed). A token-shaped string or a secret
-    assignment is masked BEFORE the cut, so it cannot straddle the 80th character. Logging never costs a lane its refusal."""
+    token and cache checks kept no log of their blocks, so "is the guard worth it?" could only be guessed). Secrets are masked BEFORE the cut, so
+    none can straddle the 80th character. Called AFTER the refusal is written, and never blocks or follows a link: a FIFO at the log path would
+    hang `open()` (the hook then times out and the command may run), and a symlink would append the line, whose ` | ` separators make it a
+    command, to wherever it points, ~/.zshrc for one (Auditor, 2026-10-23). It opens non-blocking, no-follow, and writes only to a regular file.
+    Logging never costs a lane its refusal."""
     try:
-        text = SECRET_ASSIGN_RE.sub(r"\1=***", HF_TOKEN_RE.sub("hf_***", command)).replace("\n", " ")[:80]
-        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = f"{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} | {_masked(reason)[:50]} | {_masked(command)[:80]}\n"
         path = _block_log()
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a") as fh:
-            fh.write(f"{stamp} | {reason.replace(chr(10), ' ')[:50]} | {text}\n")
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        try:
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                os.write(fd, line.encode("utf-8", "replace"))
+        finally:
+            os.close(fd)
     except Exception:   # noqa: BLE001 - an audit line must never cost a lane its refusal or its command
         pass
 
@@ -616,10 +639,11 @@ def main() -> None:
             except (OSError, RuntimeError):   # an audit line must never cost a lane its command
                 pass
         return
-    note_block(command, reason)
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason},
     }))
+    sys.stdout.flush()
+    note_block(command, reason)   # after the refusal is out: a log that blocks or fails must not take the refusal with it
 
 
 if __name__ == "__main__":
