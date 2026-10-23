@@ -85,6 +85,7 @@ def _touches(path: str, copier: bool, anywhere: bool = True, unknown: bool = Fal
 
 
 GLOB_CHARS = "*?["
+GLOB_CAP = 5000
 
 
 def _expand_locally(path: str) -> list[str] | None:
@@ -97,7 +98,8 @@ def _expand_locally(path: str) -> list[str] | None:
     prefix = "/".join(parts[:first]) or "/"
     if not os.path.isdir(prefix) or _touches(prefix, False):
         return None
-    return glob.glob(path)[:5000]
+    matches = glob.glob(path)
+    return matches if len(matches) <= GLOB_CAP else None   # too many to judge one by one: the abstract check decides (Auditor, 2026-10-23: a cut list failed open)
 
 
 def _could_name_token_folder(word: str) -> bool:

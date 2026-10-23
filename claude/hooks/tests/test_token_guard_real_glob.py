@@ -74,6 +74,15 @@ def test_what_cannot_be_seen_from_here_stays_closed(home):
         assert _reason(command, home), command
 
 
+def test_an_expansion_too_long_to_judge_falls_back_to_the_abstract_check(home, monkeypatch):
+    """Auditor, 2026-10-23: the list was cut at 5000, so a token folder sorting after the cut was never looked at (failed open)."""
+    monkeypatch.setattr(g, "GLOB_CAP", 3)
+    for i in range(10):
+        (home / f".aa{i}").mkdir()
+    assert _reason("du -sk .[a-z]*", home)            # 12+ matches > cap: judged in the abstract, `.[a-z]*` could be `.hf`
+    assert not _reason("du -sk .aa[0-1]", home)       # 2 matches, under the cap, none is the token folder
+
+
 def test_a_literal_token_folder_is_still_denied_locally(home):
     for command in ("du -sk ~/.hf", "cat ~/.hf/token", "cp -r ~/.hf /tmp/x", "cat $HOME/.hf/token"):
         assert _reason(command, home), command
