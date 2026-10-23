@@ -23,6 +23,7 @@ from lib.archive_guard import archive_reason
 from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
 from lib.destructive_var_guard import variable_delete_reason
+from lib.token_guard import TOKEN_RE as HF_TOKEN_RE
 from lib.token_guard import hf_token_reason
 from lib.root_clone_guard import root_clone_reason
 from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
@@ -353,6 +354,29 @@ def _hatch_log() -> Path:   # lazy: Path.home() at import time could crash the h
     return Path.home() / ".claude" / "logs" / "deploy_guard.log"
 
 
+def _block_log() -> Path:
+    override = os.environ.get("HOOK_BLOCK_LOG")   # tests point this at a temp file, also for the deploy_guard.py processes they spawn
+    return Path(override) if override else Path.home() / ".claude" / "logs" / "hook_blocks.log"
+
+
+SECRET_ASSIGN_RE = re.compile(r"\b(\w*(?:TOKEN|KEY|SECRET|PASSWORD)\w*)=\S+", re.IGNORECASE)
+
+
+def note_block(command: str, reason: str) -> None:
+    """One line per refusal: UTC time | rule (first 50 characters of the reason) | first 80 characters of the command (Dom + Strategy, 2026-10-23: the
+    token and cache checks kept no log of their blocks, so "is the guard worth it?" could only be guessed). A token-shaped string or a secret
+    assignment is masked BEFORE the cut, so it cannot straddle the 80th character. Logging never costs a lane its refusal."""
+    try:
+        text = SECRET_ASSIGN_RE.sub(r"\1=***", HF_TOKEN_RE.sub("hf_***", command)).replace("\n", " ")[:80]
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        path = _block_log()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as fh:
+            fh.write(f"{stamp} | {reason.replace(chr(10), ' ')[:50]} | {text}\n")
+    except Exception:   # noqa: BLE001 - an audit line must never cost a lane its refusal or its command
+        pass
+
+
 SPLICE_WORD_RE = re.compile(r"(?:[\w.:/@=-]|'[\w.:/@=-]*'|\"[\w.:/@=-]*\")+")
 TOKEN_RE = re.compile(r"(?:[^\s'\"]|'[^']*'|\"[^\"]*\")+")
 
@@ -592,6 +616,7 @@ def main() -> None:
             except (OSError, RuntimeError):   # an audit line must never cost a lane its command
                 pass
         return
+    note_block(command, reason)
     sys.stdout.write(json.dumps({
         "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason},
     }))
