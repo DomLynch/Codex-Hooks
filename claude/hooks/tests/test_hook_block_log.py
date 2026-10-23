@@ -91,11 +91,13 @@ def test_more_secret_shapes_are_masked_before_the_cut(block_log):
         "curl -H 'Authorization: Bearer abcdef123456secret' https://x", "git clone https://dom:SuperSecret1@github.com/x/y",
         "login --password SuperSecret2 now", "curl -d '{\"token\":\"SuperSecret3\"}' https://x", "export API_KEY=SuperSecret4 && run",
         'PASSWORD="correct horse battery" run', "PASSWORD='two words here' run",
+        "git push https://github_pat_11ABCDEFG0123456789_abcdefghijSECRET@github.com/x/y",           # fine-grained GitHub token
+        "aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP", "curl -d t=xoxb-1234-5678-SECRET5 https://slack.example",
     ]
     for command in secrets:
         deploy_guard.note_block(command, "rule")
     text = block_log.read_text()
-    for needle in ("aB3dE5", "SuperSecret1", "SuperSecret2", "SuperSecret3", "SuperSecret4", "abcdef123456secret", "correct horse", "two words", "a" * 20, "b" * 20):
+    for needle in ("aB3dE5", "SuperSecret1", "SuperSecret2", "SuperSecret3", "SuperSecret4", "abcdef123456secret", "github_pat_11ABCDEFG", "AKIAABCDEFGHIJKLMNOP", "xoxb-1234", "correct horse", "two words", "a" * 20, "b" * 20):
         assert needle not in text, needle
     assert len(text.splitlines()) == len(secrets)
 

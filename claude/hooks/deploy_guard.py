@@ -363,7 +363,9 @@ LINE_BREAKS_RE = re.compile(r"[\r\n\v\f\x1c-\x1e\x85  ]")   # every boundary
 # Secret shapes masked before the cut (Auditor, 2026-10-23). Order matters: the specific shapes first, the generic assignment last.
 SECRET_RES = (
     (re.compile(r"hf_[A-Za-z0-9]{20,}"), "hf_***"),                                       # any length, no word-boundary trick (`Xhf_...`, `_hf_...`)
-    (re.compile(r"gh[pousr]_\w+"), "gh_***"),
+    (re.compile(r"gh[pousr]_\w+|github_pat_\w+"), "gh_***"),
+    (re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), "aws_***"),                          # a bare AWS key id
+    (re.compile(r"xox[abprs]-[\w-]+"), "slack_***"),
     (re.compile(r"sk-[\w-]{20,}"), "sk-***"),
     (re.compile(r"Bearer\s+\S+", re.IGNORECASE), "Bearer ***"),
     (re.compile(r"://[^/\s:@]+:[^@\s]+@"), "://***@"),                                    # https://user:password@host
