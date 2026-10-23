@@ -14,12 +14,18 @@ guard closes the read instead. `hf_token_reason` returns the deny reason for a c
   - prints the token variable ($HF_TOKEN, $HUGGING_FACE_HUB_TOKEN ...) on a command line,
   - runs `python -c` / `node -e` style code that names `.hf`, or does any of the above inside `ssh host '<command>'` / `bash -c '<command>'`.
 Exceptions: ls, stat and test (they read no content), and the text of a message flag (-m, --body, --title ...), which is data.
+REAL GLOBS (Dom via Strategy, 2026-10-23): `cd ~; for d in * .[a-zA-Z]*; do du "$d"; done` was denied on the Mac because `.[a-zA-Z]*` COULD match
+`.hf`, though ~/.hf does not exist there. For a LOCAL command a glob is now expanded against the real filesystem as the shell would (cwd after a
+leading `cd`) and only a real match that touches the token folder denies. Still judged in the abstract (fail closed): ssh / bash -c / `$(..)`
+bodies, scp and rsync, a glob whose literal prefix is already the token folder (`/root/.hf/tok*`), a command with a subshell `( )`, and any
+cwd that cannot be worked out (`cd "$X"`, `cd -`, pushd, popd): there a relative glob that could name `.hf` is denied.
 Scope on purpose: Bash command lines only (a job script's own body, Write/Edit content and non-Bash tools are out of scope). The reason never
 repeats the token.
 """
 from __future__ import annotations
 
 import fnmatch
+import glob
 import os
 import re
 import shlex
@@ -76,6 +82,28 @@ def _touches(path: str, copier: bool, anywhere: bool = True, unknown: bool = Fal
         if len(parts) >= len(target) or copier:   # the folder itself or inside it; a parent only when the command copies or archives
             return True
     return False
+
+
+GLOB_CHARS = "*?["
+
+
+def _expand_locally(path: str) -> list[str] | None:
+    """What the shell would pass for a glob over a LOCAL folder, or None when it must be judged in the abstract: not a glob, or its literal
+    prefix (the part before the first glob component) does not exist here, or the prefix is itself inside the token folder (`/root/.hf/tok*`)."""
+    if not any(ch in path for ch in GLOB_CHARS):
+        return None
+    parts = path.split("/")
+    first = next(i for i, part in enumerate(parts) if any(ch in part for ch in GLOB_CHARS))
+    prefix = "/".join(parts[:first]) or "/"
+    if not os.path.isdir(prefix) or _touches(prefix, False):
+        return None
+    return glob.glob(path)[:5000]
+
+
+def _could_name_token_folder(word: str) -> bool:
+    """A relative word with a glob component that could be `.hf`: denied when the cwd is not known."""
+    return not word.startswith(("/", "~", "$")) and any(
+        any(ch in part for ch in GLOB_CHARS) and _component_match(part, ".hf") for part in word.split("/"))
 
 
 def _reads_trees(head: str, rest: list[str], command: str) -> bool:
@@ -136,6 +164,8 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
         return MESSAGE
     here = home or str(Path.home())
     env = {} if _env is None else _env
+    grouped = "(" in command   # a subshell `( cd x; ... )` or a function body: the cwd the guard tracks may not be the one the shell uses
+    cwd_ok = bool(cwd)
     for segment in split_segments(command):
         try:
             words = shlex.split(segment.rstrip("\\ \t"))   # a find -exec ... \; leaves a trailing backslash after the split on ;
@@ -165,10 +195,17 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
             else:
                 env.pop(rest[0], None)
             continue
-        if head == "cd" and rest:
-            placed = _resolve(rest[0], here, cwd, env)
-            if placed and not placed[0][1]:
-                cwd = placed[0][0]
+        if head == "cd":
+            placed = _resolve(rest[0], here, cwd, env) if rest and rest[0] != "-" else []
+            if not rest:
+                cwd, cwd_ok = here, True   # a bare `cd` goes home
+            elif placed and not placed[0][1]:
+                cwd, cwd_ok = placed[0][0], True
+            else:
+                cwd_ok = False             # `cd -`, `cd "$X"`, `cd $(..)`: the folder cannot be worked out here
+            continue
+        if head in {"pushd", "popd"}:
+            cwd_ok = False
             continue
         if head in SAFE_HEADS:
             continue
@@ -193,8 +230,17 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
             candidates = [word, re.sub(r"^-{1,2}[\w-]+=", "", word)]   # --opt=/path
             if head in {"scp", "rsync"}:
                 candidates.append(re.sub(r"^[^/\s:]+:", "", word))      # host:/path names a path on the remote
+            # a real expansion only for a plain local command: not ssh/bash -c/$(..) bodies (_depth), not scp/rsync (a remote half), not a subshell
+            local = _depth == 0 and not grouped and cwd_ok and head not in {"scp", "rsync"} and head not in SHELL_HEADS
+            if (grouped or not cwd_ok) and any(_could_name_token_folder(c) for c in candidates):
+                return MESSAGE
             for candidate in candidates:
                 spaced = bool(re.search(r"\s", candidate))
-                if any(_touches(path, copier, not spaced, unknown) for path, unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env)):
-                    return MESSAGE
+                for path, unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env):
+                    real = _expand_locally(path) if local and not unknown and candidate == word else None
+                    if real is not None:
+                        if any(_touches(match, copier, not spaced) for match in real):
+                            return MESSAGE
+                    elif _touches(path, copier, not spaced, unknown):
+                        return MESSAGE
     return ""
