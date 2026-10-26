@@ -19,6 +19,10 @@ from .cache_guard import DELETERS, KEYWORDS, SHELLS, WRAPPERS, _skip_wrapper_arg
 
 REASON = ("destructive_var_guard: rm/mv (even mv \"$OUT\" x.json)/rsync --delete/git clean/find -delete on a variable, $(...) or `...` path cannot be "
           "checked and raises a permission popup for Dom; a :?-guarded expansion does not help. Write the literal path (Dom 2026-10-21).")
+REASON_GLOB = ("destructive_var_guard: rm on a relative glob after a cd (cd x; rm o2/*) makes Claude Code raise a permission popup for Dom, and this lane then sits idle until he "
+               "looks. Not a mistake: rewrite and carry on in the SAME turn, no question to Dom. Empty a folder with `rm -rf /abs/dir && mkdir -p /abs/dir`, or name "
+               "the files (`rm -- /abs/dir/a.png /abs/dir/b.png`), or `find /abs/dir -maxdepth 1 -type f -name '*.png' -delete`; or just overwrite, a stale file "
+               "rarely needs deleting first (Dom 2026-10-26).")
 HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n[ \t]*\2[ \t]*(?=\n|$)", re.DOTALL)
 HOME_RE = re.compile(r"\$\{HOME\}|\$HOME\b")
 SHELL_STDIN_RE = re.compile(r"(?:^|[\s;&|(])(?:ba|z|da|k)?sh(?:\s+-\w+)*\s*$")   # `bash <<EOF`: a shell reads the body
@@ -33,6 +37,14 @@ def _without_heredoc_data(command: str) -> str:
     def keep(match: re.Match) -> str:
         return match.group(0) if SHELL_STDIN_RE.search(command[:match.start()].split("\n")[-1].rstrip()) else "\n"
     return HEREDOC_RE.sub(keep, command)
+
+
+def _relative_glob(segment: str, head: str) -> bool:
+    """True when an operand of `head` (rm/unlink) is a RELATIVE path with an UNQUOTED glob character. After a `cd` (or on a remote host) the app resolves
+    that path against the wrong folder and cannot say what it deletes. An absolute glob (`rm -f /tmp/a/*.log`) stays allowed (decided 2026-10-21)."""
+    bare = re.sub(r"\"[^\"]*\"|'[^']*'", "''", segment)
+    m = re.search(rf"(?:^|[\s;&|(]){head}\s+(.*)$", bare, re.DOTALL)
+    return bool(m) and any(re.search(r"[*?\[]", w) and not w.startswith(("/", "~")) for w in m.group(1).split() if not w.startswith("-"))
 
 
 def _operands_dynamic(words: list[str]) -> bool:
@@ -53,7 +65,8 @@ def _find_dynamic(rest: list[str]) -> bool:
     return _operands_dynamic(starts)
 
 
-def _scan(command: str, depth: int = 0) -> str:
+def _scan(command: str, depth: int = 0, moved: bool = False) -> str:
+    """`moved`: a `cd`/`pushd` ran earlier in this command, or the command runs on another host, so a relative path no longer means the session's folder."""
     if depth > 4:
         return ""
     text = re.sub(r"`([^`]*)`", r"$(\1)", _without_heredoc_data(command or ""))   # the segment splitter breaks on a backtick; $( ) keeps the substitution in its word
@@ -69,19 +82,23 @@ def _scan(command: str, depth: int = 0) -> str:
         if not words:
             continue
         head, rest = os.path.basename(words[0]), words[1:]
-        if head == "eval":
-            reason = _scan(" ".join(rest), depth + 1)
+        if head in {"cd", "pushd"}:
+            moved = True
+        elif head == "eval":
+            reason = _scan(" ".join(rest), depth + 1, moved)
             if reason:
                 return reason
         elif head == "ssh" or head in SHELLS:
             for arg in rest:
                 if re.search(r"[\s;&|]", arg):
-                    reason = _scan(arg, depth + 1)
+                    reason = _scan(arg, depth + 1, moved or head == "ssh")
                     if reason:
                         return reason
         elif head in DELETERS or head == "mv":
             if _operands_dynamic(_targets(rest)):
                 return REASON
+            if moved and head in {"rm", "unlink"} and _relative_glob(segment, head):
+                return REASON_GLOB
         elif head == "rsync" and any(w.startswith("--delete") for w in rest):
             if _operands_dynamic(_targets(rest)[-1:]):   # --delete empties the destination, the last word; `-e "ssh -i $K"` and the source are not what is deleted
                 return REASON
