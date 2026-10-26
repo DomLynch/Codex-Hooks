@@ -40,6 +40,7 @@ import fnmatch
 import os
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 from .bash_write_guard import _split as split_segments
@@ -84,6 +85,16 @@ PY_DYNAMIC_RE = re.compile(r"expanduser|Path\.home|environ|getenv|listdir|iterdi
                            r"|homedir|process\.env|\bENV\b|path\.join|path\.resolve|joinpath|readdirSync|readdir|opendir|File::Find|File::Spec|expand_path|Dir\.home|Dir\[|Dir\.glob"
                            r"""|['"`]\s*[+.%]\s*[\w$(\['"`]|[\w)\]]\s*[+.]\s*['"`]|\bf['"]|\.format\(|\.join\(|\$\{|\$\w""")   # a path built from pieces
 PY_LITERAL_RE = re.compile(r"""(['"])(.+?)\1""")
+# `x=$(mktemp)`, `x=$(mktemp -d)`, ``x=`mktemp` ``, `x=$(mktemp -d /tmp/fkXXXXXX)`: mktemp always creates a NEW name, so x can never be the cache or a folder
+# holding it, and a later `rm -f "$x"` is not an unresolved delete (Lead, Frankendom V1, 2026-10-26: scripts/deploy.sh `svc=$(mktemp)` ... `rm -f "$svc"`).
+# Anything that says WHERE to create it (-p DIR, --tmpdir=DIR, a template with a `/` outside /tmp) stays unknown, so it can still land inside the cache.
+MKTEMP_ASSIGN_RE = re.compile(r"(?<![\w$])(\w+=)\"?(?:\$\(|`)\s*mktemp(?:\s+-[dt]+)*(?:\s+(?:/tmp/)?[\w.-]*X{3,}[\w.-]*)?\s*(?:\)|`)\"?")
+MKTEMP_PATH = "/tmp/mktemp-result"
+
+
+def _plain_mktemp(command: str) -> str:
+    """Rewrite `name=$(mktemp ...)` (a plain one, see above) to `name=/tmp/mktemp-result` BEFORE the command is split: the segment splitter cuts `$(...)` apart."""
+    return MKTEMP_ASSIGN_RE.sub(lambda m: m.group(1) + MKTEMP_PATH, command)
 
 
 def _resolve(arg: str, home: str, cwd: str, env: dict[str, list[str]]) -> list[tuple[str, bool]]:
@@ -156,6 +167,8 @@ def _find_starts(rest: list[str]) -> list[str]:
 def _paths_hit(words: list[str], cwd: str, here: str, env: dict[str, list[str]]) -> str:
     for word in words:
         for path, unknown in _resolve(word, here, cwd, env):
+            if unknown and _TRUSTED[0]:
+                continue   # a tracked, unmodified repo script: an unknown variable in it does not deny (Strategy ruling B, 2026-10-26)
             if _hits(path):
                 return UNRESOLVED if unknown else MESSAGE
     return ""
@@ -243,6 +256,22 @@ def _unknown_head_reason(command: str, cwd: str, here: str, env: dict[str, list[
 SCRIPT_MAX = 256 * 1024
 SHELL_SHEBANG_RE = re.compile(r"^#!\s*\S*?(?:/env\s+)?(?:-\S+\s+)*(?:sh|bash|zsh|dash|ksh)\b")
 _FILE_DEPTH = [0]
+_TRUSTED = [False]   # True only while a tracked, unmodified repo script is being judged
+
+
+def _tracked_clean(p: Path, home: str) -> bool:
+    """Strategy ruling B (2026-10-26, for the V1 release script): a script that is TRACKED and UNMODIFIED (same as HEAD, staged or not) in a git checkout under
+    ~/Developer went through a PR, so an unknown variable inside it does not deny; a literal never-touch target still does. Untracked, modified, /tmp, outside
+    ~/Developer, a symlink or any git failure is not trusted, and inline commands are never trusted (the 10-21 incident shape stays closed)."""
+    try:
+        real = p.resolve()
+        root = Path(home).resolve() / "Developer"
+        if p.is_symlink() or root not in real.parents:
+            return False
+        run = lambda *a: subprocess.run(["git", "-C", str(real.parent), *a], capture_output=True, timeout=5).returncode   # noqa: E731
+        return run("ls-files", "--error-unmatch", "--", real.name) == 0 and run("diff", "--quiet", "HEAD", "--", real.name) == 0
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
 
 
 def _file_reason(name: str, args: list[str], cwd: str, here: str, env: dict[str, list[str]], *, force: bool) -> str:
@@ -270,10 +299,13 @@ def _file_reason(name: str, args: list[str], cwd: str, here: str, env: dict[str,
             if resolved and len(_known(resolved)) == len(resolved):
                 inner[str(i)] = _known(resolved)
         _FILE_DEPTH[0] += 1
+        outer_trust, _TRUSTED[0] = _TRUSTED[0], _tracked_clean(p, here)
         try:
-            reason = _scan(text, cwd, here, inner)
+            body = "\n".join(line for line in text.split("\n") if not line.lstrip().startswith("#"))   # a full-line comment is not a command (it named a script that was then scanned)
+            reason = _scan(body, cwd, here, inner)
         finally:
             _FILE_DEPTH[0] -= 1
+            _TRUSTED[0] = outer_trust
         if reason:
             return reason
     return ""
@@ -331,7 +363,7 @@ def _xargs_reason(rest: list[str], prev: list[str], cwd: str, here: str, env: di
         return reason
     producer, args = (os.path.basename(prev[0]), prev[1:]) if prev else ("", [])
     if producer not in FIND_PRODUCERS:
-        return INDIRECT   # stdin of unknown origin: fail closed
+        return "" if _TRUSTED[0] else INDIRECT   # stdin of unknown origin: fail closed (not inside a tracked, unmodified repo script, ruling B)
     return _paths_hit(_find_starts(args) if producer == "find" else _targets(args) or ["."], cwd, here, env)
 
 
@@ -349,11 +381,12 @@ def _piped(command: str, segment: str) -> bool:
 def _python_reason(command: str, words: list[str], cwd: str, here: str) -> str:
     """`words` are the shlex words of the python segments, so a `-c "..."` source is seen without the shell's quotes around it (Auditor 2026-10-21);
     `command` adds a heredoc body. A string that looks like a shell command (os.system, subprocess) is judged as one."""
-    sources = [command, *words]
+    sources = list(words) if _TRUSTED[0] and words else [command, *words]   # in a tracked script `command` is the whole file, not the python's text
     launches_deleter = any(PY_LAUNCH_RE.search(src) for src in sources) and any(DELETE_TEXT_RE.search(src) for src in sources)
     if not launches_deleter and not any(PY_DELETE_RE.search(src) for src in sources):
         return ""
-    if "playwright" in command.lower() or any(PY_DYNAMIC_RE.search(src) for src in sources):
+    named = any("playwright" in src.lower() for src in (words if _TRUSTED[0] else sources))   # in a tracked script the rest of the file is not the python's text
+    if named or (not _TRUSTED[0] and any(PY_DYNAMIC_RE.search(src) for src in sources)):
         return INDIRECT
     for src in sources:
         for _, literal in PY_LITERAL_RE.findall(src):
@@ -368,6 +401,7 @@ def _python_reason(command: str, words: list[str], cwd: str, here: str) -> str:
 
 
 def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
+    command = _plain_mktemp(command or "")
     reason = _unknown_head_reason(command or "", cwd, here, env)
     if reason:
         return reason
@@ -448,6 +482,8 @@ def _scan(command: str, cwd: str, here: str, env: dict[str, list[str]]) -> str:
                 if head == "rsync" and re.match(r"^[^/\s:]+:", target):
                     target, home = re.sub(r"^[^/\s:]+:", "", target), "/root"   # host:path is judged on the remote
                 for path, unknown in _resolve(target, home, cwd, env):
+                    if unknown and _TRUSTED[0]:
+                        continue
                     if _hits(path):
                         return UNRESOLVED if unknown else MESSAGE
         elif words[0] in {"source", "."} and rest:   # `source file`, `. file`
