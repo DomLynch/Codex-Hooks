@@ -24,6 +24,7 @@ from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
 from lib.destructive_var_guard import variable_delete_reason
 from lib.token_guard import hf_token_reason
+from lib.root_clone_guard import root_clone_reason
 from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
 
 LOCK_PATH = Path(os.environ.get("DEPLOY_LOCK") or Path.home() / ".claude" / "state" / "deploy_in_flight.json")
@@ -578,6 +579,7 @@ def main() -> None:
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
     reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command)
+                              or root_clone_reason(command)
                               or worktree_add_reason(command, str(payload.get("cwd") or ""))
                               or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or archive_reason(command, str(payload.get("cwd") or ""))
