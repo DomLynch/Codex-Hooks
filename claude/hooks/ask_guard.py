@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse: deny AskUserQuestion, and wrap_up calls that carry a question or buttons, in every lane.
 
-2026-10-16 (Dom, via Strategy): PicoClaw froze overnight on a blocking "stop the Codex jobs? yes/no" pop-up that
+2026-10-16 (Dom, via Strategy): a lane froze overnight on a blocking "stop the Codex jobs? yes/no" pop-up that
 Dom could not click while away. A lane must pick the conservative default instead; ~00:4x Dom ruled that questions never go to him: a ruling
 comes from Lead (operations) or Strategy (scope) by message.
 """
