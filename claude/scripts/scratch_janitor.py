@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Daily janitor for /private/tmp/claude-501 (lane scratch). DRY-RUN BY DEFAULT: it only lists what it would remove.
+"""Daily janitor for /private/tmp/claude-501 (lane scratch). REPORT ONLY: it lists removal candidates and deletes nothing.
 
-Only `--apply` deletes, and Dom's yes (via Strategy) is needed before the first --apply. A candidate is an output kind
+Strategy's condition for merging (2026-10-29): the janitor never deletes by age on its own. A candidate is an output kind
 (dist, build, node_modules, out, .vite, .cache, tmp, test-results, coverage, clips*, *.tgz/*.zip/*.tar.gz) that is
   - untouched for 24 h (newest file inside),
   - not open by any process (lsof),
   - not inside a git worktree or clone (any .git above it, up to the root),
   - not inside a scratchpad whose session is running (transcript touched in the last 24 h, or its id in `ps`),
   - not a stills folder.
-It never leaves the root, never follows symlinks and never touches ~/Developer. Every removal is logged.
+It never leaves the root, never follows symlinks and never touches ~/Developer. Every candidate is logged.
 Run by launchd daily (scripts/install_scratch_janitor.sh), outside any session."""
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -149,44 +148,19 @@ def size_of(path):
     return total
 
 
-def remove(path, root=ROOT):
-    real = os.path.realpath(path)
-    if not real.startswith(os.path.realpath(root) + os.sep) or os.path.islink(path):
-        raise ValueError("refusing to remove outside the root: " + path)
-    if os.path.isdir(path):
-        shutil.rmtree(path)
-    else:
-        os.remove(path)
-
-
 def main(argv):
-    apply = "--apply" in argv
+    """Report only (Strategy, 2026-10-29: the janitor deletes nothing by age on its own; removal goes through the archive-first vps-scratch-sweep)."""
     root = ROOT
     cands = candidates(root)
     total = 0
-    log = open(LOG, "a") if apply else None
-    if log:
-        os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    for p in cands:
-        sz = size_of(p)
-        total += sz
-        print("%s %.2f GB  %s" % ("REMOVE" if apply else "would remove", sz / 1e9, p))
-        if apply:
-            remove(p, root)
-            log.write(
-                "%s removed %d bytes %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), sz, p)
-            )
-    if log:
-        log.close()
-    print(
-        "%s: %d items, %.2f GB%s"
-        % (
-            "applied" if apply else "dry run",
-            len(cands),
-            total / 1e9,
-            "" if apply else " (nothing deleted; pass --apply with Dom's yes)",
-        )
-    )
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a") as log:
+        for p in cands:
+            sz = size_of(p)
+            total += sz
+            print("candidate %.2f GB  %s" % (sz / 1e9, p))
+            log.write("%s candidate %d bytes %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), sz, p))
+    print("report only: %d items, %.2f GB (nothing deleted; the janitor never removes anything)" % (len(cands), total / 1e9))
     return 0
 
 

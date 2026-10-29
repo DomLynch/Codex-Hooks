@@ -1,8 +1,10 @@
 import importlib.util
+import io
 import os
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 _spec = importlib.util.spec_from_file_location(
     "scratch_janitor",
@@ -97,16 +99,16 @@ class ScratchJanitorTest(unittest.TestCase):
         os.symlink(target, os.path.join(self.root, "lane", "dist"))
         self.assertEqual(self.run_cands(), [])
 
-    def test_remove_refuses_outside_root(self):
-        outside = mk(self.tmp, "outside/dist", is_dir=True)
-        with self.assertRaises(ValueError):
-            jan.remove(outside, self.root)
-        self.assertTrue(os.path.exists(outside))
-
-    def test_remove_inside_root_works(self):
+    def test_report_only_deletes_nothing_even_with_apply(self):
+        """Strategy 2026-10-29: the janitor never deletes by age on its own; there is no remove path and --apply does nothing."""
         p = mk(self.root, "lane/dist", is_dir=True)
-        jan.remove(p, self.root)
-        self.assertFalse(os.path.exists(p))
+        old = time.time() - 72 * 3600
+        os.utime(p, (old, old))
+        self.assertFalse(hasattr(jan, "remove"))
+        with mock.patch.object(jan, "ROOT", self.root), mock.patch.object(jan, "LOG", os.path.join(self.tmp, "j.log")), mock.patch("sys.stdout", io.StringIO()) as out:
+            self.assertEqual(jan.main(["--apply"]), 0)
+        self.assertTrue(os.path.exists(p))
+        self.assertIn("nothing deleted", out.getvalue())
 
 
 if __name__ == "__main__":

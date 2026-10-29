@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Install the daily scratch janitor (DRY RUN by default: it only logs what it would remove).
-# To let it delete, Dom says yes (via Strategy), then re-run with APPLY=1.
+# Install the daily scratch janitor (REPORT ONLY: it logs removal candidates and deletes nothing; Strategy 2026-10-29).
 set -euo pipefail
 
 label="com.dom.scratch-janitor"
@@ -8,7 +7,6 @@ plist="$HOME/Library/LaunchAgents/$label.plist"
 script="$(cd "$(dirname "$0")/.." && pwd)/claude/scripts/scratch_janitor.py"
 state="$HOME/.claude/state"
 extra=""
-[ "${APPLY:-0}" = "1" ] && extra="<string>--apply</string>"
 
 mkdir -p "$state" "$HOME/.claude/logs" "$HOME/Library/LaunchAgents"
 install -m 755 "$script" "$state/scratch_janitor.py"
@@ -28,4 +26,4 @@ PLIST
 
 launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$plist"
-echo "installed $label (apply=${APPLY:-0}; off: launchctl bootout gui/$(id -u)/$label)"
+echo "installed $label (report only; off: launchctl bootout gui/$(id -u)/$label)"
