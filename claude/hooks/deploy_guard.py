@@ -25,6 +25,7 @@ from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
 from lib.destructive_var_guard import variable_delete_reason
 from lib.token_guard import hf_token_reason
+from lib.credential_guard import credential_reason
 from lib.hf_enforce_guard import ssh_heavy_reason
 from lib.root_clone_guard import root_clone_reason
 from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
@@ -634,7 +635,7 @@ def main() -> None:
                               or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or archive_reason(command, str(payload.get("cwd") or ""))
                               or cache_delete_reason(command, str(payload.get("cwd") or ""))
-                              or variable_delete_reason(command))) or hf_token_reason(command, str(payload.get("cwd") or "")) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
+                              or variable_delete_reason(command))) or hf_token_reason(command, str(payload.get("cwd") or "")) or credential_reason(command) or cut_label_reason(command) or decide(command, lock, own_pid=os.getpid(), cwd=str(payload.get("cwd") or ""))
     if not reason:
         if not lock:
             try:
