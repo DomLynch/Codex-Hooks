@@ -59,7 +59,9 @@ LIGHT_SCRIPT_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*node\s+(?:\S*/)?scripts/candid
 # 2026-10-08 (Lead + COO): submitting a Hugging Face job runs nothing on the Mac, even when its payload names `npm run test:all`.
 # Exempt only a segment whose command word is `hf jobs`; a real local run beside it (; && | $( ) `) is its own segment and still refused.
 # Only HF_* env prefixes: PATH=./bin hf ... could run a local script named hf (Auditor LOW on #105).
-HF_JOBS_RE = re.compile(r"^\s*(?:HF_\w+=\S*\s+)*hf\s+jobs\s")
+# 2026-10-29 (V3 Dev via Micro-Manager): `hfjob -- npm test` was refused because only `hf jobs` was exempt, so the command this very refusal tells
+# agents to use never ran. `hfjob` (the Mac wrapper forwards over ssh, the VPS one submits a job) runs nothing on the Mac either: same segment rule.
+HF_JOBS_RE = re.compile(r"^\s*(?:HF_\w+=\S*\s+)*(?:hf\s+jobs|hfjob)\s")
 # Pixelmator Pro (Hero Look's headless texture step, 2026-09-26: ML super resolution + export via osascript) is heavy. The app is
 # named inside the osascript argument's quotes, which executable_text() strips as data, so this looks at the RAW command: a real
 # osascript / open -a invocation (in the executable text) whose own segment (no ; && || between) names Pixelmator, inline -e,
