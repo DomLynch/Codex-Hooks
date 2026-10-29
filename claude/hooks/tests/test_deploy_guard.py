@@ -75,6 +75,16 @@ class DeployGuardTests(unittest.TestCase):
             self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
             self.assertIn("hfjob -- <cmd>", reason)   # 2026-10-29 (Dom + Strategy): was capture --prio on the VPS; the VPS is for live sites only
             self.assertIn("MAC_HEAVY_OK=1", reason)
+            # Strategy RULING A via Micro-Manager, 2026-10-30: hfjob clones over public https; a private repo's light tests run on the Mac
+            self.assertIn("PUBLIC repos only", reason)
+            self.assertIn("node --test <file>", reason)
+
+    def test_light_node_test_of_one_file_is_allowed_on_the_mac(self):
+        """2026-10-30 (Strategy RULING A): a private repo (opentrident-steam) cannot use hfjob, so one targeted `node --test <file>` must keep passing; dir, glob and bare forms stay refused."""
+        for cmd in ("node --test tests/a.test.js", "cd ~/Developer/opentrident-steam && node --test tests/a.test.js"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+        for cmd in ("node --test", "node --test tests/", "node --test tests/*.test.js", "node --test a.test.js b.test.js"):
+            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
 
     def test_auditor_probes_on_104(self):
         """Auditor HOLD on #104: flags are not files, and an exempt word must be the command or script, not a path/branch/arg."""

@@ -345,7 +345,9 @@ def _mac_load1() -> float:
 VPS_REASON = (
     "Heavy runs (test suites, builds, Blender) go to Hugging Face CPU, not the Mac or the VPS (Dom + Strategy, 2026-10-29: the VPS is for live sites only; was 'go to the VPS', Dom 2026-10-08): "
     "hfjob -- <cmd> (it runs this checkout's pushed HEAD on a cpu-upgrade job). Browser/WebGL rows, stills and clips still run on the Mac while its 1-min load is under 12 (Dom, 2026-10-17). "
-    "Safari/WebKit, real-iPhone and sparring rows are exempt; if hfjob is down, prefix the command with MAC_HEAVY_OK=1."
+    "Safari/WebKit, real-iPhone and sparring rows are exempt; if hfjob is down, prefix the command with MAC_HEAVY_OK=1. "
+    # 2026-10-30 (Strategy RULING A via Micro-Manager): hfjob clones over public https, so a PRIVATE repo (opentrident-steam: 'Invalid username or token') cannot use it and no new secret is added.
+    "hfjob is for PUBLIC repos only; in a private repo run light tests on the Mac, one targeted file per call (node --test <file>, no glob or directory)."
 )
 
 
