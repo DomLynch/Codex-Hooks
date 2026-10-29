@@ -112,6 +112,15 @@ class DeployGuardTests(unittest.TestCase):
                     "MAC_HEAVY_OK=1 npm test", "echo 'npm test'"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
+    def test_hfjob_wrapper_is_not_a_local_heavy_run(self):
+        """V3 Dev via Micro-Manager, 2026-10-29: the refusal says `hfjob -- <cmd>`, so `hfjob -- npm test` must pass; a local run beside it must not."""
+        for cmd in ("hfjob -- npm test", "cd ~/Developer/frankendom-v3 && hfjob -- npm test", "hfjob --timeout 30m -- npm run test:all 2>&1 | tail -20",
+                    "hfjob --flavor cpu-upgrade -- npx playwright test", "HF_TOKEN=x hfjob -- npm run build", "hfjob -- bash -c 'npm ci && npm test'"):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+        for cmd in ("hfjob -- npm test; npm test", "hfjob -- true && npm run build", "hfjob x | npm test", "PATH=./bin hfjob -- npm test", "echo hfjob; npm test",
+                    'hfjob -- "$(npm test)"'):
+            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+
     def test_hf_job_submission_is_not_a_local_heavy_run(self):
         """Lead + COO, 2026-10-08: `hf jobs run ... bash -c 'npm run test:all'` runs on Hugging Face; the Mac only submits it."""
         self.path.write_text(json.dumps(lock()))
