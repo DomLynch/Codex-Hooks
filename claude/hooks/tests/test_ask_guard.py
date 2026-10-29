@@ -1,4 +1,4 @@
-"""ask_guard: AskUserQuestion is denied in every lane (Dom, 2026-10-16): a blocking pop-up froze PicoClaw overnight
+"""ask_guard: AskUserQuestion is denied in every lane (Dom, 2026-10-16): a blocking pop-up froze a lane overnight
 while Dom was away. Every other tool, and any odd payload, passes untouched."""
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def run(payload) -> str:
 
 
 def test_ask_user_question_is_denied_in_every_lane():
-    for cwd in ("/Users/x/Developer/frankendom-lead-catalogue", "/Users/x/Developer/picoclaw",
+    for cwd in ("/Users/x/Developer/frankendom-lead-catalogue", "/Users/x/Developer/frankendom-lane-x",
                 "/Users/x/Desktop/Business/Codex Hooks", "/Users/x/Developer/frankendom-zone-sandbox", ""):
         out = json.loads(run({"tool_name": "AskUserQuestion", "tool_input": QUESTION, "cwd": cwd}))
         decision = out["hookSpecificOutput"]
