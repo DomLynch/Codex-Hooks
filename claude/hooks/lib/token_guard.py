@@ -239,10 +239,16 @@ def hf_token_reason(command: str, cwd: str = "", home: str | None = None, _depth
             for candidate in candidates:
                 spaced = bool(re.search(r"\s", candidate))
                 for path, unknown in _resolve(candidate, "/root" if candidate != word else here, cwd, env):
-                    real = _expand_locally(path) if local and not unknown and candidate == word else None
-                    if real is not None:
-                        if any(_touches(match, copier, not spaced) for match in real):
+                    # a relative word like `*` stays unjoined in _resolve (a `*` can stand for an unknown variable): place it in the tracked cwd to expand it
+                    # (Auditor, 2026-10-23: it was expanded in the hook's own folder, not the folder the command cd'ed into)
+                    at = path if path.startswith("/") else os.path.join(cwd, path)
+                    real = _expand_locally(at) if local and not unknown and candidate == word else None
+                    if real is not None:   # what the shell passes, and where each of those paths really leads: a symlink to the token folder is the token folder
+                        if any(_touches(match, copier, not spaced) or _touches(os.path.realpath(match), copier, not spaced) for match in real):
                             return MESSAGE
                     elif _touches(path, copier, not spaced, unknown):
                         return MESSAGE
+                    elif local and not unknown and candidate == word and not any(ch in path for ch in GLOB_CHARS):
+                        if _touches(os.path.realpath(path), copier, not spaced):   # a literal path through a symlink, or the cwd itself a symlink
+                            return MESSAGE
     return ""
