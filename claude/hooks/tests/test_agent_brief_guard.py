@@ -36,7 +36,10 @@ def test_heavy_prompts_get_the_hfjob_line_appended():
         out = g.updated_input({"prompt": prompt, "description": "x", "subagent_type": "general-purpose"})
         assert out is not None, prompt
         assert out["prompt"].startswith(prompt)
-        assert "hfjob -- <cmd>" in out["prompt"] and "never on the VPS or Mac directly" in out["prompt"]
+        assert "hfjob -- <cmd>" in out["prompt"] and "never on the VPS" in out["prompt"]
+        # Strategy 2026-10-29 (Dom's GPU waterfall, 10-17): browser/WebGL proof rows are Mac first (real GPU); HF CPU SwiftShader cannot prove them (4 inconclusive runs)
+        assert "Mac when its load is under 12" in out["prompt"] and "HF T4" in out["prompt"] and "one at a time" in out["prompt"]
+        assert "never on the VPS or Mac directly" not in out["prompt"]
         assert "--filter=blob:none --depth 1 --single-branch" in out["prompt"]
         assert out["description"] == "x" and out["subagent_type"] == "general-purpose"
 

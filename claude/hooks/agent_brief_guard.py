@@ -12,8 +12,9 @@ import json
 import re
 import sys
 
-LINE = ("All suites, builds and browser runs via hfjob -- <cmd>; never on the VPS or Mac directly; "
-        "clone with --filter=blob:none --depth 1 --single-branch (Dom + Strategy 2026-10-29).")
+LINE = ("Suites and builds via hfjob -- <cmd>; never on the VPS. Browser/WebGL proof rows (Playwright, stills, clips) run on the Mac when its load is under 12, one at a time, "
+        "else on the HF T4 for one final proof (HF CPU cannot prove GPU rows). "
+        "Clone with --filter=blob:none --depth 1 --single-branch (Dom + Strategy 2026-10-29, GPU waterfall Dom 2026-10-17).")
 # A request to run something heavy. `test-driven`, `contest` and other words that merely contain the stem do not count; hyphenated compounds are not run requests.
 HEAVY = re.compile(r"(?<![\w-])(?:tests?|testing|suites?|builds?|building|playwright|vitest|stills?|blender|vite)(?![\w-])", re.IGNORECASE)
 
