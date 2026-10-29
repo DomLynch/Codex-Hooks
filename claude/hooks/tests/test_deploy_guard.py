@@ -73,7 +73,7 @@ class DeployGuardTests(unittest.TestCase):
                     "cd ~/Developer/frankendom-combat && npm run test:browser", "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend"):
             reason = deploy_guard.decide(cmd, None)
             self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
-            self.assertIn("capture --prio", reason)
+            self.assertIn("hfjob -- <cmd>", reason)   # 2026-10-29 (Dom + Strategy): was capture --prio on the VPS; the VPS is for live sites only
             self.assertIn("MAC_HEAVY_OK=1", reason)
 
     def test_auditor_probes_on_104(self):
@@ -259,7 +259,7 @@ class DeployGuardTests(unittest.TestCase):
         """2026-10-10: the VPS `lanes` user is Linux; the Mac heavy-job guard refused its npm ci / builds, which is exactly what the VPS is for."""
         heavy = "npm ci && npx playwright test && npm run build"
         with mock.patch.object(deploy_guard, "_is_mac", return_value=True):
-            self.assertIn("go to the VPS", deploy_guard.decide(heavy, None))
+            self.assertIn("hfjob -- <cmd>", deploy_guard.decide(heavy, None))   # 2026-10-29: was "go to the VPS"
         with mock.patch.object(deploy_guard, "_is_mac", return_value=False):
             self.assertEqual(deploy_guard.decide(heavy, None), "")
             self.path.write_text(json.dumps(lock(pid=1)))

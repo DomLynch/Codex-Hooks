@@ -24,6 +24,7 @@ from lib.bash_write_guard import bash_write_reason
 from lib.cache_guard import cache_delete_reason
 from lib.destructive_var_guard import variable_delete_reason
 from lib.token_guard import hf_token_reason
+from lib.hf_enforce_guard import ssh_heavy_reason
 from lib.root_clone_guard import root_clone_reason
 from lib.worktree_guard import scratch_worktree_reason, worktree_add_reason
 
@@ -338,10 +339,9 @@ def _mac_load1() -> float:
 
 
 VPS_REASON = (
-    "Heavy runs (test suites, browsers, builds, Blender) go to the VPS, not the Mac (Dom, 2026-10-08), except browser/WebGL rows, stills and clips, "
-    "which run on the Mac while its 1-min load is under 12 (Dom, 2026-10-17): "
-    "ssh -i ~/.ssh/binance_futures_tool root@49.12.7.18 'capture --prio 3 <lane> <cmd>' (vps-heavy-jobs skill). "
-    "Safari/WebKit, real-iPhone and sparring rows are exempt; if the VPS is down, prefix the command with MAC_HEAVY_OK=1."
+    "Heavy runs (test suites, builds, Blender) go to Hugging Face CPU, not the Mac or the VPS (Dom + Strategy, 2026-10-29: the VPS is for live sites only; was 'go to the VPS', Dom 2026-10-08): "
+    "hfjob -- <cmd> (it runs this checkout's pushed HEAD on a cpu-upgrade job). Browser/WebGL rows, stills and clips still run on the Mac while its 1-min load is under 12 (Dom, 2026-10-17). "
+    "Safari/WebKit, real-iPhone and sparring rows are exempt; if hfjob is down, prefix the command with MAC_HEAVY_OK=1."
 )
 
 
@@ -580,6 +580,7 @@ def main() -> None:
     lock = active_lock()
     reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command)
                               or root_clone_reason(command)
+                              or ssh_heavy_reason(command)
                               or worktree_add_reason(command, str(payload.get("cwd") or ""))
                               or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or archive_reason(command, str(payload.get("cwd") or ""))
