@@ -52,8 +52,20 @@ def test_input_dir_is_measured_through_flags_and_bare_dirs(tmp_path):
     d.mkdir()
     png(d / "front.png", 2000, 3000)
     png(d / "back.png", 640, 960)
-    for cmd in (f"python3 run_trellis.py --input-dir {d}", f"python3 run_trellis.py --images={d}", f"python3 run_trellis.py {d}"):
+    for cmd in (f"python3 run_trellis.py --input-dir {d}", f"python3 run_trellis.py --images={d}"):
         assert "back.png is 640x960" in g.input_gate(cmd, str(tmp_path)), cmd
+
+
+def test_a_bare_folder_is_not_an_input_folder(tmp_path):
+    """Unity Chars (2026-10-31): a prep script or find run on a Unity Assets folder was blocked for the procedural
+    128x256 / 512x512 textures inside it. Only explicit image files and input-folder flags are the generator's inputs."""
+    assets = tmp_path / "Assets" / "Necropolis"
+    assets.mkdir(parents=True)
+    png(assets / "flame.png", 128, 256)
+    png(assets / "fire_sheet.png", 512, 512)
+    for cmd in (f"python3 prep_trellis_inputs.py {assets}", f"cd {assets} && python3 trellis_prep.py . && find {assets} -name '*.tmp' -delete",
+                f"python3 run_trellis.py --out {assets}", f"bash trellis_all.sh {assets}/"):
+        assert g.input_gate(cmd, str(tmp_path)) == "", cmd
 
 
 def test_contact_sheet_is_a_single_file_much_wider_than_tall(tmp_path):
