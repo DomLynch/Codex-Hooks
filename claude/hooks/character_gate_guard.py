@@ -105,7 +105,7 @@ def candidates(words: list[str], cwd: str) -> list[Path]:
             continue
         elif "=" in w and INPUT_FLAG_RE.match(w.split("=", 1)[0]):
             value = w.split("=", 1)[1]
-        elif w.lower().endswith(IMAGE_EXT) or not w.startswith("-"):
+        elif w.lower().endswith(IMAGE_EXT):   # a bare folder is NOT scanned: a Unity Assets folder holds unrelated textures
             value = w
         if not value:
             continue
