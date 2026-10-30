@@ -122,6 +122,15 @@ class DeployGuardTests(unittest.TestCase):
                     "MAC_HEAVY_OK=1 npm test", "echo 'npm test'"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
+    def test_hfjob_with_double_quoted_arguments_is_still_one_hfjob_segment(self):
+        """2026-10-30 (found installing hfjob --bundle): `--exclude "*.psd"` made the rest of the line its own segment and the whole call was refused.
+        A double-quoted argument with no $( ) or backtick inside is plain data; only a real substitution gets its own segment."""
+        for cmd in ('hfjob --bundle --exclude "*.psd" -- blender -b x.blend', 'hfjob --bundle --include "art folder" --exclude "*.psd" --max-mb 300 --out out -- blender -b',
+                    'hfjob -- npx playwright test "a b"', 'hfjob --bundle --out "my out" -- npm test'):
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
+        for cmd in ('hfjob -- "$(npm test)"', 'hfjob --bundle --exclude "*.psd" -- true; npm test', 'echo "x" && npm test', 'hfjob --exclude "`npm test`" -- true'):
+            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
+
     def test_hfjob_wrapper_is_not_a_local_heavy_run(self):
         """V3 Dev via Micro-Manager, 2026-10-29: the refusal says `hfjob -- <cmd>`, so `hfjob -- npm test` must pass; a local run beside it must not."""
         for cmd in ("hfjob -- npm test", "cd ~/Developer/frankendom-v3 && hfjob -- npm test", "hfjob --timeout 30m -- npm run test:all 2>&1 | tail -20",
