@@ -14,7 +14,9 @@ import sys
 
 LINE = ("Suites and builds via hfjob -- <cmd>; never on the VPS. Browser/WebGL proof rows (Playwright, stills, clips) run on the Mac when its load is under 12, one at a time, "
         "else on the HF T4 for one final proof (HF CPU cannot prove GPU rows). "
-        "Clone with --filter=blob:none --depth 1 --single-branch (Dom + Strategy 2026-10-29, GPU waterfall Dom 2026-10-17).")
+        "Clone with --filter=blob:none --depth 1 --single-branch (Dom + Strategy 2026-10-29, GPU waterfall Dom 2026-10-17). "
+        # 2026-10-30 (Strategy RULING A via Micro-Manager): hfjob clones over public https; opentrident-steam is private ('Invalid username or token') and no new secret is added.
+        "hfjob is for PUBLIC repos only; in a private repo run light tests on the Mac, one targeted file per call (node --test <file>, no glob or directory).")
 # A request to run something heavy. `test-driven`, `contest` and other words that merely contain the stem do not count; hyphenated compounds are not run requests.
 HEAVY = re.compile(r"(?<![\w-])(?:tests?|testing|suites?|builds?|building|playwright|vitest|stills?|blender|vite)(?![\w-])", re.IGNORECASE)
 

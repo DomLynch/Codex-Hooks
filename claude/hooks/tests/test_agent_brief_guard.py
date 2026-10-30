@@ -41,6 +41,8 @@ def test_heavy_prompts_get_the_hfjob_line_appended():
         assert "Mac when its load is under 12" in out["prompt"] and "HF T4" in out["prompt"] and "one at a time" in out["prompt"]
         assert "never on the VPS or Mac directly" not in out["prompt"]
         assert "--filter=blob:none --depth 1 --single-branch" in out["prompt"]
+        # Strategy RULING A via Micro-Manager, 2026-10-30: hfjob clones over public https, so PRIVATE repos (opentrident-steam) cannot use it; light tests run on the Mac
+        assert "PUBLIC repos only" in out["prompt"] and "private repo" in out["prompt"] and "node --test <file>" in out["prompt"]
         assert out["description"] == "x" and out["subagent_type"] == "general-purpose"
 
 
