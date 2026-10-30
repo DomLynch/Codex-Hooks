@@ -23,6 +23,16 @@
         ]
       },
       {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/domininclynch/.claude/hooks/character_gate_guard.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion|mcp__ccd_turn__wrap_up",
         "hooks": [
           {
