@@ -31,25 +31,20 @@ LIGHT = [
 ]
 
 
-def test_heavy_prompts_get_the_hfjob_line_appended():
+def test_heavy_prompts_get_the_laptop_line_appended():
     for prompt in HEAVY:
         out = g.updated_input({"prompt": prompt, "description": "x", "subagent_type": "general-purpose"})
         assert out is not None, prompt
         assert out["prompt"].startswith(prompt)
-        assert "hfjob -- <cmd>" in out["prompt"] and "never on the VPS" in out["prompt"]
-        # Strategy 2026-10-29 (Dom's GPU waterfall, 10-17): browser/WebGL proof rows are Mac first (real GPU); HF CPU SwiftShader cannot prove them (4 inconclusive runs)
-        assert "Mac when its load is under 12" in out["prompt"] and "HF T4" in out["prompt"] and "one at a time" in out["prompt"]
-        assert "never on the VPS or Mac directly" not in out["prompt"]
-        assert "--filter=blob:none --depth 1 --single-branch" in out["prompt"]
-        # Strategy RULING A via Micro-Manager, 2026-10-30: hfjob clones over public https, so PRIVATE repos (opentrident-steam) cannot use it; light tests run on the Mac
-        assert "PUBLIC repos only" in out["prompt"] and "private repo" in out["prompt"] and "node --test <file>" in out["prompt"]
+        assert "Windows laptop" in out["prompt"] and "never on the VPS" in out["prompt"] and "one heavy job at a time" in out["prompt"]
+        assert "hfjob" not in out["prompt"] and "no pkill by name" in out["prompt"] and "GitHub is the source of truth" in out["prompt"]
         assert out["description"] == "x" and out["subagent_type"] == "general-purpose"
 
 
-def test_light_prompts_and_prompts_that_already_say_hfjob_pass_untouched():
+def test_light_prompts_and_prompts_that_already_carry_the_line_pass_untouched():
     for prompt in LIGHT:
         assert g.updated_input({"prompt": prompt}) is None, prompt
-    assert g.updated_input({"prompt": "Run the tests via hfjob -- npm test and report."}) is None
+    assert g.updated_input({"prompt": f"Run the tests and report. {g.LINE}"}) is None
     assert g.updated_input({}) is None
     assert g.updated_input({"prompt": 5}) is None
 
@@ -64,7 +59,7 @@ def run_main(payload):
 def test_main_emits_updatedinput_allow_for_agent_calls_only():
     res = json.loads(run_main({"tool_name": "Agent", "tool_input": {"prompt": "Run the test suite", "description": "d"}}))["hookSpecificOutput"]
     assert res["hookEventName"] == "PreToolUse" and res["permissionDecision"] == "allow"
-    assert "hfjob -- <cmd>" in res["updatedInput"]["prompt"] and res["updatedInput"]["description"] == "d"
+    assert "Windows laptop" in res["updatedInput"]["prompt"] and res["updatedInput"]["description"] == "d"
     assert run_main({"tool_name": "Agent", "tool_input": {"prompt": "Read the README"}}) == ""
     assert run_main({"tool_name": "Bash", "tool_input": {"command": "npm test"}}) == ""
     assert run_main({}) == ""

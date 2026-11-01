@@ -1,6 +1,6 @@
 """Dom + Strategy, 2026-10-29: the VPS hit load 68 from lane suites and builds; Dom's ruling is "all lanes' suites/builds move to Hugging Face CPU, VPS = live sites only".
 Lanes kept forgetting hfjob because nothing enforced it. The Mac PreToolUse hook now refuses any `ssh ... <heavy command>` (and the Mac-local heavy refusal says hfjob) with
-"use hfjob -- <cmd>". Allow-list: deploys, the sweep tool, hfjob itself. It only refuses; it never runs or deletes anything."""
+"run it on the Windows laptop" (2026-10-31: was "use hfjob -- <cmd>"). Allow-list: deploys, the sweep tool. It only refuses; it never runs or deletes anything."""
 from __future__ import annotations
 
 import io
@@ -45,12 +45,12 @@ ALLOWED = [
 ]
 
 
-def test_ssh_with_a_heavy_command_is_refused_and_points_to_hfjob():
+def test_ssh_with_a_heavy_command_is_refused_and_points_to_the_laptop():
     for cmd in REFUSED:
         why = g.ssh_heavy_reason(cmd)
         assert why, cmd
-        assert "hfjob -- <cmd>" in why
-        assert "2026-10-29" in why
+        assert "Windows laptop" in why and "production only" in why
+        assert "hfjob" not in why
 
 
 def test_allow_list_and_everything_else_passes():
@@ -73,10 +73,14 @@ def run_main(command, mac=True):
 def test_wired_into_the_pretooluse_deny_on_the_mac():
     denied = json.loads(run_main(REFUSED[0]))["hookSpecificOutput"]
     assert denied["permissionDecision"] == "deny"
-    assert "hfjob -- <cmd>" in denied["permissionDecisionReason"]
+    assert "Windows laptop" in denied["permissionDecisionReason"]
     assert run_main(ALLOWED[0]) == ""
 
 
-def test_mac_local_heavy_refusal_now_names_hfjob():
-    reason = deploy_guard.decide("npm test", None)
-    assert "hfjob -- <cmd>" in reason
+def test_local_heavy_run_is_no_longer_refused():
+    assert deploy_guard.decide("npm test", None) == ""
+
+
+def test_ssh_guard_holds_off_the_mac_too():
+    denied = json.loads(run_main(REFUSED[0], mac=False))["hookSpecificOutput"]
+    assert denied["permissionDecision"] == "deny" and "Windows laptop" in denied["permissionDecisionReason"]

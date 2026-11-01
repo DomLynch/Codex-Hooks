@@ -32,66 +32,35 @@ class DeployGuardTests(unittest.TestCase):
         self.addCleanup(busy.stop)
         self.addCleanup(self.tmp.cleanup)
 
-    def test_gpu_browser_runs_are_allowed_on_a_quiet_mac(self):
-        """2026-10-17 (Dom, GPU waterfall in CLAUDE.md; Lead: Characters was blocked): browser/WebGL rows, stills and clips run on the Mac
-        FIRST, the VPS only when the Mac is busy. Builds, suites and Blender stay on the VPS whatever the load."""
-        gpu = ("npx playwright test --project=chromium", "node scripts/herolook-game-stills.mjs --frames 28", "node scripts/x-browser-check.mjs --opponent goblin",
-               "node scripts/finisher-preview.mjs --only opened", "node scripts/herolook-kill-record.mjs", "node artifacts/arena-browser.mjs",
-               "cd ~/Developer/frankendom-characters && npx playwright test")
-        cpu = ("npm test", "npm run test:all", "npm run build", "vite build", "node --test tests/*.test.ts", "npm run test:browser",
-               "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend", "node scripts/release-checks.mjs", "npx playwright test && npm run build")
-        with mock.patch.object(deploy_guard, "_mac_load1", return_value=4.0):
-            for cmd in gpu:
-                self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
-            for cmd in cpu:
-                self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
-        with mock.patch.object(deploy_guard, "_mac_load1", return_value=45.0):
-            for cmd in gpu:
-                reason = deploy_guard.decide(cmd, None)
-                self.assertIn("VPS", reason, cmd)
-                self.assertIn("load 45", reason)
-        # 2026-10-17 (Lead): release rows failed their timing limits at load 10-13, so above ~12 a GPU row stutters and its numbers are junk
-        with mock.patch.object(deploy_guard, "_mac_load1", return_value=11.9):
-            self.assertEqual(deploy_guard.decide("npx playwright test", None), "")
-        with mock.patch.object(deploy_guard, "_mac_load1", return_value=13.0):
-            reason = deploy_guard.decide("npx playwright test", None)
-            self.assertIn("load 13", reason)
-            self.assertIn("HF T4", reason)
-            self.assertIn("put the load in the receipt", reason)
-        with mock.patch.object(deploy_guard, "_mac_load1", return_value=4.0):   # a deploy in flight still wins: one-deployer rule
-            self.assertIn("in flight", deploy_guard.decide("npx playwright test", {**lock(pid=1), "age_s": 120}))
+    def test_heavy_and_gpu_runs_are_allowed_whatever_the_load(self):
+        """2026-10-31 (Dom via Strategy, VPS restructure): the laptop is the heavy-job host, so neither the load nor the kind of run matters without a deploy lock
+        (was: GPU rows Mac-first under load 12, builds and suites refused, 2026-10-17)."""
+        cmds = ("npx playwright test --project=chromium", "node scripts/herolook-game-stills.mjs --frames 28", "npm test", "npm run build", "vite build",
+                "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend", "node scripts/release-checks.mjs", "npx playwright test && npm run build")
+        for load in (4.0, 13.0, 45.0):
+            with mock.patch.object(deploy_guard, "_mac_load1", return_value=load):
+                for cmd in cmds:
+                    self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
     def test_no_lock_allows_light_commands(self):
         self.assertIsNone(deploy_guard.active_lock())
         for cmd in ("git status", "gh pr view 1", "node --test tests/one.test.mjs", "python3 -m pytest tests -q", "grep -rn npm README.md"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
-    def test_heavy_runs_are_refused_on_the_mac_even_without_a_deploy(self):
-        """2026-10-08 (Dom, Optimizer item 2): Mac load sat at 29-57 on 10 cores from lane test and browser runs, not the deploy."""
+    def test_heavy_runs_are_allowed_without_a_deploy(self):
+        """2026-10-31 (Dom via Strategy, VPS restructure): the laptop is the heavy-job host, so with no deploy in flight nothing heavy is refused (was refused on the Mac, 2026-10-08)."""
         for cmd in ("npx playwright test", "npm test", "npm run test:all", "node --test tests/*.test.ts", "npm run build",
                     "vite build", "node scripts/x-browser-check.mjs --opponent goblin", "node scripts/finisher-preview.mjs --only opened",
-                    "cd ~/Developer/frankendom-combat && npm run test:browser", "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend"):
-            reason = deploy_guard.decide(cmd, None)
-            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
-            self.assertIn("hfjob -- <cmd>", reason)   # 2026-10-29 (Dom + Strategy): was capture --prio on the VPS; the VPS is for live sites only
-            self.assertIn("MAC_HEAVY_OK=1", reason)
-            # Strategy RULING A via Micro-Manager, 2026-10-30: hfjob clones over public https; a private repo's light tests run on the Mac
-            self.assertIn("PUBLIC repos only", reason)
-            self.assertIn("node --test <file>", reason)
-
-    def test_light_node_test_of_one_file_is_allowed_on_the_mac(self):
-        """2026-10-30 (Strategy RULING A): a private repo (opentrident-steam) cannot use hfjob, so one targeted `node --test <file>` must keep passing; dir, glob and bare forms stay refused."""
-        for cmd in ("node --test tests/a.test.js", "cd ~/Developer/opentrident-steam && node --test tests/a.test.js"):
+                    "cd ~/Developer/frankendom-combat && npm run test:browser", "/Applications/Blender.app/Contents/MacOS/Blender -b x.blend",
+                    "node --test", "node --test tests/", "node --test tests/*.test.js", "node --test a.test.js b.test.js"):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
-        for cmd in ("node --test", "node --test tests/", "node --test tests/*.test.js", "node --test a.test.js b.test.js"):
-            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
 
     def test_auditor_probes_on_104(self):
         """Auditor HOLD on #104: flags are not files, and an exempt word must be the command or script, not a path/branch/arg."""
         self.assertEqual(deploy_guard.decide("node --test --test-reporter=tap tests/one.test.mjs", None), "")
         for cmd in ("cd ~/Developer/frankendom-webkit && npm run test:all", "git checkout web/iphone-nav && npm run build",
                     "npm run test:all -- tests/safari-audio.test.ts", "echo MAC_HEAVY_OK=1; npm run test:all"):
-            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
 
     def test_escape_hatch_uses_are_logged(self):
         """Optimizer's condition on #104: every MAC_HEAVY_OK=1 use leaves one auditable line (cwd + command)."""
@@ -129,7 +98,7 @@ class DeployGuardTests(unittest.TestCase):
                     'hfjob -- npx playwright test "a b"', 'hfjob --bundle --out "my out" -- npm test'):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
         for cmd in ('hfjob -- "$(npm test)"', 'hfjob --bundle --exclude "*.psd" -- true; npm test', 'echo "x" && npm test', 'hfjob --exclude "`npm test`" -- true'):
-            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
 
     def test_hfjob_wrapper_is_not_a_local_heavy_run(self):
         """V3 Dev via Micro-Manager, 2026-10-29: the refusal says `hfjob -- <cmd>`, so `hfjob -- npm test` must pass; a local run beside it must not."""
@@ -138,7 +107,7 @@ class DeployGuardTests(unittest.TestCase):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
         for cmd in ("hfjob -- npm test; npm test", "hfjob -- true && npm run build", "hfjob x | npm test", "PATH=./bin hfjob -- npm test", "echo hfjob; npm test",
                     'hfjob -- "$(npm test)"'):
-            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
 
     def test_hf_job_submission_is_not_a_local_heavy_run(self):
         """Lead + COO, 2026-10-08: `hf jobs run ... bash -c 'npm run test:all'` runs on Hugging Face; the Mac only submits it."""
@@ -157,14 +126,14 @@ class DeployGuardTests(unittest.TestCase):
         for cmd in ('hf jobs run x "$(npm run test:all)"', 'hf jobs run x "a $(npx vite build) b"', 'hf jobs run img bash -c "npm ci; $(npm run test:all)"',
                     'hf jobs run img bash -c "npm ci; `npm test`"', "PATH=./bin hf jobs run x -- npm test", "PATH=./bin:$PATH hf jobs run img -- vite build",
                     'echo "; hf jobs x" && bash -c "npm run test:all"'):
-            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
             self.assertIn("in flight", deploy_guard.decide(cmd, active), cmd)
         # Only the submission segment is exempt: a real local run next to it, inside it, or merely naming hf is still refused.
         for cmd in ("npm run test:all", "hf jobs run x; npm run test:all", "hf jobs run x && npm test", "hf jobs run x | npm test",
                     "echo hf jobs run && npm run test:all", 'hf jobs run img bash -c "$(npm test)"', "hf jobs run img `npm test`",
                     "hf jobs ps; npx playwright test", "hf auth login && npm run build", "hf jobs-run x && npm test",
                     "git log hf jobs run -- x; vite build"):
-            self.assertIn("VPS", deploy_guard.decide(cmd, None), cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
 
     def test_fresh_lock_blocks_heavy_commands_and_names_the_deploy(self):
         self.path.write_text(json.dumps(lock()))
@@ -287,7 +256,7 @@ class DeployGuardTests(unittest.TestCase):
         """2026-10-10: the VPS `lanes` user is Linux; the Mac heavy-job guard refused its npm ci / builds, which is exactly what the VPS is for."""
         heavy = "npm ci && npx playwright test && npm run build"
         with mock.patch.object(deploy_guard, "_is_mac", return_value=True):
-            self.assertIn("hfjob -- <cmd>", deploy_guard.decide(heavy, None))   # 2026-10-29: was "go to the VPS"
+            self.assertEqual(deploy_guard.decide(heavy, None), "")   # 2026-10-31: the laptop is the heavy-job host; only a deploy lock holds heavy runs back
         with mock.patch.object(deploy_guard, "_is_mac", return_value=False):
             self.assertEqual(deploy_guard.decide(heavy, None), "")
             self.path.write_text(json.dumps(lock(pid=1)))
@@ -351,7 +320,7 @@ class DeployGuardTests(unittest.TestCase):
                     "node scripts/other-check.mjs candidate-contents-check.mjs", "node scripts/candidate-contents-check.mjs && npm test",
                     "node scripts/candidate-contents-check.mjs; vite build", "node scripts/candidate-contents-check.mjs | npx playwright test",
                     "node scripts/candidate-contents-check.mjs.sh", "node scripts/xcandidate-contents-check.mjs"):
-            self.assertIn("VPS", deploy_guard.decide(cmd, None) + " VPS" if not deploy_guard.decide(cmd, None) else deploy_guard.decide(cmd, None), cmd) if False else self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
 
 
 if __name__ == "__main__":

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import re
 
-MESSAGE = ("Suites, builds, browsers and Blender never run on the VPS: it is for live sites only (load hit 68 on 2026-10-28; Dom + Strategy 2026-10-29, 'all lanes' suites/builds move to "
-           "Hugging Face CPU'). Use hfjob -- <cmd> (repo-agnostic: it takes this checkout's pushed HEAD and runs the command on a cpu-upgrade job). "
-           "Deploys (scripts/deploy.sh), vps-scratch-sweep and hfjob itself are allowed over ssh.")
+MESSAGE = ("Suites, builds, browsers and Blender never run on the VPS: it is production only (load hit 68 on 2026-10-28; Dom + Strategy 2026-10-31, VPS restructure). "
+           "Run it on the Windows laptop, in a checkout there; GitHub is the source of truth. "
+           "Deploys (scripts/deploy.sh) and vps-scratch-sweep are allowed over ssh.")
 
 # `ssh` as the command word of a segment (optional leading VAR=x), so a commit message or echo that merely names ssh passes.
 SSH_CMD = re.compile(r"""(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*ssh\s""")
