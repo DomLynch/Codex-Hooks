@@ -35,7 +35,7 @@ def test_ask_user_question_is_denied_in_every_lane():
         # Dom 2026-10-16 ~00:4x via Strategy: questions never go to Dom; a ruling goes to Lead or Strategy by message
         reason = decision["permissionDecisionReason"]
         assert "Pick the conservative default and continue." in reason
-        assert "'Frankendom - Lead Dev'" in reason and "'Project Strategy - Fable 5.1'" in reason
+        assert "lead/coordinating session" in reason   # 2026-11-01: generic, no session names (devs and names change)
         assert "never wait on Dom" in reason
 
 

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|mcp__ccd_turn__wrap_up",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python C:/Users/<you>/.claude/hooks/ask_guard.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

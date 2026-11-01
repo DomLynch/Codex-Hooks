@@ -17,8 +17,7 @@ from lib.log import log  # noqa: E402
 
 COMPONENT = "ask_guard"
 REASON = ("No blocking questions (Dom 10-16). Pick the conservative default and continue. If you need a ruling, send "
-          "one line to 'Frankendom - Lead Dev' (operations, order of work) or 'Project Strategy - Fable 5.1' (scope, "
-          "acceptance) by message and keep working on your next item; never wait on Dom.")
+          "one line to the lead/coordinating session by message and keep working on your next item; never wait on Dom.")
 
 
 # 2026-10-17 (Strategy, Dom's screenshot): the app's wrap_up tool renders `ask` + `actions` as a question card with buttons, the same
@@ -26,8 +25,7 @@ REASON = ("No blocking questions (Dom 10-16). Pick the conservative default and 
 WRAP_UP = "mcp__ccd_turn__wrap_up"
 WRAP_UP_REASON = ("No blocking questions (Dom 10-16): this covers any tool that renders a question or buttons to Dom (AskUserQuestion, "
                   "wrap_up ask/actions, and any future one). Call wrap_up again with the recap only, no `ask` and no `actions`. Pick the "
-                  "conservative default and continue; if you need a ruling, send one line to 'Frankendom - Lead Dev' or "
-                  "'Project Strategy - Fable 5.1' by message; never wait on Dom.")
+                  "conservative default and continue; if you need a ruling, send one line to the lead/coordinating session by message; never wait on Dom.")
 
 
 def main() -> None:
