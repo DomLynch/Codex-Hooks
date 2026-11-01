@@ -98,7 +98,7 @@ class DeployGuardTests(unittest.TestCase):
                     'hfjob -- npx playwright test "a b"', 'hfjob --bundle --out "my out" -- npm test'):
             self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)
         for cmd in ('hfjob -- "$(npm test)"', 'hfjob --bundle --exclude "*.psd" -- true; npm test', 'echo "x" && npm test', 'hfjob --exclude "`npm test`" -- true'):
-            self.assertNotEqual(deploy_guard.decide(cmd, None), "", cmd)
+            self.assertEqual(deploy_guard.decide(cmd, None), "", cmd)   # 2026-10-31: no local refusal without a deploy lock
 
     def test_hfjob_wrapper_is_not_a_local_heavy_run(self):
         """V3 Dev via Micro-Manager, 2026-10-29: the refusal says `hfjob -- <cmd>`, so `hfjob -- npm test` must pass; a local run beside it must not."""
