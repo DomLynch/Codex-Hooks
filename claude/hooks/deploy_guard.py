@@ -140,7 +140,10 @@ def executable_text(command: str) -> str:
         # "$(npm test)" and "`npm test`" run even inside double quotes; single quotes run nothing.
         if m.group(0)[0] == "'":
             return '""'
-        return '""\n' + "\n".join(a or b for a, b in SUBSTITUTION_RE.findall(inner))   # own segments: a segment exemption never covers $( )
+        subs = [a or b for a, b in SUBSTITUTION_RE.findall(inner)]
+        if not subs:   # 2026-10-30: plain double-quoted data (`--exclude "*.psd"`) must not split the line, or `hfjob ... -- blender` loses its hfjob head
+            return '""'
+        return '""\n' + "\n".join(subs)   # own segments: a segment exemption never covers $( )
 
     stripped = HEREDOC_RE.sub(heredoc, command)
     return QUOTED_RE.sub(quoted, stripped)
