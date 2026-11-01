@@ -342,15 +342,6 @@ def _mac_load1() -> float:
         return 99.0   # unknown load: treat the Mac as busy
 
 
-VPS_REASON = (
-    "Heavy runs (test suites, builds, Blender) go to Hugging Face CPU, not the Mac or the VPS (Dom + Strategy, 2026-10-29: the VPS is for live sites only; was 'go to the VPS', Dom 2026-10-08): "
-    "hfjob -- <cmd> (it runs this checkout's pushed HEAD on a cpu-upgrade job). Browser/WebGL rows, stills and clips still run on the Mac while its 1-min load is under 12 (Dom, 2026-10-17). "
-    "Safari/WebKit, real-iPhone and sparring rows are exempt; if hfjob is down, prefix the command with MAC_HEAVY_OK=1. "
-    # 2026-10-30 (Strategy RULING A via Micro-Manager): hfjob clones over public https, so a PRIVATE repo (opentrident-steam: 'Invalid username or token') cannot use it and no new secret is added.
-    "hfjob is for PUBLIC repos only; in a private repo run light tests on the Mac, one targeted file per call (node --test <file>, no glob or directory)."
-)
-
-
 HATCH_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*MAC_HEAVY_OK=1\b")
 ENV_ASSIGN_RE = re.compile(r"(?<!\S)(\w+)=\S+")
 
@@ -460,15 +451,7 @@ def decide(command: str, lock: dict | None, own_pid: int | None = None, cwd: str
     if not runs or not (HEAVY_RE.search(runs) or pixelmator):
         return ""
     if not lock:
-        heavy = [seg for seg in runs.split("\n") if HEAVY_RE.search(seg)]
-        load = _mac_load1()
-        quiet = load < MAC_GPU_LOAD_MAX
-        if all(MAC_EXEMPT_RE.search(seg) or MAC_ROW_RE.match(seg) or hf_capture_wrapper(seg, cwd, command) or gpu_run_wrapper(seg, cwd, command)
-               or lanejob_mac_wrapper(seg, cwd, command) or (quiet and gpu_browser_run(seg)) for seg in heavy):
-            return ""
-        if not quiet and all(gpu_browser_run(seg) for seg in heavy):
-            return f"Mac load {load:.0f} is over {MAC_GPU_LOAD_MAX:.0f}, so the Mac is stuttering: fall back to the VPS, or the HF T4 if it needs a GPU (put the load in the receipt). {VPS_REASON}"
-        return VPS_REASON
+        return ""   # 2026-10-31 (Dom via Strategy, VPS restructure): the laptop is the heavy-job host; only a deploy in flight holds heavy runs back
     if own_pid is not None and _is_descendant_of(own_pid, int(lock.get("pid", 0))):
         return ""
     mins = lock["age_s"] // 60
@@ -632,9 +615,9 @@ def main() -> None:
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     lock = active_lock()
-    reason = (_is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command)
-                              or root_clone_reason(command)
-                              or ssh_heavy_reason(command)
+    # The VPS protections (no heavy run over ssh, no clone into /root) hold on every OS: since 2026-10-31 the VPS commands are typed from the Windows laptop.
+    reason = (ssh_heavy_reason(command) or root_clone_reason(command)
+              or _is_mac() and (shell_c_reason(command) or rm_var_reason(command) or bash_write_reason(command)
                               or worktree_add_reason(command, str(payload.get("cwd") or ""))
                               or scratch_worktree_reason(command, str(payload.get("cwd") or ""))
                               or archive_reason(command, str(payload.get("cwd") or ""))
